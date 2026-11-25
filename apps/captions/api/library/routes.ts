@@ -7,7 +7,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { isPhoneSession, type AuthVars } from "../auth";
 import { env } from "../lib/env";
 import { appendBody, freeBytes, gbSetting, sha256File, shortOfReserve } from "../lib/uploads";
-import { blurAtIntake, BLUR_UPLOADS, hasMembers, mayKeepAsFilmed, mayLeave, mayReceive, mayServe, REFUSED_COMPUTER_OFF, REFUSED_NOT_BLURRED, refuse, uploadFor, type Received } from "./upload-gate";
+import { blurAtIntake, hasMembers, mayKeepAsFilmed, mayLeave, mayReceive, mayServe, REFUSED_COMPUTER_OFF, REFUSED_NOT_BLURRED, refuse, uploadFor, type Received } from "./upload-gate";
 import { readerOf } from "./reader";
 import { accountOf, addRole, ensureLibrary, givenLibrary, homeOf, inAskedWorkspace, librariesHere, libraryChanged, libraryRole, mayAdd, mayWrite, mediaReady } from "./access";
 import { uploadTarget } from "./upload-target";
@@ -15,13 +15,13 @@ import { currentWorkspaceId } from "../lib/workspace-scope";
 import { sharedHere, workspaceScope } from "../lib/workshop/workspace";
 import { expandCollection } from "./collections";
 import { libraryMade, makeMissing, retryFailed, retryUnreadable, stopQueued, unreadableOf } from "./made";
-import { blobs, BLUR_SQL, blursFaces, proxyAsked, type ProxyAnswer, finalsUpload, isBlurred, keepsOnlyOriginals, libraryDb, librarySetting, libraryStore, libraryUpload, libraryUploadStored, meter, newLibrarySettings, proxiesInCloud, SETTING_DEFAULTS, SINCE, uploadOf } from "./db";
+import { blobs, BLUR_SQL, blursFaces, blurUpload, proxyAsked, type ProxyAnswer, finalsUpload, isBlurred, keepsOnlyOriginals, libraryDb, librarySetting, libraryStore, libraryUpload, libraryUploadStored, meter, newLibrarySettings, proxiesInCloud, SETTING_DEFAULTS, SINCE, uploadOf } from "./db";
 import { estimate, libraryStatus, progress } from "./estimate";
 import { sendFile } from "../lib/send-file";
 import { emitEvent, notifyLibraryChanges } from "../lib/events";
 import { playCopy, pushPlayCopy } from "../lib/play-copies";
 import { isFinal } from "./finals";
-import { BLURRED_UPLOADS, type Blur, cantFind, LIBRARY_WORDS, flagsOf, HOSTED_DEFAULT, hostedSettings, type ActionNeeded, hostsNone, hostsProxies, PICTURE_FILE, RAW_FILE, RAW_FROM_COMPUTER, LIBRARY_UPLOADS, LOOK_BUDGET_DEFAULT, LOOK_LEVELS, lookLevelOf, MADE_KINDS, PROXY_QUALITIES, proxyQualityOf, SOUNDS, WATCH_MODELS, watchModelOf, type AssetCard, type LibrarySettings, type LibrarySummary, type LibraryUpload, type Sound, type WhereAnswer } from "../../contracts/library";
+import { type Blur, cantFind, LIBRARY_WORDS, flagsOf, HOSTED_DEFAULT, hostedSettings, type ActionNeeded, hostsNone, hostsProxies, PICTURE_FILE, RAW_FILE, RAW_FROM_COMPUTER, LIBRARY_UPLOADS, LOOK_BUDGET_DEFAULT, LOOK_LEVELS, lookLevelOf, MADE_KINDS, PROXY_QUALITIES, proxyQualityOf, SOUNDS, WATCH_MODELS, watchModelOf, type AssetCard, type LibrarySettings, type LibrarySummary, type LibraryUpload, type Sound, type WhereAnswer } from "../../contracts/library";
 import type { LibraryViewer } from "../../contracts/library-source";
 import { releaseBudget } from "./shots";
 import { enqueueJob, prepareFirst } from "./jobs";
@@ -305,7 +305,7 @@ export async function saveToLibrary(
   // Upload none: the file goes to the asker's computer and is indexed there, never kept here (under Blur faces Upload
   // reads none for anything not blurred, so it goes there too); a file kept as filmed, and a blurred render, follow the
   // Upload the owner chose (upload-gate.ts uploadFor)
-  const upload = opts.finals ? finalsUpload(lib) : opts.blur === "no" || blurredOf ? libraryUploadStored(lib) : libraryUpload(lib);
+  const upload = opts.finals ? finalsUpload(lib) : blursFaces(lib) && (opts.blur === "no" || blurredOf) ? blurUpload(lib, !!blurredOf) : libraryUpload(lib);
   if (serverKind() !== "mac" && hostsNone(upload)) {
     // a member's computer is not where the owner keeps this library's files: refused, as a member's upload is (startUpload)
     if (as === "member") return { error: REFUSED_COMPUTER_OFF, code: "failed" };
@@ -1164,13 +1164,21 @@ libraryApp.get("/:id/made", async (c) => {
 });
 
 // POST /api/library/:id/made/:kind → { files }: Make for the missing, the one thing that fills the files already here
-libraryApp.post("/:id/made/:kind", (c) => {
+libraryApp.post("/:id/made/:kind", async (c) => {
   const user = c.get("user");
   const libraryId = c.req.param("id");
   if (!libraryRole(user.username, libraryId)) return c.json({ error: "Not found", code: "not_found" }, 404);
   // a kind sorted by itself has no Make
   const kind = MADE_KINDS.find((k) => k.kind === c.req.param("kind") && !k.auto)?.kind;
   if (!kind) return c.json({ error: "Kind not found", code: "invalid" }, 400);
+  if (kind === "blur") {
+    // only under Blur faces: a file marked yes plays nowhere but on its own computer until Face Blur has covered it
+    if (!blursFaces(libraryId)) return c.json({ error: "Needs Blur faces", code: "invalid" }, 400);
+    // the files left as they were when Blur faces went on, and no other: marked yes, then asked for as Blur all files does
+    const files = Number(db().prepare("UPDATE assets SET blur = 'yes', blur_note = NULL WHERE library_id = ? AND trashed_at IS NULL AND blur = 'no' AND blur_note = 'skipped'").run(libraryId).changes);
+    if (files) await blurAll(libraryId);
+    return c.json({ files });
+  }
   return c.json({ files: makeMissing(libraryId, kind, user.username) });
 });
 
@@ -1249,20 +1257,21 @@ async function patchLibrary(c: Context<{ Variables: AuthVars }>, libraryId: stri
   // the stored Upload, read before this save writes it: only a change of Upload turns hosting on, never Blur faces
   // going off (libraryUpload reads none under it), so the proxy backfill below runs for that save alone
   const wasHosted = hostsProxies(libraryUploadStored(libraryId));
-  // Blur faces: Upload is Off or Blurred then, never Originals (contracts BLURRED_UPLOADS); checked before anything is written
-  const blurs = typeof s.blurFaces === "boolean" ? s.blurFaces : blursFaces(libraryId);
-  if (blurs && !BLURRED_UPLOADS.includes(LIBRARY_UPLOADS.includes(upload as LibraryUpload) ? (upload as LibraryUpload) : libraryUploadStored(libraryId))) {
-    return c.json({ error: BLUR_UPLOADS, code: "invalid" }, 400);
-  }
+  // Blur faces going on or off changes what Originals means (under it the Blurred row: the blurred copies, db.ts
+  // blurUpload), so a save that flips it and names no Upload of its own drops that part: no original starts going up because
+  // Blur faces went off, and no blurred copy because it went on. Proxies stays as it was
+  const flips = typeof s.blurFaces === "boolean" && s.blurFaces !== blursFaces(libraryId);
   // on from off, the one question the switch asks: blurExisting (a request flag, never stored) blurs the files already
-  // here too; else they keep the answer they had, as filmed, and only files added from now on are blurred
+  // here too; else they are left as they were (blur_note skipped: What's made → Blurred copies counts them as missing,
+  // and its Make blurs them later), and only files added from now on are blurred
   const turnsOn = s.blurFaces === true && !blursFaces(libraryId);
   if (turnsOn && s.blurExisting !== true && mayKeepAsFilmed(user.username, libraryId)) {
-    db().prepare("UPDATE assets SET blur = 'no' WHERE library_id = ? AND blur IS NULL").run(libraryId);
+    db().prepare("UPDATE assets SET blur = 'no', blur_note = 'skipped' WHERE library_id = ? AND blur IS NULL").run(libraryId);
   }
   if (typeof s.blurFaces === "boolean") put("blurFaces", s.blurFaces);
   if (turnsOn && s.blurExisting === true) await blurAll(libraryId);
   if (LIBRARY_UPLOADS.includes(upload as LibraryUpload)) put("upload", upload);
+  else if (flips) put("upload", hostsProxies(libraryUploadStored(libraryId)) ? "proxies" : "none");
   if (typeof s.defaultFolders === "boolean") put("defaultFolders", s.defaultFolders);
   if (PROXY_QUALITIES.some((q) => q.value === s.proxyQuality)) put("proxyQuality", s.proxyQuality);
   // the setup dialog's last answer (UNIFIED-PRD §4.8): the owner's, once; a setup done is never undone here
@@ -1682,7 +1691,8 @@ libraryApp.put("/:id/assets/:assetId/blur", async (c) => {
     | undefined;
   if (!a || !(await mayAdd(user, libraryId)) || !(await mayWrite(user.username, libraryId, assetId, a.current_version_id))) return c.json({ error: "Not found", code: "not_found" }, 404);
   if (blur === "no" && !mayKeepAsFilmed(user.username, libraryId)) return c.json({ error: "Only the workspace owner or an admin can keep a file as filmed", code: "forbidden" }, 403);
-  db().prepare("UPDATE assets SET blur = ? WHERE id = ?").run(blur, assetId);
+  // a person's answer: whatever note the file had (no face found, left as it was) no longer says why
+  db().prepare("UPDATE assets SET blur = ?, blur_note = NULL WHERE id = ?").run(blur, assetId);
   // every version of it that is not a blurred render: what the server cut from each goes (an older one too)
   if (blur === "yes") for (const v of db().prepare("SELECT id FROM asset_versions WHERE asset_id = ? AND blurred_of IS NULL").all(assetId) as { id: string }[]) await dropUnblurred(v.id);
   if (blur === "yes") emitEvent("library.version.blur", { libraryId, versionId: a.current_version_id, owner: a.created_by });

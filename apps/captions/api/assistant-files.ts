@@ -17,7 +17,7 @@ import { createProjectFromFile, linkOrCopy } from "./projects";
 import { captionEngine, captionInBackground } from "./captions-job";
 import { ensureLibrary, librariesHere, mainSourceFor } from "./library/access";
 import { blurAtIntake, mayReceive } from "./library/upload-gate";
-import { libraryDb, libraryUpload, libraryUploadStored } from "./library/db";
+import { blursFaces, blurUpload, libraryDb, libraryUpload } from "./library/db";
 import { saveToLibrary } from "./library/routes";
 import { watchAllowed } from "./library/watch";
 import { pluginReceiveFile } from "./lib/plugin";
@@ -338,7 +338,7 @@ export async function useFile(
     // Only the owner or an admin keeps a file as filmed: a member's drop is marked yes (blurAtIntake)
     const blur = lib ? blurAtIntake(user.username, lib, false) : undefined;
     // Under Upload none it goes to their computer instead (saveToLibrary): nothing is refused for it
-    const gate = lib && !hostsNone(blur === "no" ? libraryUploadStored(lib) : libraryUpload(lib)) ? mayReceive("original", { id: lib, ...(blur ? { blur } : {}) }, "person") : null;
+    const gate = lib && !hostsNone(blur === "no" && blursFaces(lib) ? blurUpload(lib, false) : libraryUpload(lib)) ? mayReceive("original", { id: lib, ...(blur ? { blur } : {}) }, "person") : null;
     if (gate && !gate.ok) throw new Error(gate.body.message);
     const saved = await saveToLibrary(user.username, file, fileName, [], lib, !sound, sound, { ...(blur ? { blur } : {}), ...(importName ? { importName } : {}) });
     if (!saved) throw new Error("This account has no Media Library it may add to.");

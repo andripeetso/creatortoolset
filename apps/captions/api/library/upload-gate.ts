@@ -7,7 +7,7 @@
  * 720p copy, which every library takes; a computer's proxy must hash to the SHA-256 it declared, and from every sender a proxy
  * no smaller than its original is refused. On This Mac the server and the computer are one, so its own files are always taken.
  */
-import { blursFaces, fileBlur, finalsUpload, isBlurred, isFinalsCollection, libraryDb, libraryUpload, libraryUploadStored, versionUpload } from "./db";
+import { blursFaces, blurUpload, fileBlur, finalsUpload, isBlurred, isFinalsCollection, libraryDb, libraryUpload, versionUpload } from "./db";
 import { hostsNone, hostsOriginals, hostsProxies, type LibraryUpload } from "../../contracts/library";
 import type { Device } from "../../contracts/providers";
 import { accountOf, librariesHere, libraryRole } from "./access";
@@ -36,7 +36,6 @@ export const REFUSED_PROXIES = "This library takes proxies only. Your computer m
 export const REFUSED_NO_PROXY = "This library keeps no proxies on the server.";
 export const REFUSED_PROOF = "These bytes are not the proxy your computer declared. Nothing was kept.";
 export const REFUSED_BLUR = "Blur faces is on for this workspace: only blurred videos leave your computer.";
-export const BLUR_UPLOADS = "With Blur faces on, Upload is Off or Blurred.";
 export const REFUSED_NOT_BLURRED = "These bytes are the original, not its blurred video. Nothing was kept.";
 
 export type Received = { ok: true } | { ok: false; status: 409; body: { error: string; code: "upload_refused"; message: string } };
@@ -70,7 +69,7 @@ export const uploadFor = (library: ReceiveInto): LibraryUpload =>
   library.versionId
     ? versionUpload(library.versionId)
     : (library.blurredOf || library.blur === "no") && blursFaces(library.id)
-      ? libraryUploadStored(library.id)
+      ? blurUpload(library.id, !!library.blurredOf)
       : library.collectionId && isFinalsCollection(library.collectionId)
       ? finalsUpload(library.id)
       : libraryUpload(library.id);
@@ -165,8 +164,8 @@ export function mayReceive(
   if (!left.ok) return left;
   if (kind === "derivative" || kind === "serving") return { ok: true };
   const upload = uploadFor(library);
-  // under Blur faces what passed is a blurred render: it is the clip's proxy, kept under Blurred (stored "proxies"). A file
-  // kept as filmed follows the stored Upload as any file does (uploadFor)
+  // under Blur faces what passed is a blurred render: the copy itself under Blurred, its proxy under Proxies (db.ts
+  // blurUpload). A file kept as filmed follows Proxies as any file does (uploadFor)
   if (blursFaces(library.id) && library.blur !== "no" && !(library.versionId && fileBlur(library.versionId)?.blur === "no")) return hostsNone(upload) ? refuse(origin === "computer" ? REFUSED_COMPUTER_OFF : REFUSED_NONE) : { ok: true };
   // a person's own file is refused under proxies too (UNIFIED-PRD §4.2): nothing drops it yet, so the server would keep it
   if (kind === "original") {

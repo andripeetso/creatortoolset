@@ -195,6 +195,7 @@ export async function makeCost(libraryId: string, username: string, kind: MadeKi
     const model = libraryWatchModel(db, libraryId);
     return { cost: "tokens", usd: model === "antigravity" ? 0 : ((n * seconds) / 3600) * watchUsdPerHour(libraryLookLevel(libraryId), model) };
   }
+  if (kind === "blur") return { cost: "tokens" }; // the faces to cover are picked by the person's AI provider (editor-steps/blur-faces)
   if (kind !== "describe" && kind !== "look" && kind !== "transcribe" && kind !== "embed") return { cost: "free" };
   const step: LibraryStep = kind === "transcribe" ? "transcript" : kind;
   const { route, missing } = routesOf(libraryId, username, true)[step];

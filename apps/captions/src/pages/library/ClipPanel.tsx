@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { ChevronDown, Clapperboard, Clock, Copy, Download, FileText, FolderInput, FolderOpen, Images, Link2, MoreHorizontal, Pencil, RotateCcw, RotateCw, ScanFace, Share2, Trash2, X } from "lucide-react";
 import { CtMark } from "@/components/CtMark";
-import { NEEDS, type AssetCard, type AssetDetail, type SearchHit, type SimilarMatch, type TagCount } from "@contracts/library";
+import { LIBRARY_WORDS, NEEDS, type AssetCard, type AssetDetail, type SearchHit, type SimilarMatch, type TagCount } from "@contracts/library";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
@@ -256,6 +256,12 @@ function Panel({ libraryId, asset, startAt, serverPlays, inTrash, readOnly, mayK
             Keep as filmed
           </DropdownMenuItem>
         )}
+        {a.blur === "no" && !fixed && faceBlur && (
+          <DropdownMenuItem onSelect={() => void changeBlur(true)}>
+            <ScanFace className="h-4 w-4" />
+            Blur faces
+          </DropdownMenuItem>
+        )}
         {a.kind === "video" && !a.review && !readOnly && <DropdownMenuSeparator />}
         {a.kind === "video" && !a.review && !readOnly && (
           <>
@@ -388,16 +394,10 @@ function Panel({ libraryId, asset, startAt, serverPlays, inTrash, readOnly, mayK
           )}
         </dl>
       )}
-      {/* kept as filmed: one press queues its blur (Keep as filmed, the way back, is in the ⋯ menu). The app can't tell
-          a file blurred before it came in, so it says what it knows. Only with the Face Blur plug-in: nothing else blurs */}
-      {a.blur === "no" && !fixed && faceBlur && (
-        <div className="flex items-center justify-between gap-2 text-xs text-zinc-400">
-          Kept as filmed
-          <Button size="sm" variant="outline" className="h-7" onClick={() => void changeBlur(true)}>
-            <ScanFace className="h-3.5 w-3.5" />
-            Blur faces
-          </Button>
-        </div>
+      {/* a no says why (contracts BlurNote): Face Blur went over it and found no face, or a person kept it. A file left
+          as it was when Blur faces went on says nothing (What's made counts it). Blur faces, the way back, is in the ⋯ menu */}
+      {a.blur === "no" && a.blurNote !== "skipped" && faceBlur && (
+        <div className="text-xs text-zinc-400">{a.blurNote === "none" ? LIBRARY_WORDS.noFaces : LIBRARY_WORDS.keptAsFilmed}</div>
       )}
       {blur && (
         <div className="flex items-center justify-between gap-2 text-xs text-zinc-400">

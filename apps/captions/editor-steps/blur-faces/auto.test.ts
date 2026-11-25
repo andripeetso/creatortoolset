@@ -180,6 +180,8 @@ describe("the Mac that has the file", () => {
     const job = autoJobs.claim(mac)!;
     expect(await autoJobs.answer("mac-1", job.id, { nothing: "No face found", sha256: SHA })).toEqual({ reply: { ok: true } });
     expect(answerOf(v)).toBe("no");
+    // marked as gone over, not as a person's Keep as filmed: the clip says "No faces found" and What's made counts it done
+    expect((libraryDb().prepare("SELECT a.blur_note AS n FROM assets a JOIN asset_versions x ON x.asset_id = a.id WHERE x.id = ?").get(v) as { n: string }).n).toBe("none");
     expect(await queueVersion(event(v))).toBe(false);
     const w = await added("mp4");
     await queueVersion(event(w));

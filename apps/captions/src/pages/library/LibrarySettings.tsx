@@ -3,7 +3,7 @@ import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
 import { Card, Row, Section, Status, markSave } from "@/components/settings/ui";
 import { chooseDialog } from "@/lib/dialogs";
-import { getStatus, updateLibrary } from "@/lib/library";
+import { getMade, updateLibrary } from "@/lib/library";
 import { thisMacBridge } from "@/lib/thisMac";
 import { useWorkspace } from "@/lib/workspace";
 import { useAuth, useMe } from "@/lib/auth";
@@ -70,6 +70,16 @@ export function LibrarySettingsBody({ library, onChange, onError, workspace }: B
     markSave(updateLibrary(library.id, { settings }))
       .then(onChange)
       .catch((e: unknown) => onError(message(e)));
+  // Blur faces, the one switch (Proxy workflow, and What's made's Blurred copies row). Turning it on asks once whether
+  // the files already here are blurred too (blurExisting) or left as they are; either way the Blurred part of Upload
+  // (the mix's originals) starts off, and no other setting changes.
+  const setBlur = async (v: boolean) => {
+    // nothing to ask where every file here has its answer (blurred, kept as filmed, no face found); a failed count asks anyway
+    const missing = v ? (await getMade(library.id).catch(() => null))?.find((m) => m.kind === "blur")?.missing : 0;
+    const existing = missing === 0 ? "other" : await chooseDialog({ title: LIBRARY_WORDS.blurExisting.title, ok: LIBRARY_WORDS.blurExisting.yes, other: LIBRARY_WORDS.blurExisting.no });
+    if (!existing) return;
+    await save({ blurFaces: v, ...(v ? { blurExisting: existing === "ok" } : {}), ...hostedSettings({ ...hostedOf(s), originals: false }, s.finalsUpload) });
+  };
   return (
     <>
       <Section title={LIBRARY_WORDS.foldersTitle}>
@@ -79,7 +89,7 @@ export function LibrarySettingsBody({ library, onChange, onError, workspace }: B
         <Organization settings={s} save={save} />
       </Section>
       <Section title={LIBRARY_WORDS.proxyTitle}>
-        <Proxies library={library} save={save} faceBlur={faceBlur} />
+        <Proxies library={library} save={save} faceBlur={faceBlur} setBlur={(v) => void setBlur(v)} />
       </Section>
       <Section title={LIBRARY_WORDS.hostedTitle}>
         <Hosted library={library} save={save} />
@@ -88,7 +98,7 @@ export function LibrarySettingsBody({ library, onChange, onError, workspace }: B
       <Section title={LIBRARY_WORDS.analysisTitle}>
         <Effort library={library} save={save} />
       </Section>
-      <Made library={library} save={save} />
+      <Made library={library} save={save} faceBlur={faceBlur} onBlur={(v) => void setBlur(v)} />
       {level !== "off" && (
         <Section title={LIBRARY_WORDS.modelsTitle}>
           <Models settings={s} save={save} />
@@ -118,41 +128,24 @@ function Organization({ settings, save }: { settings: Settings; save: (s: Partia
 }
 
 /**
- * Blur faces (with Face Blur on in this workspace, or to turn an old one off): the blurred copies are the proxies, so
- * while it is on there is no Generate proxies or quality, and turning it on turns plain proxies off. Else Generate
- * proxies, its own switch (hosting proxies uploads the ones made, never forces them), and the quality while on.
+ * Proxy workflow, in the order of the chain (Original → Blurred copy → Proxy). Blur faces (with Face Blur on in this
+ * workspace, or to turn an old one off) and Generate proxies are two switches, and neither changes the other: under Blur
+ * faces a clip's proxy is made from its blurred copy. Proxy quality shows while proxies are made.
  */
-function Proxies({ library, save, faceBlur }: { library: LibrarySummary; save: (s: Partial<Settings> & { blurExisting?: boolean }) => Promise<unknown>; faceBlur: boolean }) {
+function Proxies({ library, save, faceBlur, setBlur }: { library: LibrarySummary; save: (s: Partial<Settings>) => Promise<unknown>; faceBlur: boolean; setBlur: (on: boolean) => void }) {
   const s = library.settings;
   const on = makesProxies(s);
   const gen = LIBRARY_WORDS.generateProxies;
   const blur = LIBRARY_WORDS.blurFaces;
-  // on: Originals leave Hosted media (the server refuses them under Blur faces), and no plain proxy is made beside the blurred one.
-  // Turning it on asks once whether the files already here are blurred too (blurExisting) or kept as filmed.
-  const setBlur = async (v: boolean) => {
-    // an empty library has nothing to ask about (a failed count asks anyway)
-    const clips = v ? (await getStatus(library.id).catch(() => null))?.clips : 0;
-    const existing = clips === 0 ? "other" : await chooseDialog({ title: LIBRARY_WORDS.blurExisting.title, ok: LIBRARY_WORDS.blurExisting.yes, other: LIBRARY_WORDS.blurExisting.no });
-    if (!existing) return;
-    await save({ blurFaces: v, ...(v ? { proxy: false, blurExisting: existing === "ok" } : {}), ...hostedSettings(v ? { ...hostedOf(s), originals: false } : hostedOf(s), s.finalsUpload) });
-  };
   return (
     <Card>
-      {(faceBlur || s.blurFaces) && (
-        <Row
-          title={blur.label}
-          tip={blur.tip}
-          status={s.blurFaces ? <Status>{LIBRARY_WORDS.proxiesBlurred}</Status> : undefined}
-          control={<Switch aria-label={blur.label} checked={!!s.blurFaces} onCheckedChange={(v) => void setBlur(v)} />}
-        />
-      )}
-      {!s.blurFaces && (
-        <Row
-          title={gen.label}
-          tip={gen.tip}
-          control={<Switch aria-label={gen.label} checked={on} onCheckedChange={(v) => void save({ proxy: v })} />}
-        />
-      )}
+      {(faceBlur || s.blurFaces) && <Row title={blur.label} tip={blur.tip} control={<Switch aria-label={blur.label} checked={!!s.blurFaces} onCheckedChange={setBlur} />} />}
+      <Row
+        title={gen.label}
+        tip={gen.tip}
+        status={s.blurFaces && on ? <Status>{LIBRARY_WORDS.proxiesFromBlurred}</Status> : undefined}
+        control={<Switch aria-label={gen.label} checked={on} onCheckedChange={(v) => void save({ proxy: v })} />}
+      />
       {on && (
         <>
           <Row title={LIBRARY_WORDS.proxyQuality.label} tip={LIBRARY_WORDS.proxyQuality.tip} />
@@ -184,8 +177,9 @@ function Hosted({ library, save }: { library: LibrarySummary; save: (s: Partial<
         <HostedSwitches
           value={hostedOf(library.settings)}
           onChange={(m) => void save(hostedSettings(m, library.settings.finalsUpload))}
-          // its switch is in Proxy workflow: here it only names Proxies Blurred and leaves Originals out
+          // its switch is in Proxy workflow: here it names the rows (Blurred, and Proxies while they are made)
           blurFaces={!!library.settings.blurFaces}
+          proxies={makesProxies(library.settings)}
         />
       )}
     </Card>

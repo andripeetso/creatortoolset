@@ -3,7 +3,7 @@ import { mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { env } from "../lib/env";
-import { blobs, fileBlur, fileProxy, libraryDb, libraryUpload, librarySetting, type ProxyAnswer } from "./db";
+import { blobs, fileBlur, fileProxy, libraryDb, libraryUpload, libraryUploadStored, librarySetting, type ProxyAnswer } from "./db";
 import { emitEvent } from "../lib/events";
 import { enqueueJob } from "./jobs";
 import { FRAMES } from "./describe";
@@ -285,8 +285,9 @@ export async function indexOnMac(libraryId: string, by: string, x: OnMacIndex): 
   // Analysis effort: Off makes no transcript on import (UNIFIED-PRD §4.4)
   if (kind === "video" && librarySetting(libraryId, "transcribe")) enqueueJob(d, libraryId, versionId, "transcribe", by);
   // Upload off with Generate proxies on: the computer holding the file makes its proxy and keeps it (library-package keepProxy);
-  // never of a file waiting for its blur, nor of its blurred render (that is the proxy, docs/face-blur-intake-prd.md §2)
-  if (kind === "video" && mine && pictures && !x.blurredOf && hostsNone(libraryUpload(libraryId)) && fileProxy(versionId) !== "no" && wantsProxy(probe as ProbeSummary, { cloud: false, on: fileProxy(versionId) === "yes" || !!librarySetting(libraryId, "proxy") }))
+  // never of a file waiting for its blur (`pictures`). A blurred copy gets its own, as any file: the proxy is made from it
+  // (docs/face-blur-intake-prd.md §2); with Upload on, its send makes it (editor-steps/blur-faces copy.ts)
+  if (kind === "video" && mine && pictures && hostsNone(x.blurredOf ? libraryUploadStored(libraryId) : libraryUpload(libraryId)) && fileProxy(versionId) !== "no" && wantsProxy(probe as ProbeSummary, { cloud: false, on: fileProxy(versionId) === "yes" || !!librarySetting(libraryId, "proxy") }))
     enqueueJob(d, libraryId, versionId, "proxy", by);
   if (kind === "video" && x.frames.length && librarySetting(libraryId, "describe")) {
     if (!pictures) {

@@ -15,6 +15,12 @@ export type VersionState = "processing" | "ready" | "failed" | "missing";
  * library's owner or an admin may choose no (api/library/upload-gate.ts blurAtIntake).
  */
 export type Blur = "yes" | "no";
+/**
+ * Why a file's answer is no (assets.blur_note): "none" Face Blur went over it and found no face to cover; "skipped" it was
+ * in the library when Blur faces went on and was left as it was (What's made → Blurred copies counts it as missing).
+ * Absent: a person kept it as filmed.
+ */
+export type BlurNote = "none" | "skipped";
 
 export interface AssetCard {
   id: string;
@@ -56,6 +62,8 @@ export interface AssetCard {
   onComputer?: true;
   /** the file's blur answer, set when it came in (Blur): "no" plays as filmed, to the team too */
   blur?: Blur;
+  /** why a no (BlurNote); absent on a file a person kept as filmed */
+  blurNote?: BlurNote;
   /** Blur faces is on and the clip has no blurred render yet: its card picture shows, nothing plays off its computer (LIBRARY_WORDS.notBlurred) */
   notBlurred?: true;
   /** the file is on a Mac and only its index is on this server (api/library/on-mac.ts): the drive's name, else the Mac's */
@@ -262,10 +270,12 @@ export type LibraryUpload = "none" | "originals" | "proxies" | "all";
 export const LIBRARY_UPLOADS: readonly LibraryUpload[] = ["none", "originals", "proxies", "all"];
 export const hostsOriginals = (u: LibraryUpload | null | undefined): boolean => u === "originals" || u === "all";
 export const hostsProxies = (u: LibraryUpload | null | undefined): boolean => u === "proxies" || u === "all";
-/** Plain proxies are made: Generate proxies on, never under Blur faces (the blurred render is the proxy). Hosting proxies never forces them. */
-export const makesProxies = (s: Pick<LibrarySettings, "proxy" | "blurFaces">): boolean => !s.blurFaces && s.proxy;
-/** Under Blur faces Upload is Off or Blurred, stored as "none" and "proxies" (the blurred render is the proxy). */
-export const BLURRED_UPLOADS: readonly LibraryUpload[] = ["none", "proxies"];
+/**
+ * Proxies are made: Generate proxies on, Blur faces or not. The chain is Original → Blurred copy → Proxy: under Blur faces
+ * a clip's proxy is made from its blurred copy (from the original where it has none: no face found, kept as filmed).
+ * Hosting proxies never forces them.
+ */
+export const makesProxies = (s: Pick<LibrarySettings, "proxy">): boolean => !!s.proxy;
 /** What a new file sends: under Blur faces nothing, since a file is not blurred when it is added. */
 export const uploadSent = (s: { upload: LibraryUpload; blurFaces?: boolean }): LibraryUpload => (s.blurFaces ? "none" : s.upload);
 /** Upload off: nothing of the library's is kept on the server (the one place the "none" word is compared). */
@@ -278,6 +288,8 @@ export const uploadFrom = (originals: boolean, proxies: boolean): LibraryUpload 
  * Hosted media as the owner sets it (setup step 5 and the owner page, one component): the Upload to server master, and
  * under it Final exports, Proxies and Originals in any mix. Off = nothing goes up, final exports included. Stored as the
  * two values it always was (upload, finalsUpload; a missing finalsUpload is "all", as the server reads it).
+ * Under Blur faces `originals` is the Blurred row: the blurred copies themselves, never an original (api/library/db.ts
+ * blurUpload); `proxies` stays the proxies, made from the blurred copies.
  */
 export interface HostedMix {
   finals: boolean;
@@ -451,12 +463,14 @@ export interface LibraryEstimate {
  * `about`: what it is, in one sentence. `auto`: sorted by itself from what the file already has, so it has no Make.
  * `ready`: a file is ready once it has it (worker.ts markReady), so what is queued for it has no Cancel.
  */
-export type MadeKind = "thumb" | "sprite" | "wave" | "fingerprint" | "proxy" | "transcribe" | "describe" | "embed" | "pictures" | "look" | "timeline" | "sound" | "roll";
+export type MadeKind = "thumb" | "sprite" | "wave" | "fingerprint" | "blur" | "proxy" | "transcribe" | "describe" | "embed" | "pictures" | "look" | "timeline" | "sound" | "roll";
 export const MADE_KINDS: readonly { kind: MadeKind; label: string; about: string; setting?: "proxy" | "transcribe" | "describe" | "embed" | "pictures" | "look" | "timeline"; auto?: true; ready?: true }[] = [
   { kind: "thumb", label: "Thumbnails", about: "The picture on each clip's card.", ready: true },
   { kind: "sprite", label: "Frame strips", about: "The frames shown while the pointer moves over a clip." },
   { kind: "wave", label: "Waveforms", about: "The shape of a clip's sound on the timeline.", ready: true },
   { kind: "fingerprint", label: "Duplicate check", about: "Marks the clips that hold the same footage twice." },
+  // Face Blur's (shown with the plug-in): no job of its own, a Mac makes each copy (editor-steps/blur-faces)
+  { kind: "blur", label: "Blurred copies", about: "A copy of each clip with its faces covered." },
   { kind: "proxy", label: "Proxies", about: "A lighter copy that plays smoothly where the original can't.", setting: "proxy" },
   { kind: "transcribe", label: "Transcripts", about: "The words said in each clip, to search and cut by.", setting: "transcribe" },
   { kind: "describe", label: "Descriptions and tags", about: "What each clip shows, its tags, and whether it needs turning upright.", setting: "describe" },
@@ -930,8 +944,11 @@ export const LIBRARY_WORDS = {
   originalsUpload: { tip: "The full files are uploaded, so they can be downloaded anywhere." },
   blurFaces: { label: "Blur faces", tip: "Only blurred videos leave your computers. Originals are never uploaded, shared or shown to your team." },
   blurred: "Blurred",
-  blurredUpload: { tip: "The blurred video of each clip is uploaded, so your team can play it. The originals stay on your computers." },
+  blurredUpload: { tip: "The blurred copy of each clip is uploaded as it is. The originals stay on your computers." },
+  proxiesFromBlurred: "Made from the blurred copies",
   notBlurred: "Not blurred yet",
+  noFaces: "No faces found",
+  keptAsFilmed: "Kept as filmed",
   noServer: "No server connected",
   sourceMediaTip: "Where your media is kept, with all its subfolders. Files you add in the app are saved to the first folder.",
   projectFilesTip: "Where project work is saved: edits, renders and test renders.",
@@ -954,7 +971,6 @@ export const LIBRARY_WORDS = {
   dropMedia: "Drop media here",
   chooseFiles: "Choose files",
   noClipsYet: "No clips yet",
-  proxiesBlurred: "Blurred copies used as proxies",
   blurExisting: { title: "Blur the files already in the library?", yes: "Blur all files", no: "New files only" },
   recommended: "Recommended",
   budget: {

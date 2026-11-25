@@ -32,11 +32,16 @@ file comes in on a Mac, marked Blur faces
        finds faces (Apple Vision) ─► the AI provider picks the ones matching Which faces
        writes the blurred copy: 1080p, high bitrate
   ─► recorded as the clip's blurred version (the app plays, edits and exports it from then on)
-  ─► Upload Proxies: that copy is uploaded once, as the proxy. Upload None: nothing is uploaded
+  ─► Upload → Blurred: that copy is uploaded as it is. Upload → Proxies (with Generate proxies on): its Mac makes the
+     proxy from the copy and uploads that. Either, both or neither
 ```
 
-The blurred copy replaces the proxy step: no plain proxy is made for a Blur faces file, and the worker already never
-makes a smaller copy of a blurred render (`worker.ts:553`). It is saved as a version (`blurred_of`), not as a proxy
+The chain is **Original → Blurred copy → Proxy** (owner, 2026-11-25). Blur faces and Generate proxies are two switches
+and neither changes the other. No proxy is ever made of a Blur faces file's original: with Generate proxies on, the
+proxy is made from the blurred copy, by the Mac that made the copy. A file with no blurred copy (no face found, or kept
+as filmed) gets its proxy from its original, and that original is never uploaded. Under Blur faces the stored Upload
+reads per file (`db.ts` `blurUpload`): its Originals part is the Blurred row, its Proxies part the Proxies row. The
+blurred copy is saved as a version (`blurred_of`), not as a proxy
 file, so exports on the owner's own Mac use it too (they read the original when the file is on that Mac).
 
 ## 3. Requirements
@@ -69,8 +74,14 @@ file, so exports on the owner's own Mac use it too (they read the original when 
 - **R9** The Mac hashes the original (full SHA-256) while it reads it, writes the copy into the library's Imports
   folder on that Mac, and records it as the clip's blurred version with only the record sent to the server. No
   round trip of the file through the server's staging (today's `saveOnComputer` path uploads it and downloads it
-  back). Under Upload Proxies the copy is then uploaded once as the proxy.
-- **R10** No plain proxy is made for a Blur faces file (`on-mac.ts:277`, `worker.ts:554`).
+  back). The copy is then sent as Upload asks (Blurred: the copy; Proxies: the proxy made from it).
+- **R10** No proxy is made of a Blur faces file's original (`on-mac.ts`, `worker.ts`); its proxy is made from its
+  blurred copy.
+- **R11** Why a file's answer is no is kept (`assets.blur_note`, contracts `BlurNote`): `none`, Face Blur went over it
+  and found no face ("No faces found" on the clip); `skipped`, it was in the library when Blur faces went on and was
+  left as it was; absent, a person kept it as filmed. Switching Blur faces on never touches the files already there
+  unless the person answers Blur all files. What's made → Blurred copies counts the skipped ones as missing, and its Make
+  hands them to Face Blur; with none missing, the switch asks nothing.
 
 ### Screens
 
@@ -137,7 +148,7 @@ The Mac, in order:
 - No provider or empty Which faces: no claim. A limit puts the file back and pauses the account's claims.
 - None matched: answer becomes no, not queued again.
 - The copy becomes the current version with `blurred_of`; under Upload None no file bytes reach the server.
-- No proxy job for a Blur faces file.
+- No proxy job for a Blur faces file's original.
 
 ## 6. Before the big run
 

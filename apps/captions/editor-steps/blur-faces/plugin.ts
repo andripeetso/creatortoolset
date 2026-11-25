@@ -375,9 +375,9 @@ const versionGone = (versionId: string) =>
 const ready = (owner: string) => !draining() && !pausedUntil(owner) && !isHeld(owner) && anyVisionConfigured(owner);
 const offered = (j: AutoJob, device: string, now: number) => j.state === "queued" && j.mac === device && !(j.awayUntil && j.awayUntil > now);
 
-/** No face to cover, or none the AI chose: the file is kept as filmed (its blur answer no), as the person asked. */
+/** No face to cover, or none the AI chose: the file is kept as filmed (its blur answer no), marked as gone over (blur_note none). */
 function keepAsFilmed(versionId: string): void {
-  libraryDb().prepare("UPDATE assets SET blur = 'no' WHERE id = (SELECT asset_id FROM asset_versions WHERE id = ?)").run(versionId);
+  libraryDb().prepare("UPDATE assets SET blur = 'no', blur_note = 'none' WHERE id = (SELECT asset_id FROM asset_versions WHERE id = ?)").run(versionId);
   emitEvent("library.changed", {});
 }
 /** The original's full SHA-256 its Mac read: kept on the job, and on the version when it has none (the copy links on it). */

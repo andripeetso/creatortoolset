@@ -1,5 +1,5 @@
 import path from "node:path";
-import { hostsProxies } from "../../contracts/library";
+import { hostsNone } from "../../contracts/library";
 import { libraryDb, libraryUploadStored } from "../../api/library/db";
 import { enqueueJob } from "../../api/library/jobs";
 import { indexOnMac } from "../../api/library/on-mac";
@@ -25,8 +25,8 @@ export function checkMade(b: unknown): Made | string {
 
 /**
  * Records a copy on `device` (a Mac of `owner`'s) in the library: with `blurredOf` (its original's full SHA-256) it becomes
- * that clip's current, blurred version (routes.ts originalClipOf). Under Upload Proxies its Mac makes the team's proxy from
- * the copy where it is and sends it (job "send", derived.ts sendLater).
+ * that clip's current, blurred version (routes.ts originalClipOf). Its Mac then sends what Upload asks for (job "send",
+ * derived.ts sendLater): the copy itself under Blurred, the proxy it makes from the copy under Proxies (db.ts blurUpload).
  */
 export async function recordCopy(libraryId: string, owner: string, device: string, m: Made, blurredOf?: string) {
   const r = await indexOnMac(libraryId, owner, {
@@ -35,7 +35,7 @@ export async function recordCopy(libraryId: string, owner: string, device: strin
     ...(m.width !== undefined ? { width: m.width } : {}), ...(m.height !== undefined ? { height: m.height } : {}),
     ...(m.thumb ? { thumb: m.thumb } : {}), ...(blurredOf ? { blurredOf } : {}),
   });
-  if ("versionId" in r && hostsProxies(libraryUploadStored(libraryId))) {
+  if ("versionId" in r && !hostsNone(libraryUploadStored(libraryId))) {
     const db = libraryDb();
     db.prepare("UPDATE asset_versions SET from_path = ?, from_device = ? WHERE id = ?").run(m.path, device, r.versionId);
     enqueueJob(db, libraryId, r.versionId, "send", owner);

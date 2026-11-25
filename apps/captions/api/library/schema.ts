@@ -751,4 +751,13 @@ export const MIGRATIONS: string[] = [
   // Generate proxies (db.ts fileProxy). An upload carries the answer it was started with
   `ALTER TABLE assets ADD COLUMN proxy TEXT;
   ALTER TABLE uploads ADD COLUMN proxy TEXT;`,
+  // why a file's blur answer is no (contracts BlurNote): 'none' Face Blur found no face to cover, 'skipped' it was in the
+  // library when Blur faces went on and nobody asked for it; null a person kept it as filmed (every no from before this)
+  `ALTER TABLE assets ADD COLUMN blur_note TEXT;`,
+  // Blur faces, Upload → Blurred: stored as "proxies" until now, it is the Originals part from here on (db.ts blurUpload:
+  // the blurred copies themselves; Proxies is its own row). Generate proxies was never read under Blur faces, so it is
+  // stored off there: nothing starts being made by this
+  `UPDATE libraries SET settings = json_set(settings, '$.upload', 'originals')
+     WHERE json_extract(settings, '$.blurFaces') = 1 AND json_extract(settings, '$.upload') IN ('proxies', 'all');
+   UPDATE libraries SET settings = json_set(settings, '$.proxy', json('false')) WHERE json_extract(settings, '$.blurFaces') = 1;`,
 ];

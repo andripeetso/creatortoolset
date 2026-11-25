@@ -127,7 +127,7 @@ export function parseSearch(p: Record<string, string | undefined>, username?: st
 
 export const CARD = `a.id AS id, a.library_id AS library_id, a.kind AS kind, a.title AS title, a.created_at AS created_at, ${FILE_DATE} AS filmed_at, v.bytes AS bytes,
   a.trashed_at AS trashed_at, v.id AS version_id, v.n AS version_n, v.state AS state, v.probe AS probe,
-  ${BLUR_SQL} AS blur, (v.blurred_of IS NULL AND ${BLUR_SQL} = 'yes') AS not_blurred,
+  ${BLUR_SQL} AS blur, a.blur_note AS blur_note, (v.blurred_of IS NULL AND ${BLUR_SQL} = 'yes') AS not_blurred,
   EXISTS (SELECT 1 FROM derivatives d WHERE d.version_id = v.id AND d.kind = 'thumb') AS has_thumb,
   EXISTS (SELECT 1 FROM derivatives d WHERE d.version_id = v.id AND d.kind = 'sprite') AS has_sprite,
   (SELECT d.bytes FROM derivatives d WHERE d.version_id = v.id AND d.kind = 'thumb') AS thumb_v,
@@ -146,6 +146,7 @@ export interface CardRow {
   library_id: string;
   /** Blur faces is on and this version is not a blurred render */
   not_blurred?: number;
+  blur_note?: string | null;
   blur?: Blur;
   kind: AssetKind;
   title: string;
@@ -324,6 +325,7 @@ export function toCard(r: CardRow): AssetCard {
     // a turned clip's pictures were made again: a new address, so no window shows the one it kept
     ...(notBlurred ? { notBlurred: true as const } : {}),
     ...(r.blur ? { blur: r.blur } : {}),
+    ...(r.blur === "no" && (r.blur_note === "none" || r.blur_note === "skipped") ? { blurNote: r.blur_note } : {}),
     ...(r.has_thumb ? { thumbUrl: `/api/library/media/${r.version_id}/thumb${query({ t: turn || undefined, v: r.thumb_v || undefined })}` } : {}),
     // a strip made again in the clip's shape has a new address too (its frame size), so no window keeps the old one
     ...(r.has_sprite ? { spriteUrl: `/api/library/media/${r.version_id}/sprite${query({ t: turn || undefined, s: r.sprite_cell ?? undefined, v: r.sprite_v || undefined })}` } : {}),

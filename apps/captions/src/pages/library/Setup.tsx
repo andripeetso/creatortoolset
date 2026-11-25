@@ -590,7 +590,7 @@ export function LibrarySetup({ library, inline = false, stay, onDone, onClose }:
     // hosted: only on a server or Cloud
     return (
       <Card>
-        <HostedSwitches value={a.hosted} onChange={(m) => set({ hosted: m })} blurFaces={a.blurFaces} onBlurFaces={faceBlur ? (on, m) => set({ blurFaces: on, hosted: m }) : undefined} />
+        <HostedSwitches value={a.hosted} onChange={(m) => set({ hosted: m })} blurFaces={a.blurFaces} proxies={a.proxy} onBlurFaces={faceBlur ? (on, m) => set({ blurFaces: on, hosted: m }) : undefined} />
       </Card>
     );
   };

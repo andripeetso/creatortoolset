@@ -4,7 +4,7 @@ import { aiFor, anthropicParams, onApiKey } from "../ai-complete";
 import { PICTURE_MODEL } from "../lib/device-picture";
 import { deviceOf, isOnline, listDevices } from "../lib/devices";
 import { libraryWorkspace, serverWorks } from "../work/server-work";
-import { keepsOnlyOriginals, libraryDb } from "./db";
+import { BLUR_SQL, keepsOnlyOriginals, libraryDb } from "./db";
 import { FINISHED } from "./query";
 import { DESCRIBE_LABEL, whoFor } from "./describe";
 import { makeCost, makeMinutes } from "./estimate";
@@ -57,6 +57,17 @@ const SPEC: Record<MadeKind, { job?: string; of: string; have: string; can?: str
   sprite: { job: "sprite", of: `a.kind = 'video' AND NOT ${MUSIC}`, have: derived("sprite"), can: HERE },
   wave: { job: "wave", of: "a.kind IN ('video', 'audio')", have: derived("wave"), can: HERE },
   fingerprint: { job: "fingerprint", of: `a.kind = 'video' AND NOT ${MUSIC}`, have: derived("fingerprint"), can: HERE },
+  // Face Blur's copies (no job here: a Mac makes each, editor-steps/blur-faces). Has it: a blurred copy, or a no that was
+  // decided (kept as filmed, its folder's rule, or gone over with no face found). On its way: marked yes, its copy not
+  // in yet. Missing: nobody answered for it. Either Blur faces is off (the switch then asks about these), or it was left
+  // as it was when Blur faces went on (blur_note skipped), which Make marks yes (routes.ts POST …/made/blur)
+  blur: {
+    of: "a.kind IN ('video', 'image')",
+    have: `(v.blurred_of IS NOT NULL OR EXISTS (SELECT 1 FROM asset_versions b WHERE b.asset_id = a.id AND b.blurred_of IN (v.sha256, v.full_sha256))
+      OR (${BLUR_SQL} = 'no' AND IFNULL(a.blur_note, '') != 'skipped' AND NOT (a.blur IS NULL AND json_extract(l.settings, '$.blurFaces') IS NOT 1
+        AND NOT EXISTS (SELECT 1 FROM collection_items fi JOIN collections fc ON fc.id = fi.collection_id WHERE fi.asset_id = a.id AND fc.blur = 'no'))))`,
+    open: `${BLUR_SQL} = 'yes'`,
+  },
   proxy: { job: "proxy", of: "a.kind = 'video'", have: derived("proxy") },
   // a video indexed on a Mac: its probe has no sound codec (on-mac.ts), and it gets a transcript all the same
   transcribe: {
@@ -196,6 +207,8 @@ export function engineOf(libraryId: string, kind: MadeKind, username: string): P
         return { engine: "FFmpeg", where: videoWhere(libraryId, username) };
       case "fingerprint":
         return { engine: "FFmpeg and PDQ picture hashes", where: videoWhere(libraryId, username) };
+      case "blur":
+        return { engine: "Face Blur", where: "the Mac that has each file" };
       case "transcribe": {
         const r = transcribeRoute(username);
         if (r.provider === "deepgram") return { engine: "Deepgram nova-3", where: "Deepgram" };
@@ -294,6 +307,7 @@ export function waitOf(libraryId: string, kind: MadeKind, username: string): Pic
  * at this moment from now on (`picturesAsked`, `timelineAsked`). Returns how many files.
  */
 export function makeMissing(libraryId: string, kind: MadeKind, username: string, now = Date.now()): number {
+  if (kind === "blur") return 0; // no job of its own: the route marks the files and asks Face Blur (routes.ts)
   const db = libraryDb();
   const files = missingOf(libraryId, kind, username);
   if (kind === "pictures" || kind === "timeline") {

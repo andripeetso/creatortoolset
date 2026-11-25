@@ -583,8 +583,8 @@ export async function afterProbe(
   const onlyProxy = v.kind === "video" && hostsProxies(vu) && !hostsOriginals(vu);
   // Originals only keeps no proxy on the server, not even one in a bucket (UNIFIED-PRD §4.2)
   const originalsOnly = keepsOnlyOriginals(v.library_id);
-  // a blurred render is its clip's proxy (Blur faces): kept as it is, never a smaller copy made and the render dropped;
-  // a file marked Blur faces gets none of its original either: its blurred render takes the proxy's place
+  // Original → Blurred copy → Proxy: a file marked Blur faces gets no proxy of its original, the proxy is made from its
+  // blurred copy, by the Mac that made the copy (its send, or its own proxy job: on-mac.ts); this server cuts none of one
   // the add's own answer (the add sheet): Skip processing makes none, Generate proxies one whatever the switch says
   const asked = fileProxy(v.id);
   if (v.kind !== "image" && !isBlurred(v.id) && fileBlur(v.id)?.blur !== "yes" && asked !== "no" && wantsProxy(p, { cloud: (!originalsOnly && proxiesInCloud(v.library_id)) || onlyProxy, on: !originalsOnly && (asked === "yes" || librarySetting(v.library_id, "proxy")) })) want("proxy");

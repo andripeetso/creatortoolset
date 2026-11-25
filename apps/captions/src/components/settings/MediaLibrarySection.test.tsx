@@ -250,16 +250,30 @@ describe("Settings → Media Library, the owner's page", () => {
     expect([...host!.querySelectorAll("button")].some((b) => b.textContent?.startsWith("Make 0"))).toBe(false);
   });
 
-  it("Blur faces is set in Proxy workflow, where the blurred copies are the proxies", async () => {
-    const blurs = { ...library, settings: { ...library.settings, blurFaces: true, upload: "proxies" as const } };
+  it("Blur faces and Generate proxies are two switches of Proxy workflow; Upload offers Blurred and Proxies, never Originals", async () => {
+    made = [{ kind: "blur", have: 14, missing: 0, queued: 0, cost: "tokens" }];
+    const blurs = { ...library, settings: { ...library.settings, blurFaces: true, proxy: true, upload: "all" as const } };
     await render(<LibrarySettingsBody library={blurs} watch={watch} onChange={() => {}} onError={() => {}} />);
     const sw = [...host!.querySelectorAll('[aria-label="Blur faces"]')];
     expect(sw).toHaveLength(1); // not again under Hosted media
+    // the chain: the proxy is made from the blurred copy, and neither switch hides the other
+    for (const words of ["Generate proxies", LIBRARY_WORDS.proxiesFromBlurred, "Proxy quality"]) expect(bodyText()).toContain(words);
+    const row = (label: string) => host!.querySelector(`button[role="switch"][aria-label="${label}"]`);
+    expect([!!row("Blurred"), !!row("Proxies"), !!row("Originals")]).toEqual([true, true, false]);
+    // What's made has the blurred copies' row, its New files switch the same Blur faces
     expect(bodyText()).toContain("Blurred copies");
-    expect(bodyText()).not.toContain("Generate proxies"); // the blurred copies are the proxies
-    expect(bodyText()).not.toContain("Proxy quality");
+    expect(row("Blurred copies for new files")?.getAttribute("aria-checked")).toBe("true");
+    // off: Blurred (the Originals part) does not become Originals, and Generate proxies is left as it is
     await act(async () => (sw[0] as HTMLButtonElement).click());
-    expect(patches.at(-1)).toMatchObject({ settings: { blurFaces: false } });
+    expect(patches.at(-1)).toEqual({ settings: { blurFaces: false, upload: "proxies", finalsUpload: expect.any(String) } });
+  });
+
+  it("under Blur faces with Generate proxies off, Upload offers no Proxies row", async () => {
+    const blurs = { ...library, settings: { ...library.settings, blurFaces: true, proxy: false, upload: "originals" as const } };
+    await render(<LibrarySettingsBody library={blurs} watch={watch} onChange={() => {}} onError={() => {}} />);
+    const row = (label: string) => host!.querySelector(`button[role="switch"][aria-label="${label}"]`);
+    expect([row("Blurred")?.getAttribute("aria-checked"), !!row("Proxies")]).toEqual(["true", false]);
+    expect(bodyText()).not.toContain(LIBRARY_WORDS.proxiesFromBlurred);
   });
 
   it("asks nothing about how to import: where a file is decides", async () => {

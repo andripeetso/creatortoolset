@@ -37,10 +37,10 @@ for (const [id, at] of [["ws_kids", 0], ["ws_two", 1]] as const)
   writeFileSync(path.join(dir, "workshop", "projects", `${id}.json`), JSON.stringify({ id, owner: "tinyacrobatics", name: id, createdAt: at, updatedAt: at }));
 
 const { sessionCookieFor } = await import("../auth");
-const { fileBlur, libraryDb, playOf } = await import("./db");
+const { fileBlur, keepsOnlyOriginals, libraryDb, playOf, versionUpload } = await import("./db");
 const { libraryApp, serveGate, mediaFile } = await import("./routes");
 const { shareApp, publicShareApp } = await import("./shares");
-const { blurAtIntake, mayGoPublic, mayKeepAsFilmed, mayLeave, mayReceive, mayServe, REFUSED_BLUR, REFUSED_NOT_BLURRED, BLUR_UPLOADS, workspaceLibrary } = await import("./upload-gate");
+const { blurAtIntake, mayGoPublic, mayKeepAsFilmed, mayLeave, mayReceive, mayServe, REFUSED_BLUR, REFUSED_NOT_BLURRED, workspaceLibrary } = await import("./upload-gate");
 const { macFrames, dropHeldCopy, dropMacFrames, noPicture, putSprite, putThumb, strayStrips, holdStills, HELD_STILLS_BYTES, HELD_STILLS_MS } = await import("./on-mac");
 const { versionSource } = await import("./access");
 const { lightKey } = await import("../editor/reach");
@@ -103,21 +103,22 @@ async function sendBlurred(library: string, name: string, bytes: string, of: str
   return { status: done.status, ...got, versionId: got.versionId ?? (got.assetId ? vOf(got.assetId) : undefined) };
 }
 
-describe("settings: Blur faces is the owner's, and Upload is Off or Blurred under it", () => {
-  it("refuses Originals with Blur faces on, takes Off and Blurred, and a member can't change it", async () => {
+describe("settings: Blur faces is the owner's, and Originals never crosses its switch", () => {
+  it("a flip drops the Originals part unless the save names an Upload; under it Blurred (stored originals) and Proxies mix freely; a member can't change it", async () => {
     lib("lib_set", { upload: "all" });
     const patch = (settings: Record<string, unknown>, who?: string) =>
       app.request("/api/library/lib_set", { method: "PATCH", headers: { "content-type": "application/json", ...(who ? { "x-as": who } : {}) }, body: JSON.stringify({ settings }) });
-    const r = await patch({ blurFaces: true });
-    expect(r.status).toBe(400);
-    expect((await body(r)).error).toBe(BLUR_UPLOADS);
-    expect((await patch({ blurFaces: true, upload: "originals" })).status).toBe(400);
-    const on = await patch({ blurFaces: true, upload: "proxies" });
-    expect((await body(on)).settings).toMatchObject({ blurFaces: true, upload: "proxies" });
-    expect((await patch({ upload: "all" })).status).toBe(400);
-    expect((await patch({ upload: "none" })).status).toBe(200);
+    // on with no Upload named: Originals does not become Blurred by itself, Proxies stays
+    expect((await body(await patch({ blurFaces: true }))).settings).toMatchObject({ blurFaces: true, upload: "proxies" });
+    for (const upload of ["originals", "all", "none", "proxies"]) expect((await body(await patch({ upload }))).settings, upload).toMatchObject({ upload });
     expect((await patch({ blurFaces: false }, "sam")).status).toBe(404);
-    expect((await body(patch({ blurFaces: false, upload: "all" }))).settings).toMatchObject({ upload: "all" });
+    // off with no Upload named: Blurred does not become Originals
+    await patch({ upload: "all" });
+    const off = (await body(await patch({ blurFaces: false }))).settings;
+    expect([!!off.blurFaces, off.upload]).toEqual([false, "proxies"]);
+    // a save that names its Upload is taken as said
+    expect((await body(await patch({ blurFaces: true, upload: "originals" }))).settings).toMatchObject({ blurFaces: true, upload: "originals" });
+    expect((await body(await patch({ blurFaces: false, upload: "all" }))).settings).toMatchObject({ upload: "all" });
   });
 });
 
@@ -651,5 +652,39 @@ describe("after a full ingest the server's disk holds no frame of an original", 
       expect(refused.has(createHash("sha256").update(readFileSync(f)).digest("hex")), f).toBe(false);
       for (const id of ids) expect(!card(f) && f.includes(id), f).toBe(false);
     }
+  });
+});
+
+describe("Upload under Blur faces: Blurred is the blurred copies, Proxies the proxies (Original → Blurred copy → Proxy)", () => {
+  it("a blurred copy follows both rows, a file kept as filmed only Proxies, an original waiting for its blur neither", async () => {
+    lib("lib_rows", { upload: "all", blurFaces: true });
+    const ORIGINAL = sha("rows-original");
+    const yes = await body(onMac("lib_rows", "Rows take.mov", { sha256: ORIGINAL }));
+    const kept = await body(onMac("lib_rows", "Rows toy.mov"));
+    d.prepare("UPDATE assets SET blur = 'no', blur_note = 'none' WHERE id = ?").run(kept.assetId);
+    const blurred = await sendBlurred("lib_rows", "Rows take blurred.mp4", "rows-blurred-bytes", ORIGINAL);
+    expect(blurred.status).toBe(200);
+    const original = (d.prepare("SELECT id FROM asset_versions WHERE asset_id = ? AND blurred_of IS NULL").get(yes.assetId) as { id: string }).id;
+    const rows = (upload: string) => {
+      d.prepare("UPDATE libraries SET settings = json_set(settings, '$.upload', ?) WHERE id = 'lib_rows'").run(upload);
+      return [versionUpload(blurred.versionId!), versionUpload(kept.versionId), versionUpload(original), keepsOnlyOriginals("lib_rows")];
+    };
+    expect(rows("originals")).toEqual(["originals", "none", "none", true]); // Blurred alone: the copies, and no proxy kept
+    expect(rows("proxies")).toEqual(["proxies", "proxies", "none", false]);
+    expect(rows("all")).toEqual(["all", "proxies", "none", false]); // a kept file's original never goes up
+    expect(rows("none")).toEqual(["none", "none", "none", false]);
+    // the card says why a no: Face Blur went over it and found no face
+    const card = d.prepare(`SELECT ${CARD} FROM assets a JOIN asset_versions v ON v.id = a.current_version_id WHERE a.id = ?`).get(kept.assetId);
+    expect(toCard(card as never)).toMatchObject({ blur: "no", blurNote: "none" });
+  });
+
+  it("the migration: Blurred, stored as proxies until now, becomes the Originals part and Generate proxies is stored off, only where Blur faces is on", async () => {
+    const { MIGRATIONS } = await import("./schema");
+    lib("lib_mig", { upload: "proxies", blurFaces: true, proxy: true });
+    lib("lib_mig_plain", { upload: "proxies", proxy: true });
+    d.exec(MIGRATIONS.find((m) => m.includes("'$.upload', 'originals'"))!);
+    const stored = (id: string) => JSON.parse((d.prepare("SELECT settings FROM libraries WHERE id = ?").get(id) as { settings: string }).settings) as { upload: string; proxy: boolean };
+    expect(stored("lib_mig")).toMatchObject({ upload: "originals", proxy: false });
+    expect(stored("lib_mig_plain")).toMatchObject({ upload: "proxies", proxy: true });
   });
 });

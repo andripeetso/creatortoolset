@@ -161,5 +161,38 @@ describe("Blur faces turned on and off", () => {
     expect(asked).not.toContain(kept); // kept as filmed on purpose
     await patch({ blurFaces: false });
   });
+  it("on with New files only: the clips already here are left as they are, What's made counts them as missing, and its Make hands them to Face Blur", async () => {
+    const { libraryMade } = await import("./made");
+    await patch({ blurFaces: false, upload: "all" });
+    const [old, kept] = [await upload("lib_blur", "before-skip.mp4"), await upload("lib_blur", "kept-skip.mp4")];
+    await drain(["probe"]);
+    d.prepare("UPDATE assets SET blur = 'no' WHERE current_version_id = ?").run(kept);
+    const mark = (v: string) => d.prepare("SELECT blur, blur_note FROM assets WHERE current_version_id = ?").get(v) as { blur: string | null; blur_note: string | null };
+    const row = async () => (await libraryMade("lib_blur", "tiny")).find((m) => m.kind === "blur")!;
+    // Blur faces off: a file nobody answered for is what the switch would ask about; one kept as filmed is not
+    const missing = (await row()).missing;
+    expect(missing).toBeGreaterThan(0);
+    await patch({ blurFaces: true }); // New files only
+    expect(mark(old)).toEqual({ blur: "no", blur_note: "skipped" });
+    expect(mark(kept)).toEqual({ blur: "no", blur_note: null });
+    expect(await row()).toMatchObject({ missing, queued: 0 }); // nothing ran, nothing is waiting: the same files are missing
+    const asked: string[] = [];
+    const off = onEvent("library.version.blur", (e) => void asked.push(e.versionId));
+    const made = (await (await app.request("/api/library/lib_blur/made/blur", { method: "POST" })).json()) as { files: number };
+    off();
+    expect(made.files).toBeGreaterThan(0);
+    expect(asked).toContain(old);
+    expect(asked).not.toContain(kept);
+    expect(mark(old)).toEqual({ blur: "yes", blur_note: null });
+    expect(await row()).toMatchObject({ missing: 0 });
+    // a person's answer says why from then on: no note left
+    d.prepare("UPDATE assets SET blur = 'no', blur_note = 'skipped' WHERE current_version_id = ?").run(old);
+    const asset = (d.prepare("SELECT id FROM assets WHERE current_version_id = ?").get(old) as { id: string }).id;
+    await app.request(`/api/library/lib_blur/assets/${asset}/blur`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ blur: "no" }) });
+    expect(mark(old)).toEqual({ blur: "no", blur_note: null });
+    // with Blur faces off there is nothing to make: a file marked yes would wait for a blur nobody runs
+    await patch({ blurFaces: false });
+    expect((await app.request("/api/library/lib_blur/made/blur", { method: "POST" })).status).toBe(400);
+  });
 });
 

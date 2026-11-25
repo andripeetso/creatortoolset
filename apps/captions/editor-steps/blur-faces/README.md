@@ -52,8 +52,9 @@ Each photo and video marked Blur faces (the file's blur answer, set when it come
 that a Mac indexes into a built-in Media Library of a workspace where Face Blur is on (the library's
 `settings.projectId`) is covered on that Mac, where the file is, with the faces described in Which faces. The copy
 becomes the clip's blurred version (`blurred_of`, the original's full SHA-256): the app plays, edits and exports it
-from then on, and under Upload Proxies its Mac makes the team's proxy from it (job `send`). No plain proxy is made of
-the original. The whole design: `docs/face-blur-intake-prd.md`.
+from then on. Upload → Blurred sends the copy as it is; with Generate proxies on, the proxy is made from the copy and
+Upload → Proxies sends that (job `send`). No proxy is made of the original. A file with no face found keeps its answer
+no, marked as gone over (`blur_note` none): the clip says "No faces found". The whole design: `docs/face-blur-intake-prd.md`.
 
 - **Trigger:** on-Mac indexing of a yes-file (`library.version.blur` from `on-mac.ts`), a file marked Blur faces later
   (`library.version.blur`), the worker's `library.version.probed`, and a sweep a few seconds after the server starts.
@@ -75,8 +76,8 @@ the original. The whole design: `docs/face-blur-intake-prd.md`.
 
 Copies blurred before Face Blur (by hand or another tool) are added to the clips they belong to, so nothing is blurred
 again (`reconnect.ts`). One time, by the library's owner or an admin, with an access key from Headless access. Turning
-Blur faces on asks once whether to blur the files already in the library: New files only keeps them as filmed (nothing is
-queued), so this can run before or after; Blur all files queues every one, so run this first.
+Blur faces on asks once whether to blur the files already in the library: New files only leaves them as they are (nothing is
+queued; What's made → Blurred copies counts them as missing and can blur them later), so this can run before or after; Blur all files queues every one, so run this first.
 
 `POST /api/x/blur-faces/reconnect` `{ libraryId, dry?: true, rows }`, at most 500 rows a call → `{ rows: [{ i,
 versionId, result, copyVersionId?, error? }] }`. Each row finds its clip by `versionId` or by `path` (the original's
