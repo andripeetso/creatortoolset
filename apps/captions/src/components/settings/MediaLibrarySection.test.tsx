@@ -248,6 +248,8 @@ describe("Settings → Media Library, the owner's page", () => {
     const sw = [...host!.querySelectorAll('[aria-label="Blur faces"]')];
     expect(sw).toHaveLength(1); // not again under Hosted media
     expect(bodyText()).toContain("Blurred copies");
+    expect(bodyText()).not.toContain("Generate proxies"); // the blurred copies are the proxies
+    expect(bodyText()).not.toContain("Proxy quality");
     await act(async () => (sw[0] as HTMLButtonElement).click());
     expect(patches.at(-1)).toMatchObject({ settings: { blurFaces: false } });
   });

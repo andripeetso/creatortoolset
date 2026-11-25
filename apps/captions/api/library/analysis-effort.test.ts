@@ -46,6 +46,9 @@ d.prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings
 d.prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES ('lib_on', 'owner-a', 'On', 'local', ?, 0)").run(
   JSON.stringify({ upload: "all", proxy: false }),
 );
+d.prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES ('lib_blur', 'owner-a', 'Blur', 'local', ?, 0)").run(
+  JSON.stringify({ upload: "all", proxy: false, ...flagsOf("off") }),
+);
 
 /** A file sent from a Mac and added to `lib` (as the Mac app's upload does); returns its version id. */
 async function upload(lib: string, name: string): Promise<string> {
@@ -122,5 +125,21 @@ describe("a settings save under Hosted proxies", () => {
     await patch({ upload: "none" });
     await patch({ upload: "all" });
     expect(jobs(id)).toContain("proxy");
+  });
+});
+
+describe("Blur faces turned on and off", () => {
+  const patch = (settings: object) => app.request("/api/library/lib_blur", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ settings }) });
+  const blurOf = (id: string) => (d.prepare("SELECT a.blur FROM assets a JOIN asset_versions v ON v.asset_id = a.id WHERE v.id = ?").get(id) as { blur: string | null }).blur;
+  it("on: the clips already here stay as filmed (this library only); off again queues no proxy for every clip", async () => {
+    const old = await upload("lib_blur", "before.mp4");
+    await drain(["probe"]);
+    await patch({ blurFaces: true, proxy: false, upload: "proxies" });
+    expect(blurOf(old)).toBe("no");
+    // only this library's clips get the answer; a file added later has none, so it follows the switch (blurred)
+    expect(d.prepare("SELECT COUNT(*) AS n FROM assets WHERE library_id != 'lib_blur' AND blur IS NOT NULL").get()).toEqual({ n: 0 });
+    d.prepare("DELETE FROM jobs WHERE version_id = ? AND kind = 'proxy'").run(old);
+    await patch({ blurFaces: false });
+    expect(jobs(old)).not.toContain("proxy");
   });
 });

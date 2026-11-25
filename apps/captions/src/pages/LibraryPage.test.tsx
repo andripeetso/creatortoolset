@@ -317,7 +317,7 @@ describe("Media Library page", () => {
     await settle();
     const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
     expect([...dialog.querySelectorAll("h2")].map((h) => h.textContent)).toEqual(["Library status", "Files", "What's made"]);
-    expect(dialog.textContent).toContain("1 file failed · 2 of 4 · Free");
+    expect(dialog.textContent).toContain("1 file failed · 2 of 4 made");
     await act(async () => [...dialog.querySelectorAll("button")].find((b) => b.textContent === "Retry")!.click());
     expect(server.retried).toEqual(["transcribe"]);
     await act(async () => {

@@ -117,27 +117,37 @@ function Organization({ settings, save }: { settings: Settings; save: (s: Partia
 }
 
 /**
- * Blur faces (with Face Blur on in this workspace, or to turn an old one off: the blurred copy is the proxy, so it is
- * set here, server or not), Generate proxies (forced on while Hosted media hosts proxies) and the quality while on.
+ * Blur faces (with Face Blur on in this workspace, or to turn an old one off): the blurred copies are the proxies, so
+ * while it is on there is no Generate proxies or quality, and turning it on turns plain proxies off. Else Generate
+ * proxies (forced on while Hosted media hosts proxies) and the quality while on.
  */
 function Proxies({ library, save, faceBlur }: { library: LibrarySummary; save: (s: Partial<Settings>) => Promise<unknown>; faceBlur: boolean }) {
   const s = library.settings;
   const hosted = hostsProxies(s.upload);
-  const on = hosted || s.proxy;
+  const on = !s.blurFaces && (hosted || s.proxy);
   const gen = LIBRARY_WORDS.generateProxies;
   const blur = LIBRARY_WORDS.blurFaces;
-  // on: Originals leave Hosted media (the server refuses them under Blur faces)
-  const setBlur = (v: boolean) => void save({ blurFaces: v, ...hostedSettings(v ? { ...hostedOf(s), originals: false } : hostedOf(s), s.finalsUpload) });
-  const status = [s.blurFaces ? LIBRARY_WORDS.proxiesBlurred : "", hosted ? LIBRARY_WORDS.proxiesHostedOn : ""].filter(Boolean).join(" · ");
+  // on: Originals leave Hosted media (the server refuses them under Blur faces), and no plain proxy is made beside the blurred one
+  const setBlur = (v: boolean) =>
+    void save({ blurFaces: v, ...(v ? { proxy: false } : {}), ...hostedSettings(v ? { ...hostedOf(s), originals: false } : hostedOf(s), s.finalsUpload) });
   return (
     <Card>
-      {(faceBlur || s.blurFaces) && <Row title={blur.label} tip={blur.tip} control={<Switch aria-label={blur.label} checked={!!s.blurFaces} onCheckedChange={setBlur} />} />}
-      <Row
-        title={gen.label}
-        tip={gen.tip}
-        status={status ? <Status>{status}</Status> : undefined}
-        control={<Switch aria-label={gen.label} checked={on} disabled={hosted} onCheckedChange={(v) => void save({ proxy: v })} />}
-      />
+      {(faceBlur || s.blurFaces) && (
+        <Row
+          title={blur.label}
+          tip={blur.tip}
+          status={s.blurFaces ? <Status>{LIBRARY_WORDS.proxiesBlurred}</Status> : undefined}
+          control={<Switch aria-label={blur.label} checked={!!s.blurFaces} onCheckedChange={setBlur} />}
+        />
+      )}
+      {!s.blurFaces && (
+        <Row
+          title={gen.label}
+          tip={gen.tip}
+          status={hosted ? <Status>{LIBRARY_WORDS.proxiesHostedOn}</Status> : undefined}
+          control={<Switch aria-label={gen.label} checked={on} disabled={hosted} onCheckedChange={(v) => void save({ proxy: v })} />}
+        />
+      )}
       {on && (
         <>
           <Row title={LIBRARY_WORDS.proxyQuality.label} tip={LIBRARY_WORDS.proxyQuality.tip} />

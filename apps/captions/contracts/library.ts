@@ -464,7 +464,6 @@ export const MADE_KINDS: readonly { kind: MadeKind; label: string; about: string
 ];
 /** Tokens: an AI provider or an AI key; paid: an outside service's key (Deepgram, OpenAI); free: this server or the person's own computer. */
 export type MadeCost = "tokens" | "paid" | "free";
-export const MADE_COST_LABEL: Record<MadeCost, string> = { tokens: "Uses tokens", paid: "Paid", free: "Free" };
 
 /** GET /api/library/:id/made: one kind over the files in the library now (the trash and hidden clips left out). */
 export interface LibraryMade {
@@ -951,7 +950,7 @@ export const LIBRARY_WORDS = {
   chooseFiles: "Choose files",
   noClipsYet: "No clips yet",
   proxiesHostedOn: "On while proxies are hosted",
-  proxiesBlurred: "Blurred copies",
+  proxiesBlurred: "Blurred copies used as proxies",
   recommended: "Recommended",
   budget: {
     label: "Monthly budget",

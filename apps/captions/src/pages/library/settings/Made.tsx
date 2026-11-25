@@ -157,7 +157,7 @@ export function Made({ library, save, onSettings }: { library: LibrarySummary; s
               status={
                 <span className="flex flex-col gap-0.5">
                   <State tone={state.tone} text={state.text} rest={rest} />
-                  {runs && <span>{`${runs}${m.missing && !k.auto && !m.needs ? ` · ${costWords(m)}` : ""}`}</span>}
+                  {runs && <span>{`${runs}${m.missing && !k.auto && (!m.needs || !on) ? ` · ${costWords(m)}` : ""}`}</span>}
                   {why && <span>{why}</span>}
                 </span>
               }
@@ -177,7 +177,7 @@ export function Made({ library, save, onSettings }: { library: LibrarySummary; s
                 )
               }
             >
-              {(!!(m.failed || m.stopped) || m.queued > 0 || (m.missing > 0 && !k.auto)) && (
+              {(!!(m.failed || m.stopped) || (m.queued > 0 && ((m.why && m.href) || (!k.auto && !k.ready))) || (m.missing > 0 && !k.auto)) && (
                 <span className="flex flex-wrap items-center gap-2">
                   {!!(m.failed || m.stopped) && (
                     <Button variant="outline" size="sm" disabled={busy !== null} onClick={() => void run(`retry-${m.kind}`, "retry", () => retryFailed(library.id, m.kind))}>
