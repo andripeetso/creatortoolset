@@ -247,6 +247,11 @@ export const SOUND_ONLY_SQL = `(a.kind = 'audio' AND NOT EXISTS (SELECT 1 FROM a
 // shortcut: only the folder a clip is directly in, not the folders above it; follow parent_id if a nested folder needs it
 export const BLUR_SQL = `CASE WHEN ${SOUND_ONLY_SQL} THEN 'no' ELSE COALESCE(a.blur, (SELECT 'no' FROM collection_items fi JOIN collections fc ON fc.id = fi.collection_id WHERE fi.asset_id = a.id AND fc.blur = 'no' LIMIT 1), CASE WHEN (SELECT json_extract(settings, '$.blurFaces') FROM libraries WHERE id = a.library_id) IS 1 THEN 'yes' ELSE 'no' END) END`;
 /** mayLeave in SQL (upload-gate.ts): version `v` of asset `a` may have pictures cut of it, kept or handed out. */
+/** A file's proxy answer from its add (assets.proxy): yes or no where the person chose; null follows the library's Generate proxies. */
+export type ProxyAnswer = "yes" | "no";
+export const proxyAsked = (v: unknown): ProxyAnswer | null => (v === "yes" || v === "no" ? v : null);
+export const fileProxy = (versionId: string): ProxyAnswer | null =>
+  proxyAsked((libraryDb().prepare("SELECT a.proxy FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(versionId) as { proxy: unknown } | undefined)?.proxy);
 export const LEAVES_SQL = `(v.blurred_of IS NOT NULL OR ${BLUR_SQL} = 'no')`;
 /**
  * One version's blur answer and the blurred render that plays in its place (itself when it is one; else the newest made of

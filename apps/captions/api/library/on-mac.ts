@@ -3,7 +3,7 @@ import { mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { env } from "../lib/env";
-import { blobs, fileBlur, libraryDb, libraryUpload, librarySetting } from "./db";
+import { blobs, fileBlur, fileProxy, libraryDb, libraryUpload, librarySetting, type ProxyAnswer } from "./db";
 import { emitEvent } from "../lib/events";
 import { enqueueJob } from "./jobs";
 import { FRAMES } from "./describe";
@@ -35,6 +35,8 @@ import { showHidden } from "./trash";
 export interface OnMacIndex {
   /** the new clip's blur answer (upload-gate.ts blurAtIntake), set by the caller, never parsed from the body; none: the library's Blur faces */
   blur?: Blur | null;
+  /** the new clip's proxy answer from its add (db.ts fileProxy), set by the caller; none: the library's Generate proxies */
+  proxy?: ProxyAnswer | null;
   /** a blurred render of the original with this full SHA-256, set by the server's own save (library-save task), never parsed */
   blurredOf?: string;
   name: string;
@@ -237,7 +239,7 @@ export async function indexOnMac(libraryId: string, by: string, x: OnMacIndex): 
     : undefined;
   d.exec("BEGIN IMMEDIATE");
   try {
-    assetId = recordVersion(d, { libraryId, versionId, sourceKey: `mac:${versionId}`, filename: x.name, size: x.size, sha256: `mac:${x.quick}`, by, collectionId: x.collectionId, blur: x.blur ?? null, blurredOf: x.blurredOf ?? null, modifiedAt: x.modified ?? null, ...(blurred ? { assetId: blurred.asset_id } : {}) });
+    assetId = recordVersion(d, { libraryId, versionId, sourceKey: `mac:${versionId}`, filename: x.name, size: x.size, sha256: `mac:${x.quick}`, by, collectionId: x.collectionId, blur: x.blur ?? null, proxy: x.proxy ?? null, blurredOf: x.blurredOf ?? null, modifiedAt: x.modified ?? null, ...(blurred ? { assetId: blurred.asset_id } : {}) });
     if (blurred) d.prepare("UPDATE assets SET current_version_id = ? WHERE id = ?").run(blurred.id, assetId);
     if (x.sha256) d.prepare("UPDATE asset_versions SET full_sha256 = ? WHERE id = ?").run(x.sha256, versionId);
     // the Mac probed it: no probe here (it would read a file this server does not have)
@@ -284,7 +286,7 @@ export async function indexOnMac(libraryId: string, by: string, x: OnMacIndex): 
   if (kind === "video" && librarySetting(libraryId, "transcribe")) enqueueJob(d, libraryId, versionId, "transcribe", by);
   // Upload off with Generate proxies on: the computer holding the file makes its proxy and keeps it (library-package keepProxy);
   // never of a file waiting for its blur, nor of its blurred render (that is the proxy, docs/face-blur-intake-prd.md §2)
-  if (kind === "video" && mine && pictures && !x.blurredOf && hostsNone(libraryUpload(libraryId)) && wantsProxy(probe as ProbeSummary, { cloud: false, on: !!librarySetting(libraryId, "proxy") }))
+  if (kind === "video" && mine && pictures && !x.blurredOf && hostsNone(libraryUpload(libraryId)) && fileProxy(versionId) !== "no" && wantsProxy(probe as ProbeSummary, { cloud: false, on: fileProxy(versionId) === "yes" || !!librarySetting(libraryId, "proxy") }))
     enqueueJob(d, libraryId, versionId, "proxy", by);
   if (kind === "video" && x.frames.length && librarySetting(libraryId, "describe")) {
     if (!pictures) {

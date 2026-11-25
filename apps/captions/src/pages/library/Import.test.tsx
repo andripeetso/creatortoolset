@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { LibrarySummary } from "@contracts/library";
 import type { PlacesReport } from "@contracts/places";
 import { EmptyDrop } from "./EmptyDrop";
-import { askWhereTheyAre, CantRead, chatAddInPlace, chatWhereTheyAre, copyAvailable, copyInto, importPlace, lookedLine, lookForNew, sourceRowsHere, useImportQuestion, useWaitingFolders, waitingFolders } from "./Import";
+import { CantRead, chatAddInPlace, chatWhereTheyAre, copyAvailable, copyInto, importPlace, lookedLine, keepWhereTheyAre, lookForNew, sourceRowsHere, useImportQuestion, useWaitingFolders, waitingFolders } from "./Import";
 
 const m = vi.hoisted(() => ({ importScan: vi.fn(), importPrint: vi.fn(), importCopy: vi.fn(), pathOnMac: vi.fn(), checkUpload: vi.fn(), versionPlaces: vi.fn(), reportPlaces: vi.fn(), indexOnMac: vi.fn(), listMediaFolders: vi.fn(), folderGrant: vi.fn(), macReadFolders: vi.fn(async () => null as { folders: string[]; reads: string[]; readGiven?: boolean } | null), readWhereTheyAre: vi.fn(), chooseDialog: vi.fn(), listLibraries: vi.fn(), getWatch: vi.fn(), devices: [{ id: "mac_1", name: "Studio Mac" }] }));
 vi.mock("@/lib/thisMac", async (orig) => ({ ...(await orig<typeof import("@/lib/thisMac")>()), importScan: m.importScan, importPrint: m.importPrint, importCopy: m.importCopy, pathOnMac: m.pathOnMac }));
@@ -232,9 +232,8 @@ describe("Folders this Mac may not read yet", () => {
 
 describe("Use where they are", () => {
   it("copies each file whose folder the Mac app did not add (a file picked alone never adds its folder)", async () => {
-    m.chooseDialog.mockResolvedValueOnce("ok");
     m.readWhereTheyAre.mockResolvedValueOnce(["/Volumes/Card"]);
-    expect(await askWhereTheyAre(["/Volumes/Card/a.mov", "/Users/tiny/Downloads/b.mov"], true)).toEqual(["/Users/tiny/Downloads/b.mov"]);
+    expect(await keepWhereTheyAre(["/Volumes/Card/a.mov", "/Users/tiny/Downloads/b.mov"], true, false)).toEqual(["/Users/tiny/Downloads/b.mov"]);
     vi.clearAllMocks();
   });
 });
@@ -281,7 +280,7 @@ describe("videos dropped in the chat", () => {
 
 describe("the import rule, with no question", () => {
   type Answer = ReturnType<typeof useImportQuestion>["answer"];
-  async function answerWith(look: { from: "mac" | "browser"; paths?: Map<File, string> }, files: File[], onError = vi.fn()) {
+  async function answerWith(look: { from: "mac" | "browser"; paths?: Map<File, string> }, files: File[], onError = vi.fn(), copy = true) {
     let answer!: Answer;
     const Host = () => {
       answer = useImportQuestion({ serverHere: false, onError }).answer;
@@ -290,7 +289,7 @@ describe("the import rule, with no question", () => {
     host = document.createElement("div");
     root = createRoot(host);
     await act(async () => root!.render(<Host />));
-    return { result: await answer(look as never, files), onError };
+    return { result: await answer(look as never, files, copy), onError };
   }
   const day = new Date().toISOString().slice(0, 10);
   const file = new File(["x"], "a.mp4");
@@ -332,21 +331,15 @@ describe("the import rule, with no question", () => {
     expect((await answerWith(nasMac, [nas, file])).result).toEqual(new Map([[file, `/Volumes/Tiny/Footage/Imports/${day}/a.mp4`]]));
   });
 
-  it("asks once for files from outside: Use where they are reads their folder in place, Copy copies, Cancel adds nothing", async () => {
+  it("the sheet's Location: Use where they are reads their folder in place, Copy copies", async () => {
     storage([{ path: "/Volumes/Tiny/Footage" }]);
     const read = { folders: ["/Users/tiny/Downloads"], reads: [], readGiven: true };
     m.macReadFolders.mockResolvedValueOnce(read);
-    m.chooseDialog.mockResolvedValueOnce("ok");
     m.readWhereTheyAre.mockResolvedValueOnce(["/Users/tiny/Downloads"]);
-    expect((await answerWith(mac, [file])).result).toEqual(new Map());
+    expect((await answerWith(mac, [file], vi.fn(), false)).result).toEqual(new Map());
     expect(m.readWhereTheyAre).toHaveBeenCalledWith(["/Users/tiny/Downloads/a.mp4"]);
-    expect(m.chooseDialog).toHaveBeenCalledTimes(1);
     m.macReadFolders.mockResolvedValueOnce(read);
-    m.chooseDialog.mockResolvedValueOnce("other");
     expect((await answerWith(mac, [file])).result).toEqual(new Map([[file, `/Volumes/Tiny/Footage/Imports/${day}/a.mp4`]]));
-    m.macReadFolders.mockResolvedValueOnce(read);
-    m.chooseDialog.mockResolvedValueOnce(null);
-    expect((await answerWith(mac, [file])).result).toBeNull();
   });
 
   it("a Mac app that can't add to the reading list asks nothing and copies", async () => {

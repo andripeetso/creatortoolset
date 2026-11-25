@@ -104,3 +104,29 @@ describe("a file marked Blur faces, indexed on its Mac", () => {
     expect(proxyOf(no.versionId)).toBeTruthy();
   });
 });
+
+describe("the add sheet's processing, indexed on its Mac", () => {
+  it("Skip processing makes no proxy where the library makes them; Generate proxies makes one where it doesn't", async () => {
+    const { indexOnMac } = await import("./on-mac");
+    const { pairDevice } = await import("../lib/devices");
+    const lib = (id: string, proxy: boolean) =>
+      libraryDb()
+        .prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES (?, 'owner-a', 'P', 'local', ?, 0)")
+        .run(id, JSON.stringify({ upload: "none", proxy, describe: false, transcribe: false }));
+    lib("lib_proxy_on", true);
+    lib("lib_proxy_off", false);
+    const mac = pairDevice("owner-a", "Tiny Mac").device;
+    const proxyOf = (versionId: string) => libraryDb().prepare("SELECT 1 FROM jobs WHERE version_id = ? AND kind = 'proxy'").get(versionId);
+    const at = (n: number) => ({ ...clip, name: `shot-${n}.mp4`, path: `/Volumes/Tiny Drive/CARD/shot-${n}.mp4`, quick: String(n + 4).repeat(64).slice(0, 64), device: mac.id, frames: [] });
+    const skipped = await indexOnMac("lib_proxy_on", "owner-a", { ...at(1), proxy: "no" });
+    if (!("versionId" in skipped)) throw new Error("not indexed");
+    expect(proxyOf(skipped.versionId)).toBeUndefined();
+    const asked = await indexOnMac("lib_proxy_off", "owner-a", { ...at(2), proxy: "yes" });
+    if (!("versionId" in asked)) throw new Error("not indexed");
+    expect(proxyOf(asked.versionId)).toBeTruthy();
+    // no answer: the library's setting, as before
+    const plain = await indexOnMac("lib_proxy_off", "owner-a", at(3));
+    if (!("versionId" in plain)) throw new Error("not indexed");
+    expect(proxyOf(plain.versionId)).toBeUndefined();
+  });
+});

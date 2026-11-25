@@ -143,8 +143,9 @@ export function unproxied(libraryId: string, versionId?: string, hosted = false)
          AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.version_id = v.id AND j.kind = 'proxy' AND j.state IN ('queued', 'running', 'failed', 'stopped'))`,
     )
     .all(libraryId, versionId ?? null, versionId ?? null) as { id: string; created_by: string; probe: string; source_key: string }[];
-  // Blur faces: the server cuts no proxy of a clip not blurred that it holds; one on a computer is made and kept there
-  return rows.filter((r) => wantsProxy(JSON.parse(r.probe) as ProbeSummary, want) && (r.source_key.startsWith("mac:") || mayLeave(libraryId, { versionId: r.id }).ok));
+  // Blur faces: the server cuts no proxy of a clip not blurred that it holds; one on a computer is made and kept there;
+  // a file added with Skip processing gets none
+  return rows.filter((r) => fileProxy(r.id) !== "no" && wantsProxy(JSON.parse(r.probe) as ProbeSummary, want) && (r.source_key.startsWith("mac:") || mayLeave(libraryId, { versionId: r.id }).ok));
 }
 
 /** The name an original downloads as: the file's own name when it is read where it is, else its title with its type's extension. */
@@ -186,13 +187,15 @@ export function recordVersion(
     modifiedAt?: number | null;
     /** a new clip's blur answer when someone chose one (upload-gate.ts blurAtIntake); none: null, read as its library's Blur faces. A new version keeps its clip's */
     blur?: Blur | null;
+    /** a new clip's proxy answer from its add (db.ts fileProxy); none: null, the library's Generate proxies */
+    proxy?: ProxyAnswer | null;
   },
 ): string {
   const now = Date.now();
   const linked = !o.assetId && o.blurredOf ? originalClipOf(d, o.libraryId, o.blurredOf) : undefined;
   const assetId = o.assetId ?? linked ?? randomUUID();
   if (!o.assetId && !linked) {
-    d.prepare("INSERT INTO assets (id, library_id, kind, title, current_version_id, created_by, created_at, blur) VALUES (?, ?, ?, ?, NULL, ?, ?, ?)").run(
+    d.prepare("INSERT INTO assets (id, library_id, kind, title, current_version_id, created_by, created_at, blur, proxy) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?)").run(
       assetId,
       o.libraryId,
       kindOf(o.filename),
@@ -200,6 +203,7 @@ export function recordVersion(
       o.by,
       now,
       o.blur ?? null,
+      o.proxy ?? null,
     );
   }
   const { n } = d.prepare("SELECT COALESCE(MAX(n), 0) + 1 AS n FROM asset_versions WHERE asset_id = ?").get(assetId) as { n: number };
@@ -461,6 +465,8 @@ interface UploadRow {
   blurred_of: string | null;
   /** the file's blur answer, taken at the start (upload-gate.ts blurAtIntake; a new version's is its clip's) */
   blur: Blur | null;
+  /** the file's proxy answer from its add (db.ts fileProxy) */
+  proxy: string | null;
 }
 
 const db = () => libraryDb();
@@ -638,6 +644,7 @@ async function finishDirect(c: Context<{ Variables: AuthVars }>, row: UploadRow)
       origin: row.origin,
       blurredOf: row.blurred_of,
       blur: row.blur,
+      proxy: proxyAsked(row.proxy),
       modifiedAt: row.modified_at,
     });
     if (row.made) d.prepare("DELETE FROM jobs WHERE version_id = ? AND kind = 'probe'").run(row.id); // fileMade queues what it needs
@@ -743,7 +750,7 @@ async function startUpload(c: Context<{ Variables: AuthVars }>, libraryId: strin
     body?.send === true && from && !replaces && sender?.owner === user.username && (sender.work?.v ?? 0) >= WORK_MIN &&
     typeof body.quick === "string" && /^[0-9a-f]{64}$/.test(body.quick) && sendsFromComputer(libraryId, filename, collection)
   ) {
-    const r = sendLater(libraryId, user.username, { filename, size, fromPath: from, device: sender.id, quick: body.quick, collectionId: collection, blur });
+    const r = sendLater(libraryId, user.username, { filename, size, fromPath: from, device: sender.id, quick: body.quick, collectionId: collection, blur, proxy: proxyAsked(body.proxy) });
     return c.json("versionId" in r ? { ...r, sent: true } : r);
   }
   // what the phone made of the file itself (derived.ts Made): only to a library this server files it for
@@ -780,8 +787,8 @@ async function startUpload(c: Context<{ Variables: AuthVars }>, libraryId: strin
   }
   db()
     .prepare(
-      `INSERT INTO uploads (id, library_id, created_by, filename, size, received, staging_path, replaces_asset_id, collection_id, expires_at, state, direct_upload_id, from_path, from_device, made, origin, blurred_of, blur, modified_at)
-       VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO uploads (id, library_id, created_by, filename, size, received, staging_path, replaces_asset_id, collection_id, expires_at, state, direct_upload_id, from_path, from_device, made, origin, blurred_of, blur, modified_at, proxy)
+       VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       id,
@@ -801,6 +808,7 @@ async function startUpload(c: Context<{ Variables: AuthVars }>, libraryId: strin
       blurredOf,
       blur,
       modifiedOf(body?.modified),
+      replaces ? null : proxyAsked(body?.proxy),
     );
   if (started) return c.json({ id, offset: 0, chunkSize: started.partSize, direct: { partSize: started.partSize, urls: started.urls } }, 201);
   return c.json({ id, offset: 0, chunkSize: CHUNK_BYTES }, 201);
@@ -849,7 +857,7 @@ libraryApp.post("/:id/in-place", async (c) => {
   if (collectionId && !db().prepare("SELECT 1 FROM collections WHERE id = ? AND library_id = ? AND kind = 'manual'").get(collectionId, libraryId)) {
     return c.json({ error: "Not found", code: "not_found" }, 404);
   }
-  const folder = { path: path.dirname(real), mode: "reference" as const, collectionId, addedBy: user.username, blur: blurAtIntake(user.username, libraryId, body.blur) };
+  const folder = { path: path.dirname(real), mode: "reference" as const, collectionId, addedBy: user.username, blur: blurAtIntake(user.username, libraryId, body.blur), proxy: proxyAsked(body.proxy) };
   const taking = takeFile(libraryId, folder, real, s.size, Math.floor(s.mtimeMs));
   taking.catch((e) => console.error("[library] in place:", real, e instanceof Error ? e.message : e));
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -887,10 +895,10 @@ libraryApp.post("/:id/on-mac", async (c) => {
     // the app sends a member's file by upload where Hosted media takes it; this path is never a member's folder
     return c.json({ error: MEMBER_NOT_INDEXED, code: "forbidden" }, 403);
   }
-  const raw = (await c.req.json().catch(() => null)) as { blur?: unknown } | null;
+  const raw = (await c.req.json().catch(() => null)) as { blur?: unknown; proxy?: unknown } | null;
   const parsed = parseOnMac(raw);
   if (typeof parsed === "string") return c.json({ error: parsed, code: "invalid" }, 400);
-  const x = { ...parsed, blur: blurAtIntake(user.username, libraryId, raw?.blur) };
+  const x = { ...parsed, blur: blurAtIntake(user.username, libraryId, raw?.blur), proxy: proxyAsked(raw?.proxy) };
   // inside a folder one of the caller's Media folders leaves out: never indexed, a scan's file or a drop alike
   if (await leftOut(user.username, libraryId, x.path, x.device)) return c.json({ error: LIBRARY_WORDS.notFootage, code: "invalid" }, 400);
   if (x.collectionId) {
@@ -1052,6 +1060,7 @@ libraryApp.post("/uploads/:uploadId/finish", async (c) => {
         origin: row.origin,
         blurredOf: row.blurred_of,
         blur: row.blur,
+        proxy: proxyAsked(row.proxy),
         modifiedAt: row.modified_at,
       });
       if (row.made) d.prepare("DELETE FROM jobs WHERE version_id = ? AND kind = 'probe'").run(versionId); // fileMade queues what it needs

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { libraryChanged } from "./access";
-import { blobs, keepsOnlyOriginals, libraryDb } from "./db";
+import { blobs, keepsOnlyOriginals, libraryDb, type ProxyAnswer } from "./db";
 import { hostsOriginals, hostsProxies, type Blur } from "../../contracts/library";
 import { uploadFor } from "./upload-gate";
 import { enqueueJob } from "./jobs";
@@ -95,7 +95,7 @@ export async function recordDerived(versionId: string, x: Derived, actor: string
 export function sendLater(
   libraryId: string,
   by: string,
-  x: { filename: string; size: number; fromPath: string; device: string; quick: string; collectionId?: string | null; blur?: Blur | null },
+  x: { filename: string; size: number; fromPath: string; device: string; quick: string; collectionId?: string | null; blur?: Blur | null; proxy?: ProxyAnswer | null },
 ): { assetId: string; versionId: string } | { duplicateOf: string } {
   const d = libraryDb();
   const dup = d
@@ -122,6 +122,7 @@ export function sendLater(
       fromPath: x.fromPath,
       fromDevice: x.device,
       blur: x.blur ?? null,
+      proxy: x.proxy ?? null,
     });
     // the computer probes it: nothing here reads a file this server does not have yet
     d.prepare("DELETE FROM jobs WHERE version_id = ?").run(versionId);

@@ -4,7 +4,7 @@ import path from "node:path";
 import { env } from "../lib/env";
 import { libraryChanged } from "./access";
 import { emitEvent } from "../lib/events";
-import { blobs, fileBlur, isBlurred, keepsOnlyOriginals, libraryDb, libraryProxyQuality, librarySetting, proxiesInCloud, versionUpload } from "./db";
+import { blobs, fileBlur, fileProxy, isBlurred, keepsOnlyOriginals, libraryDb, libraryProxyQuality, librarySetting, proxiesInCloud, versionUpload } from "./db";
 import { describeFromLines, describeSlot, describeVersion, workspaceIdOf } from "./describe";
 import { canEmbed, embedRoute, embedVersion, startEmbedCatchUp } from "./embed";
 import { fingerprint } from "./fingerprint";
@@ -585,7 +585,9 @@ export async function afterProbe(
   const originalsOnly = keepsOnlyOriginals(v.library_id);
   // a blurred render is its clip's proxy (Blur faces): kept as it is, never a smaller copy made and the render dropped;
   // a file marked Blur faces gets none of its original either: its blurred render takes the proxy's place
-  if (v.kind !== "image" && !isBlurred(v.id) && fileBlur(v.id)?.blur !== "yes" && wantsProxy(p, { cloud: (!originalsOnly && proxiesInCloud(v.library_id)) || onlyProxy, on: !originalsOnly && librarySetting(v.library_id, "proxy") })) want("proxy");
+  // the add's own answer (the add sheet): Skip processing makes none, Generate proxies one whatever the switch says
+  const asked = fileProxy(v.id);
+  if (v.kind !== "image" && !isBlurred(v.id) && fileBlur(v.id)?.blur !== "yes" && asked !== "no" && wantsProxy(p, { cloud: (!originalsOnly && proxiesInCloud(v.library_id)) || onlyProxy, on: !originalsOnly && (asked === "yes" || librarySetting(v.library_id, "proxy")) })) want("proxy");
   // Analysis effort (UNIFIED-PRD §4.4): Off makes no transcript on import, so no AI call
   if (p.acodec && !music && librarySetting(v.library_id, "transcribe")) enqueueJob(db, v.library_id, v.id, "transcribe", actor);
   // the duplicate check compares videos only (similar.ts): a photo's fingerprint would never be read

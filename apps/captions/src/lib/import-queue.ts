@@ -23,6 +23,8 @@ export interface QueueItem extends Upload {
   asFilmed?: boolean;
   /** Blur faces ticked for this import where the library doesn't blur: the file's blur answer is yes */
   askBlur?: boolean;
+  /** the add's proxy answer (the add sheet): yes Generate proxies, no Skip processing */
+  proxy?: "yes" | "no";
 }
 
 interface Queue {
@@ -66,6 +68,8 @@ export interface AddOptions {
   asFilmed?: boolean;
   /** Blur faces ticked for this import where the library doesn't blur */
   askBlur?: boolean;
+  /** the add's proxy answer: yes Generate proxies, no Skip processing */
+  proxy?: "yes" | "no";
   /** ask what the batch costs (false at Effort Off: no cost is shown) */
   cost: boolean;
 }
@@ -79,6 +83,7 @@ export function addImports(files: File[], o: AddOptions): void {
     ...(o.blur ? { blur: true } : {}),
     ...(o.asFilmed ? { asFilmed: true } : {}),
     ...(o.askBlur ? { askBlur: true } : {}),
+    ...(o.proxy ? { proxy: o.proxy } : {}),
     file,
     sent: 0,
     folderId: o.folderId,
@@ -154,7 +159,7 @@ async function send(u: QueueItem, retry = false): Promise<void> {
     const r = await gates.index(() => {
       ctl.signal.throwIfAborted();
       patch(u.key, { status: "uploading", sent: 0, error: undefined });
-      return uploadFile(lib, u.file, (sent, inPlace) => patch(u.key, { sent, inPlace }), u.folderId, at, { signal: ctl.signal, onMac: u.mac, blur: u.blur, asFilmed: u.asFilmed, askBlur: u.askBlur });
+      return uploadFile(lib, u.file, (sent, inPlace) => patch(u.key, { sent, inPlace }), u.folderId, at, { signal: ctl.signal, onMac: u.mac, blur: u.blur, asFilmed: u.asFilmed, askBlur: u.askBlur, proxy: u.proxy });
     });
     patch(u.key, r.duplicateOf || r.duplicate ? { status: "duplicate", sent: u.file.size } : { status: "added", sent: u.file.size, assetId: r.assetId });
     for (const fn of landed) fn(lib, u.folderId);

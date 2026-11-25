@@ -390,7 +390,7 @@ export interface UploadResult {
 }
 
 /** The file's blur answer when the person chose one for this import (api/library/upload-gate.ts blurAtIntake); none: the library's. */
-const blurAsked = (asFilmed?: boolean, askBlur?: boolean) => (asFilmed ? { blur: false } : askBlur ? { blur: true } : {});
+const blurAsked = (asFilmed?: boolean, askBlur?: boolean, proxy?: "yes" | "no") => ({ ...(asFilmed ? { blur: false } : askBlur ? { blur: true } : {}), ...(proxy ? { proxy } : {}) });
 
 const pause = (ms: number) => new Promise((done) => setTimeout(done, ms));
 
@@ -398,12 +398,12 @@ const pause = (ms: number) => new Promise((done) => setTimeout(done, ms));
  * A file the Mac app knows the place of, added where it is (api/library/routes.ts in-place): asked again while the
  * server is still reading it. null when this server or library cannot take it in place: it is uploaded instead.
  */
-async function addInPlace(libraryId: string, where: string, size: number, collectionId?: string, asFilmed = false, askBlur = false): Promise<UploadResult | null> {
+async function addInPlace(libraryId: string, where: string, size: number, collectionId?: string, asFilmed = false, askBlur = false, proxy?: "yes" | "no"): Promise<UploadResult | null> {
   for (let again = false; ; again = true) {
     const r = await fetch(`/api/library/${libraryId}/in-place`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ path: where, size, collectionId, again, ...blurAsked(asFilmed, askBlur) }),
+      body: JSON.stringify({ path: where, size, collectionId, again, ...blurAsked(asFilmed, askBlur, proxy) }),
     });
     if (r.status === 202) continue;
     if (r.status === 400 || r.status === 403) return null;
@@ -450,15 +450,15 @@ export async function uploadFile(
    * no byte of it is sent; with no known path it is refused, never uploaded. `blur`: the library has Blur faces on;
    * `asFilmed`: the person unticked Blur faces for this import, the file's blur answer is no (contracts Blur).
    */
-  opts: { signal?: AbortSignal; onMac?: boolean; blur?: boolean; asFilmed?: boolean; askBlur?: boolean } = {},
+  opts: { signal?: AbortSignal; onMac?: boolean; blur?: boolean; asFilmed?: boolean; askBlur?: boolean; proxy?: "yes" | "no" } = {},
 ): Promise<UploadResult> {
   const { signal, onMac } = opts;
   const where = knownPath ?? (await pathOnMac(file));
   if (where) {
     onProgress(0, true);
-    const kept = await addInPlace(libraryId, where, file.size, collectionId, opts.asFilmed, opts.askBlur);
+    const kept = await addInPlace(libraryId, where, file.size, collectionId, opts.asFilmed, opts.askBlur, opts.proxy);
     if (kept) return kept;
-    if (onMac) return indexOnMac(libraryId, file, where, collectionId, signal, opts.blur && !opts.asFilmed, opts.asFilmed, opts.askBlur);
+    if (onMac) return indexOnMac(libraryId, file, where, collectionId, signal, opts.blur && !opts.asFilmed, opts.asFilmed, opts.askBlur, opts.proxy);
     onProgress(0, false);
   }
   if (onMac) throw new NotUploaded("Not added: where it is on this Mac is unknown. Drop it from Finder");
@@ -479,7 +479,7 @@ export async function uploadFile(
       ...(where ? { fromPath: where } : {}),
       ...(fromDevice ? { fromDevice } : {}),
       ...(quick ? { quick, send: true } : {}),
-      ...blurAsked(opts.asFilmed, opts.askBlur),
+      ...blurAsked(opts.asFilmed, opts.askBlur, opts.proxy),
     }),
     signal,
   }).then((r) => json<{ id: string; offset: number; chunkSize: number; direct?: { partSize: number; urls: string[] }; sent?: true; assetId?: string; duplicateOf?: string }>(r));

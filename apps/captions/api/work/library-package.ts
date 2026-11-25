@@ -30,7 +30,7 @@ import { allowsLibrary, claimsFresh, mayClaim, offOf, readBalanceSync, takesOrig
 import { deviceForToken, deviceOf, isOnline, isThisMachine, listDevices, setDeviceWork, touchDevice } from "../lib/devices";
 import { env } from "../lib/env";
 import { libraryChanged } from "../library/access";
-import { keepsOnlyOriginals, libraryDb, libraryProxyQuality, librarySetting, versionUpload } from "../library/db";
+import { fileProxy, keepsOnlyOriginals, libraryDb, libraryProxyQuality, librarySetting, versionUpload } from "../library/db";
 import { mayLeave, mayReceive, provesProxies, proxyTooBig, refuse, REFUSED_PROOF, type Received } from "../library/upload-gate";
 import { recordDerived, type DerivedFile } from "../library/derived";
 import { canEmbed } from "../library/embed";
@@ -419,7 +419,8 @@ function packageOf(job: JobRow, r: LibRow, d: Device, folders: ReturnType<typeof
           upload: hostsProxies(upload) && !hostsOriginals(upload) ? "proxies" : "all",
           // a video sent to a library that keeps only proxies gets one whatever the proxy switch says (worker.ts afterProbe)
           // Hosted proxies: every video is made here and sent, and the switch reads on (UNIFIED-PRD §4.1, §4.2)
-          proxy: { cloud: hostsProxies(upload), on: hostsProxies(upload) || (!keepsOnlyOriginals(r.library_id) && librarySetting(r.library_id, "proxy")), quality: libraryProxyQuality(r.library_id) },
+          // the add's own answer (db.ts fileProxy): Skip processing makes none, Generate proxies one
+          proxy: fileProxy(r.id) === "no" ? { cloud: false, on: false, quality: libraryProxyQuality(r.library_id) } : { cloud: hostsProxies(upload), on: hostsProxies(upload) || fileProxy(r.id) === "yes" || (!keepsOnlyOriginals(r.library_id) && librarySetting(r.library_id, "proxy")), quality: libraryProxyQuality(r.library_id) },
           music: !!libraryDb()
             .prepare(`SELECT 1 FROM asset_tags t JOIN asset_versions av ON av.asset_id = t.asset_id WHERE av.id = ? AND t.source = 'user' AND t.tag IN (${Object.values(SOUNDS).map(() => "?").join(", ")})`)
             .get(r.id, ...Object.values(SOUNDS).map((s) => s.tag)),

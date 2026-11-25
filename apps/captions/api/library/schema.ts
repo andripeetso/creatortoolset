@@ -747,4 +747,8 @@ export const MIGRATIONS: string[] = [
   INSERT INTO sqlite_sequence (name, seq) SELECT 'jobs_new', seq FROM sqlite_sequence WHERE name = 'jobs';
   DROP TABLE jobs;
   ALTER TABLE jobs_new RENAME TO jobs;`,
+  // a file's proxy answer from its add (the add sheet, owner 2026-11-24): 'yes' | 'no'; null follows the library's
+  // Generate proxies (db.ts fileProxy). An upload carries the answer it was started with
+  `ALTER TABLE assets ADD COLUMN proxy TEXT;
+  ALTER TABLE uploads ADD COLUMN proxy TEXT;`,
 ];

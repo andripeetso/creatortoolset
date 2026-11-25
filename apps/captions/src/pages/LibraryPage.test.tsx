@@ -223,6 +223,14 @@ function Where() {
 }
 const where = () => document.querySelector('[data-testid="where"]')?.textContent ?? "";
 const settle = () => act(async () => new Promise((r) => setTimeout(r, 0)));
+// every add asks its one sheet (./library/ImportChoices.tsx): Add takes what it starts from
+const pressAdd = async () => {
+  await settle();
+  const add = [...document.querySelectorAll('[role="dialog"] button')].find((b) => b.textContent === "Add") as HTMLElement | undefined;
+  expect(add).toBeTruthy();
+  await act(async () => add!.click());
+  await settle();
+};
 
 /** Renders the page and waits for its first effects (the library load) to settle. */
 async function mount(at = "/library"): Promise<HTMLElement> {
@@ -360,7 +368,7 @@ describe("Media Library page", () => {
   });
 
   // replaced (CEO 11-19 import-flow): a drop asks nothing first (no "Add N files?", no sort question: setup chose them)
-  it("a drop goes in at once: no dialog first, and the file is sent", async () => {
+  it("a drop asks its one sheet, and once Add is pressed the file is sent", async () => {
     server.items = [];
     const host = await mount();
     const files = [new File(["x"], "tiny-0.mp4", { type: "video/mp4" })];
@@ -373,6 +381,8 @@ describe("Media Library page", () => {
       await new Promise((r) => setTimeout(r, 0));
     });
     await settle();
+    expect(server.uploaded).toEqual([]);
+    await pressAdd();
     expect(document.querySelector('[role="dialog"]')).toBeNull();
     expect(server.uploaded).toEqual(["tiny-0.mp4"]);
   });
@@ -387,7 +397,8 @@ describe("Media Library page", () => {
       host.firstElementChild!.dispatchEvent(drop);
       await new Promise((r) => setTimeout(r, 0));
     });
-    expect(document.querySelector('[role="dialog"]')).toBeNull(); // a small upload goes straight in
+    await pressAdd();
+    expect(document.querySelector('[role="dialog"]')).toBeNull(); // no organize question after the sheet
     expect(server.sent).toContain("upload tiny-0.mp4");
   });
 
@@ -762,6 +773,7 @@ describe("Media Library picks, menu, keys, link and drop", () => {
     const e = new Event("drop", { bubbles: true, cancelable: true });
     Object.defineProperty(e, "dataTransfer", { value: { types: ["Files"], files: [file], items: [{ webkitGetAsEntry: () => ({ isFile: true, isDirectory: false }) }] } });
     await act(async () => void host.querySelector("main")!.dispatchEvent(e));
+    await pressAdd();
     await settle();
     await settle();
     expect(server.uploaded).toEqual(["Tiny drop.mp4"]);
@@ -780,6 +792,7 @@ describe("Media Library picks, menu, keys, link and drop", () => {
     const e = new Event("drop", { bubbles: true, cancelable: true });
     Object.defineProperty(e, "dataTransfer", { value: { types: ["Files"], files, items: files.map(() => ({ webkitGetAsEntry: () => ({ isFile: true, isDirectory: false }) })) } });
     await act(async () => void host.querySelector("main")!.dispatchEvent(e));
+    await pressAdd();
     await settle();
     await settle();
     expect(server.uploaded).toEqual(["Tiny one.mp4", "Tiny two.mp4"]); // both on their way; neither waits for the other
@@ -802,6 +815,7 @@ describe("Media Library picks, menu, keys, link and drop", () => {
     const e = new Event("drop", { bubbles: true, cancelable: true });
     Object.defineProperty(e, "dataTransfer", { value: { types: ["Files"], files, items: files.map(() => ({ webkitGetAsEntry: () => ({ isFile: true, isDirectory: false }) })) } });
     await act(async () => void host.querySelector("main")!.dispatchEvent(e));
+    await pressAdd();
     await settle();
     expect(host.querySelectorAll("[data-placeholder]").length).toBe(3);
     // another tool: the page goes away, the files don't

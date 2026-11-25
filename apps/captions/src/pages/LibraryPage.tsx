@@ -49,7 +49,7 @@ import { thisMacBridge } from "@/lib/thisMac";
 import { addRefused, scanWatchNow, setAssetBlur } from "@/lib/library";
 import { canChange, useAuth, useMe } from "@/lib/auth";
 import { faceBlurOn } from "./library/face-blur";
-import { ImportChoices, importOptions, type ImportAsk, type ImportChoice } from "./library/ImportChoices";
+import { ImportChoices, importOptions, type ImportAsk, type ImportChoice, type Processing } from "./library/ImportChoices";
 import { useWorkspace } from "@/lib/workspace";
 import { confirmDialog } from "@/lib/dialogs";
 import { undoable } from "@/lib/undo";
@@ -161,7 +161,7 @@ export default function LibraryPage() {
   const [sourceList, setSources] = useState<{ id: string; label: string }[] | null>(null); // null: not read yet
   const sources = sourceList ?? [];
   const picker = useRef<HTMLInputElement>(null);
-  // the add's own choices (./library/ImportChoices.tsx): Blur faces and Proxies for these files
+  // the add's own choices (./library/ImportChoices.tsx): processing and location for these files
   const [importAsk, setImportAsk] = useState<ImportAsk | null>(null);
   const seq = useRef(0);
   const loading = useRef<string | null>(null); // the cursor of the page on its way
@@ -440,32 +440,33 @@ export default function LibraryPage() {
     // picked or dropped in the Mac app on its own server: they are added where they are (lib/library.ts uploadFile)
     // indexed on this Mac: nothing uploads either
     const here = onMac || (look.paths ? look.paths.size === all.length : false);
-    // the one question before an add is Blur faces and Proxies (owner, 2026-11-24), asked before Folder access, whose
-    // "Use where they are" saves folders at once; Effort, models and the monthly budget were chosen in setup
-    const c = await chooseImport(all.length);
+    // the one sheet of an add (owner, 2026-11-24): processing, and copy or use in place for files from outside, asked
+    // before anything is saved ("Use where they are" adds folders to Folder access only once Add is pressed)
+    const c = await chooseImport(all.length, await importQ.outside(look, all));
     if (!c) return;
-    const copies = await importQ.answer(look, all);
-    if (copies) start(all, here, look.paths, copies, c);
+    const copies = await importQ.answer(look, all, c.copy);
+    if (copies) start(all, here, look.paths, copies, c.process);
   };
 
-  // Blur faces where this Mac keeps the original (an owner or admin may untick it where the library blurs); Proxies where
-  // the server is elsewhere and the library keeps proxies. No row to show: the library's settings, without asking
-  const chooseImport = (count: number): Promise<ImportChoice | null> => {
+  // Processing: Generate blurred versions where this Mac can blur (an owner or admin may skip it where the library
+  // blurs; a member's file is always blurred there), else Generate proxies or Skip processing, from the library's and
+  // the folder's settings. Nothing to ask: no sheet
+  const chooseImport = (count: number, outside: number): Promise<ImportChoice | null> => {
     const libraryBlurs = !!library?.settings.blurFaces;
-    const blur = libraryBlurs && openFolder?.blur !== "no";
-    const blurRow = faceBlur && !!thisMacBridge() && (!libraryBlurs || !!library?.mayKeepAsFilmed);
-    // a library that keeps originals too sends them whatever is ticked: no row there
-    const proxiesRow = macRemote && hostsProxies(upload.current) && !hostsOriginals(upload.current);
-    if (!blurRow && !proxiesRow) return Promise.resolve({ blur, proxies: true });
-    return new Promise((done) =>
-      setImportAsk({ id: Date.now(), count, ...(blurRow ? { blur } : {}), ...(proxiesRow ? { proxies: true } : {}), done: (c) => (setImportAsk(null), done(c)) }),
-    );
+    const blurs = libraryBlurs && openFolder?.blur !== "no";
+    const blurOption = faceBlur && !!thisMacBridge() && (!libraryBlurs || !!library?.mayKeepAsFilmed);
+    const proxies = !!library?.settings.proxy || hostsProxies(upload.current);
+    const process: Processing = blurs ? "blur" : proxies ? "proxies" : "skip";
+    // blurred with no way out of it: the blurred version is the proxy, nothing else to choose
+    const processes: Processing[] = blurs && !blurOption ? [] : blurOption ? ["proxies", "blur", "skip"] : ["proxies", "skip"];
+    if (!processes.length && !outside) return Promise.resolve({ process, copy: true });
+    return new Promise((done) => setImportAsk({ id: Date.now(), count, processes, process, outside, done: (c) => (setImportAsk(null), done(c)) }));
   };
 
   // every file starts at once and waits only where its stage is full (lib/import-queue.ts); each has its card at once
-  const start = (files: File[], here: boolean, paths: Map<File, string> | undefined, copies: Map<File, string> | undefined, c: ImportChoice) => {
+  const start = (files: File[], here: boolean, paths: Map<File, string> | undefined, copies: Map<File, string> | undefined, process: Processing) => {
     if (!libId) return;
-    const o = importOptions(c, { libraryBlurs: !!library?.settings.blurFaces, macRemote, onMac });
+    const o = importOptions(process, { libraryBlurs: !!library?.settings.blurFaces, macRemote, onMac, hostsOriginals: hostsOriginals(upload.current) });
     addImports(files, { libraryId: libId, folderId: into ?? undefined, here, paths, copies, ...o, cost: levelOf(library?.settings ?? {}) !== "off" });
   };
   // a file of this library went in: its clips (and the folder's count) read again
@@ -1334,6 +1335,12 @@ export default function LibraryPage() {
                     library={library}
                     watch={watch ?? null}
                     onClose={() => setStatusOpen(false)}
+                    onOpenClip={(id) => {
+                      setStatusOpen(false);
+                      const p = new URLSearchParams(linked);
+                      p.set("clip", id);
+                      navigate({ search: `?${p}` }, { state: { clip: true } });
+                    }}
                     onSettings={
                       watch
                         ? () => {
