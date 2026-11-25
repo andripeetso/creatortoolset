@@ -107,6 +107,12 @@ describe("blurred copies made before", () => {
     expect(r.rows.map((x) => x.result)).toEqual(["error", "error", "error"]);
   });
 
+  it("refuses a \"blurred\" copy that is byte for byte its original, so its faces are never marked covered", async () => {
+    const { at } = await original();
+    const r = await reconnect([{ path: at, action: "link", originalSha256: sha("c"), copy: copy("c") }]);
+    expect(r.rows[0]).toMatchObject({ result: "error", error: "The copy is the original, not blurred" });
+  });
+
   it("undo puts every clip back as it was", async () => {
     const link = await original();
     const self = await original();

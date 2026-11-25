@@ -105,6 +105,8 @@ async function one(libraryId: string, owner: string, r: Row, i: number, dry: boo
   const copy = checkMade(r.copy);
   if (typeof copy === "string") return { ...out, result: "error", error: copy };
   if (!copy.sha256) return { ...out, result: "error", error: "Send the copy's sha256." };
+  // a "blurred" archive copy that is byte for byte its original was never blurred: linking it would mark the faces covered
+  if (copy.sha256.toLowerCase() === sha.toLowerCase()) return { ...out, result: "error", error: "The copy is the original, not blurred" };
   if (!v.device) return { ...out, result: "error", error: "No computer has this file" };
   // the copy indexed before as a clip of its own: merging two clips is the person's call, not this route's
   const indexed = d
