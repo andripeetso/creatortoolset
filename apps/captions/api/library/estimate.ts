@@ -364,6 +364,12 @@ const STAGES: LibraryStage["kind"][] = ["thumb", "proxy", "fingerprint", "transc
 // empty: every count below is over these, so no number goes down while the run lasts (a clip that is done stays counted)
 // ponytail: in memory; a restart counts from the clips with work left then
 const runs = new Map<string, Set<string>>();
+// when each run began: a clip in it counts the steps queued for this run, not the ones it finished before (a clip that
+// joins for one duplicate check is one step, not its old transcript and descriptions shown again)
+const runSince = new Map<string, number>();
+const runEnded = new Map<string, number>();
+// a step that ended before the run began; a moment's margin keeps one that ended between the queue and the first look
+const FRESH = "(state NOT IN ('done', 'failed', 'stopped') OR IFNULL(done_at, started_at) >= $since)";
 
 // a description held back by the plan's limit (worker.ts holdForLimit), or a look by its library's monthly budget (BUDGET_WAITS):
 // it waits, and takes no time, until one gets through or the budget is raised
@@ -493,6 +499,8 @@ export async function progress(libraryId: string, username: string): Promise<Lib
   }
   if (!left) {
     runs.delete(libraryId);
+    runSince.delete(libraryId);
+    runEnded.set(libraryId, Date.now());
     return { done: 0, left: 0, clips: 0, share: 0, seconds: 0, waiting, stages: [] };
   }
   const open = db
@@ -502,7 +510,9 @@ export async function progress(libraryId: string, username: string): Promise<Lib
   runs.set(libraryId, run);
   // the run before is through (nobody looked while the queue was empty): this one counts from nothing
   if (![...run].some((v) => open.some((o) => o.v === v))) run.clear();
+  if (!run.size) runSince.set(libraryId, Math.max(Date.now() - 60_000, runEnded.get(libraryId) ?? 0));
   for (const { v } of open) run.add(v);
+  const since = { $since: runSince.get(libraryId) ?? 0 };
   // how far: each clip of the run counts the same, by the share of its steps that are through (a held one is not counted:
   // it is not work here); a clip still to come, or not read yet, counts as not started. A clip's steps are only known once
   // it is read (probe), so counting clips, not steps, keeps the share from going back when ten clips' steps appear at once.
@@ -511,18 +521,18 @@ export async function progress(libraryId: string, username: string): Promise<Lib
     .prepare(
       `SELECT SUM(CASE WHEN unread THEN 0 ELSE CAST(fin AS REAL) / n END) AS s, COUNT(*) AS clips FROM (SELECT SUM(state IN ('done', 'failed', 'stopped')) AS fin,
          COUNT(*) AS n, MAX(kind = 'probe' AND state IN ('queued', 'running')) AS unread FROM jobs j
-       WHERE library_id = ? AND version_id IN (SELECT value FROM json_each(?)) AND ${NOT_TRASHED} AND ((state != 'needs_key' AND NOT ${HELD} AND NOT ${AWAY}) OR ${QL}) GROUP BY version_id)`,
+       WHERE library_id = ? AND version_id IN (SELECT value FROM json_each(?)) AND ${NOT_TRASHED} AND ${FRESH} AND ((state != 'needs_key' AND NOT ${HELD} AND NOT ${AWAY}) OR ${QL}) GROUP BY version_id)`,
     )
-    .get({ ...away, ...look }, libraryId, JSON.stringify([...run]), LIMIT_LIKE) as { s: number | null; clips: number };
+    .get({ ...away, ...look, ...since }, libraryId, JSON.stringify([...run]), LIMIT_LIKE) as { s: number | null; clips: number };
   // a clip of the run whose every step left is held, or that went to the trash, is through, as far as this computer goes
   const share = ((through.s ?? 0) + run.size - through.clips) / (run.size + toCome);
   const counts = db
     .prepare(
       // still to do counts what waits for a key or a limit too (`waiting` says why), so a line never shrinks when one parks
       `SELECT kind, SUM(state = 'done') AS done, SUM(state = 'failed') AS failed, SUM(state IN ('queued', 'running', 'needs_key')) AS open
-       FROM jobs j WHERE library_id = ? AND version_id IN (SELECT value FROM json_each(?)) AND ${NOT_TRASHED} GROUP BY kind`,
+       FROM jobs j WHERE library_id = ? AND version_id IN (SELECT value FROM json_each(?)) AND ${NOT_TRASHED} AND ${FRESH} GROUP BY kind`,
     )
-    .all(libraryId, JSON.stringify([...run])) as { kind: string; done: number; failed: number; open: number }[];
+    .all(since, libraryId, JSON.stringify([...run])) as { kind: string; done: number; failed: number; open: number }[];
   const working = db
     .prepare(
       `SELECT j.kind, a.title FROM jobs j JOIN asset_versions v ON v.id = j.version_id JOIN assets a ON a.id = v.asset_id
@@ -541,8 +551,8 @@ export async function progress(libraryId: string, username: string): Promise<Lib
     // Timelines are no job of their own: Gemini watches each clip after its shot descriptions (timeline.ts watchAfter)
     if (kind === "look" && of && librarySetting(libraryId, "timeline") && canWatch(db, libraryId, username)) {
       const t = db
-        .prepare(`SELECT IFNULL(SUM(error IS NULL), 0) AS done, IFNULL(SUM(error IS NOT NULL), 0) AS failed FROM timelines WHERE version_id IN (SELECT value FROM json_each(?))`)
-        .get(JSON.stringify([...run])) as { done: number; failed: number };
+        .prepare(`SELECT IFNULL(SUM(error IS NULL), 0) AS done, IFNULL(SUM(error IS NOT NULL), 0) AS failed FROM timelines WHERE version_id IN (SELECT value FROM json_each(?)) AND at >= ?`)
+        .get(JSON.stringify([...run]), since.$since) as { done: number; failed: number };
       const on = [...run].find((v) => watching.has(v));
       const title = on && (db.prepare("SELECT a.title FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(on) as { title: string } | undefined)?.title;
       stages.push({ kind: "timeline", done: t.done, of: Math.max(of, t.done + t.failed), failed: t.failed, ...(title ? { now: title } : {}) });

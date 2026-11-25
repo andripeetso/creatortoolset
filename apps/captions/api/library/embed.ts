@@ -4,6 +4,7 @@ import type { DatabaseSync } from "node:sqlite";
 import type { SearchHit, TimelineEvent } from "../../contracts/library";
 import { DEVICE_EMBED_MODEL, deviceEmbedModelKept, embedOnDevice } from "../lib/device-embed";
 import { deviceTranscribes } from "../lib/device-transcribe";
+import { mirrorBlurred } from "./blur-mirror";
 import { libraryDb, librarySetting, sinceSql } from "./db";
 import { enqueueJob } from "./jobs";
 import { CARD, toCard, type CardRow } from "./query";
@@ -277,10 +278,12 @@ export function catchUpEmbeds(db = libraryDb()): number {
   return n;
 }
 
-/** catchUpEmbeds now and every minute; the returned function stops it. */
+/** catchUpEmbeds now and every minute, after the blurred copies take what their originals got; the returned function stops it. */
 export function startEmbedCatchUp(): () => void {
   const run = () => {
     try {
+      // what an original got since (a timeline lands after its job): its blurred copies take it before anything is queued for them
+      mirrorBlurred(libraryDb());
       catchUpEmbeds();
     } catch (e) {
       console.error("[library] search by meaning catch-up:", e);

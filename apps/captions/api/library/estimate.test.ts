@@ -84,9 +84,10 @@ describe("estimate", () => {
     enqueueJob(d, "lib_e", "v2", "fingerprint", "local");
     try {
       expect(await checks()).toMatchObject({ left: 2, line: { done: 0, of: 2 } });
-      // trashed while the run is on: its line leaves with it and it counts as through (v2 is half done: 1.5 of 2)
+      // trashed while the run is on: its line leaves with it and it counts as through (v2 has done none of this run's
+      // steps, its description from before not counted: 1 of 2)
       d.prepare("UPDATE assets SET trashed_at = 1 WHERE id = 'a1'").run();
-      expect(await checks()).toMatchObject({ left: 1, line: { done: 0, of: 1 }, share: 0.75 });
+      expect(await checks()).toMatchObject({ left: 1, line: { done: 0, of: 1 }, share: 0.5 });
       d.prepare("UPDATE assets SET trashed_at = 1 WHERE id = 'a2'").run();
       expect(await checks()).toEqual({ left: 0, share: 0, line: undefined });
       d.prepare("UPDATE assets SET trashed_at = NULL WHERE id IN ('a1', 'a2')").run();
@@ -136,15 +137,16 @@ describe("this computer's transcripts", () => {
 });
 
 describe("what the page counts", () => {
-  it("each step since this run began, in the order they run: a clip that is through stays counted, so no number goes down", async () => {
+  it("each step since this run began, in the order they run: a clip that is through stays counted, so no number goes down; what it finished before is not counted", async () => {
     d.prepare("DELETE FROM jobs WHERE state != 'done'").run();
     for (const v of ["v1", "v2", "v3"]) for (const k of ["proxy", "thumb", "transcribe"]) enqueueJob(d, "lib_e", v, k, "local");
     const counts = async () => (await progress("lib_e", "local")).stages!.map((s) => `${s.kind} ${s.done}/${s.of}`);
-    // their descriptions were made before (the setup above): done work of a clip in the run counts
-    expect(await counts()).toEqual(["thumb 0/3", "proxy 0/3", "transcribe 0/3", "describe 3/3"]);
+    // their descriptions were made before (the setup above): not this run's work, so no line (548 clips joining for a
+    // duplicate check once showed as "509 of 509 descriptions")
+    expect(await counts()).toEqual(["thumb 0/3", "proxy 0/3", "transcribe 0/3"]);
     // v1 is through every step, v2 and v3 have their pictures
-    d.prepare("UPDATE jobs SET state = 'done' WHERE state = 'queued' AND (version_id = 'v1' OR kind = 'thumb')").run();
-    expect(await counts()).toEqual(["thumb 3/3", "proxy 1/3", "transcribe 1/3", "describe 3/3"]);
+    d.prepare("UPDATE jobs SET state = 'done', done_at = ? WHERE state = 'queued' AND (version_id = 'v1' OR kind = 'thumb')").run(Date.now());
+    expect(await counts()).toEqual(["thumb 3/3", "proxy 1/3", "transcribe 1/3"]);
     const running = d.prepare("UPDATE jobs SET state = 'running', started_at = ? WHERE version_id = 'v2' AND kind = 'proxy' RETURNING id").get(Date.now()) as { id: number };
     expect((await progress("lib_e", "local")).stages!.find((s) => s.kind === "proxy")).toMatchObject({ done: 1, of: 3, now: "c" });
     d.prepare("UPDATE jobs SET state = 'failed' WHERE id = ?").run(running.id);
@@ -153,11 +155,12 @@ describe("what the page counts", () => {
     d.prepare("UPDATE jobs SET state = 'needs_key', error = 'Add your Deepgram key' WHERE kind = 'transcribe' AND version_id = 'v2'").run();
     expect((await progress("lib_e", "local")).stages!.find((s) => s.kind === "transcribe")).toMatchObject({ done: 1, of: 3 });
     // the queue empties: the next run counts from nothing
-    d.prepare("UPDATE jobs SET state = 'done' WHERE state = 'queued'").run();
+    d.prepare("UPDATE jobs SET state = 'done', done_at = ? WHERE state = 'queued'").run(Date.now() - 3_600_000);
     expect(await progress("lib_e", "local")).toMatchObject({ left: 0, stages: [] });
     enqueueJob(d, "lib_e", "v3", "embed", "local", true);
-    // search by meaning has no key here: it is no line (it waits for a key in `waiting`, once claimed)
-    expect(await counts()).toEqual(["thumb 1/1", "proxy 1/1", "transcribe 1/1", "describe 1/1"]);
+    // search by meaning has no key here: it is no line (it waits for a key in `waiting`, once claimed); v3's earlier
+    // steps were the run before
+    expect(await counts()).toEqual([]);
     d.prepare("DELETE FROM jobs WHERE kind != 'describe'").run();
   });
 });
@@ -171,7 +174,7 @@ describe("one set of numbers while clips come in", () => {
       seen.push(p.share);
       return p;
     };
-    const done = (v: string, kind: string) => d.prepare("UPDATE jobs SET state = 'done' WHERE version_id = ? AND kind = ?").run(v, kind);
+    const done = (v: string, kind: string) => d.prepare("UPDATE jobs SET state = 'done', done_at = ? WHERE version_id = ? AND kind = ?").run(Date.now(), v, kind);
     // the folder holds three clips, none handed over yet
     watchedFolders.set("lib_e", new Set(["/Volumes/Card/Trip"]));
     folderWalks.set("lib_e\0/Volumes/Card/Trip", { files: 3, adding: 3 });

@@ -1,5 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { move, type Moves } from "../../contracts/transition";
+import { mirrorFromOriginal, mirrorTo, ON_ORIGINAL, originalOf } from "./blur-mirror";
 
 /**
  * The library's job queue (tasks/media-library-plan.md, section 5): one row per (version, kind) in `jobs`.
@@ -66,6 +67,13 @@ const HAVE: Record<string, string> = {
  * zero. A version that has what the job makes (HAVE) gets it marked done instead. `again` queues a done one too: its input changed (a new transcript to embed, a describe someone asked for again).
  */
 export function enqueueJob(db: DatabaseSync, libraryId: string, versionId: string, kind: string, actor: string | null, again = false, table: JobTable = "jobs"): void {
+  // a blurred copy is its original's footage: the analysis runs on the original and the copy takes the result (blur-mirror.ts)
+  const original = table === "jobs" && ON_ORIGINAL.has(kind) ? originalOf(db, versionId) : undefined;
+  if (original) {
+    enqueueJob(db, libraryId, original, kind, actor, again, table);
+    mirrorTo(db, original, versionId);
+    return;
+  }
   // a file that has it already (made before, or brought in with it: an archive's transcripts and descriptions) is never
   // made again unasked, whatever the switches say: its job reads done. `again` is an ask by name or a changed input.
   const have = table === "jobs" && !again ? HAVE[kind] : undefined;
@@ -143,7 +151,10 @@ export const firstClips = (now = Date.now()): string[] => [...waitedOn].filter((
  */
 export function finishJob(db: DatabaseSync, id: number, ok: boolean, error?: string, now = Date.now(), table: JobTable = "jobs"): void {
   if (ok) {
-    db.prepare(`UPDATE ${table} SET state = 'done', lease_until = NULL, error = NULL, done_at = ? WHERE id = ? AND state = 'running'`).run(now, id);
+    const done = db.prepare(`UPDATE ${table} SET state = 'done', lease_until = NULL, error = NULL, done_at = ? WHERE id = ? AND state = 'running'`).run(now, id).changes;
+    // an original's new result goes to its blurred copies too (blur-mirror.ts)
+    const j = done && table === "jobs" ? (db.prepare("SELECT version_id, kind FROM jobs WHERE id = ?").get(id) as { version_id: string | null; kind: string } | undefined) : undefined;
+    if (j?.version_id && ON_ORIGINAL.has(j.kind)) mirrorFromOriginal(db, j.version_id);
     return;
   }
   // the next state is chosen here (checked against JOB_MOVES); the read and the write are one synchronous run, so nothing moves the row between them
