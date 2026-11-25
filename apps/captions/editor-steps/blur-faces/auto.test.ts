@@ -124,18 +124,19 @@ describe("the Mac that has the file", () => {
     await settings({});
     const v = await added("mp4");
     await queueVersion(event(v));
-    expect(autoJobs.preparing("lib_a")).toEqual([v]);
+    const waiting = [{ versionId: v, waiting: true }];
+    expect(autoJobs.preparing("lib_a")).toEqual([{ versionId: v }]);
     expect(autoJobs.preparing("lib_b")).toEqual([]);
     macs.online = new Set();
-    expect(autoJobs.preparing("lib_a")).toEqual([]);
+    expect(autoJobs.preparing("lib_a")).toEqual(waiting);
     macs.online = new Set(["mac-1"]);
     expect(autoJobs.claim(mac)).not.toBeNull();
-    expect(autoJobs.preparing("lib_a")).toEqual([v]);
+    expect(autoJobs.preparing("lib_a")).toEqual([{ versionId: v, running: true }]);
     macs.online = new Set(); // asleep mid-file: nothing has released it yet
-    expect(autoJobs.preparing("lib_a")).toEqual([]);
+    expect(autoJobs.preparing("lib_a")).toEqual(waiting);
     macs.online = new Set(["mac-1"]);
     ai.configured = false;
-    expect(autoJobs.preparing("lib_a")).toEqual([]);
+    expect(autoJobs.preparing("lib_a")).toEqual(waiting);
   });
 
   it("writes the copy at the resolution and bitrate set, into the folder the location says", async () => {

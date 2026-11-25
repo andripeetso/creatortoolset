@@ -365,6 +365,8 @@ const STAGES: LibraryStage["kind"][] = ["thumb", "proxy", "fingerprint", "transc
 // empty: every count below is over these, so no number goes down while the run lasts (a clip that is done stays counted)
 // ponytail: in memory; a restart counts from the clips with work left then
 const runs = new Map<string, Set<string>>();
+// the files a computer made ready (Face Blur's blurred copies) during each run, kept the same way, for its step line
+const madeRuns = new Map<string, Set<string>>();
 // when each run began: a clip in it counts the steps queued for this run, not the ones it finished before (a clip that
 // joins for one duplicate check is one step, not its old transcript and descriptions shown again)
 const runSince = new Map<string, number>();
@@ -450,11 +452,13 @@ export async function progress(libraryId: string, username: string): Promise<Lib
   const toCome = stillToCome(db, libraryId);
   // the files a computer is still making ready (Face Blur's blurred copies): their clips count from the start too, not
   // one by one as each copy comes in
-  const coming = (
+  const made = pluginDeviceJobs().flatMap((j) => j.preparing?.(libraryId) ?? []);
+  const comingRows = (
     db
-      .prepare("SELECT v.id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id IN (SELECT value FROM json_each(?)) AND a.library_id = ? AND a.trashed_at IS NULL")
-      .all(JSON.stringify(pluginDeviceJobs().flatMap((j) => j.preparing?.(libraryId) ?? [])), libraryId) as { id: string }[]
-  ).map((r) => r.id);
+      .prepare("SELECT v.id, a.title FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id IN (SELECT value FROM json_each(?)) AND a.library_id = ? AND a.trashed_at IS NULL")
+      .all(JSON.stringify(made.filter((m) => !m.failed && !m.waiting).map((m) => m.versionId)), libraryId) as { id: string; title: string }[]
+  );
+  const coming = comingRows.map((r) => r.id);
   const left = pending.reduce((n, r) => n + r.n, 0) + toCome + coming.length;
   const waiting: LibraryProgress["waiting"] = rows
     .filter((r) => r.state === "needs_key" && !r.ql && !r.cw)
@@ -507,6 +511,7 @@ export async function progress(libraryId: string, username: string): Promise<Lib
   }
   if (!left) {
     runs.delete(libraryId);
+    madeRuns.delete(libraryId);
     runSince.delete(libraryId);
     runEnded.set(libraryId, Date.now());
     return { done: 0, left: 0, clips: 0, share: 0, seconds: 0, waiting, stages: [] };
@@ -518,7 +523,14 @@ export async function progress(libraryId: string, username: string): Promise<Lib
   runs.set(libraryId, run);
   // the run before is through (nobody looked while the queue was empty): this one counts from nothing
   // while a computer is still making files ready (coming), the run goes on between them
-  if (!coming.length && ![...run].some((v) => open.some((o) => o.v === v))) run.clear();
+  const madeRun = madeRuns.get(libraryId) ?? new Set<string>();
+  madeRuns.set(libraryId, madeRun);
+  // a clip blurred in this run and analyzed now is the same run
+  if (!coming.length && ![...run, ...madeRun].some((v) => open.some((o) => o.v === v))) {
+    run.clear();
+    madeRun.clear();
+  }
+  for (const v of coming) madeRun.add(v);
   if (!run.size) runSince.set(libraryId, Math.max(Date.now() - 60_000, runEnded.get(libraryId) ?? 0));
   for (const { v } of open) run.add(v);
   // a clip, not a file: its original and its blurred copy are one clip
@@ -555,6 +567,13 @@ export async function progress(libraryId: string, username: string): Promise<Lib
     .all(libraryId) as { kind: string; title: string }[];
   const routes = routesOf(libraryId, username);
   const stages: LibraryStage[] = [];
+  // shortcut: every plug-in's computer files are one line, named for Face Blur, the only slot with them; a name from the slot when there is a second
+  if (madeRun.size) {
+    const listed = new Map(made.map((m) => [m.versionId, m]));
+    const failed = [...madeRun].filter((v) => listed.get(v)?.failed).length;
+    const now = comingRows.find((r) => listed.get(r.id)?.running)?.title;
+    stages.push({ kind: "blur", done: [...madeRun].filter((v) => !listed.has(v)).length, of: madeRun.size, failed, ...(now ? { now } : {}) });
+  }
   for (const kind of STAGES) {
     // a step with nothing to run it on says so in `waiting`, not as a line that never moves
     if (routes[STEP_OF[kind]!].route === "none") continue;

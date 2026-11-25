@@ -54,6 +54,7 @@ export const folderName = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() 
 
 /** Each step of preparing, in the words of the person who watches it go by (api/library/estimate.ts STAGES). */
 const STAGE_NAME: Record<LibraryStage["kind"], string> = {
+  blur: "Face Blur",
   thumb: "Pictures",
   proxy: "Proxies",
   fingerprint: "Duplicate checks",
@@ -249,6 +250,7 @@ export const hiddenLine = (x: { computer: string; clips: number }) =>
 
 const PICTURE_STEPS = new Set(["probe", "thumb", "wave"]);
 const STEP_WORDS: Record<NonNullable<AssetCard["preparing"]>["step"], string> = {
+  blur: "Blurring faces",
   probe: "Getting its picture",
   thumb: "Getting its picture",
   wave: "Getting its picture",

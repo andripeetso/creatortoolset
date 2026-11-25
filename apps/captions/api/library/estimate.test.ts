@@ -9,7 +9,7 @@ vi.mock("../ai-complete", async (real) => {
 });
 
 // the versions a plug-in's computer work is still making ready (Face Blur's blurred copies)
-const preparing = vi.hoisted(() => ({ ids: [] as string[] }));
+const preparing = vi.hoisted(() => ({ ids: [] as { versionId: string; running?: true; waiting?: true; failed?: true }[] }));
 vi.mock("../lib/plugin", async (real) => ({ ...(await real<typeof import("../lib/plugin")>()), pluginDeviceJobs: () => [{ preparing: () => preparing.ids }] }));
 
 const scratch = process.env.CT_SCRATCH_DIR ?? tmpdir();
@@ -225,15 +225,26 @@ describe("clips being blurred", () => {
     d.prepare("INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, probe, state, created_by, created_at) VALUES ('v1b', 'a1', 2, 'k', 1, 's1b', '{}', 'ready', 'local', 1)").run();
     enqueueJob(d, "lib_e", "v1", "transcribe", "local", true);
     enqueueJob(d, "lib_e", "v1b", "thumb", "local");
-    preparing.ids = ["v2", "v3"];
+    preparing.ids = [{ versionId: "v2", running: true }, { versionId: "v3" }];
     try {
-      expect(await progress("lib_e", "local")).toMatchObject({ clips: 3 });
+      const first = await progress("lib_e", "local");
+      expect(first).toMatchObject({ clips: 3 });
+      // the Mac's blurring is a step of its own: the clip it is on, and how many of the run are through
+      expect(first.stages![0]).toMatchObject({ kind: "blur", done: 0, of: 2, failed: 0 });
+      expect(first.stages![0]!.now).toBeTruthy();
       // a1 through before the next copy is in, only the Mac blurring: still said, and the run goes on (its line stays)
       d.prepare("UPDATE jobs SET state = 'done', done_at = ? WHERE version_id IN ('v1', 'v1b') AND state != 'done'").run(Date.now());
       const between = await progress("lib_e", "local");
       expect(between).toMatchObject({ clips: 2 });
-      expect(between.stages.find((s) => s.kind === "transcribe")).toMatchObject({ done: 1, of: 1 });
+      expect(between.stages!.find((s) => s.kind === "transcribe")).toMatchObject({ done: 1, of: 1 });
       expect(between.share).toBeGreaterThan(0);
+      // v2's copy is in (off the queue); v3's Mac went offline: waiting, not done, and its clip no longer counted
+      preparing.ids = [{ versionId: "v3", waiting: true }, { versionId: "v9", failed: true }];
+      enqueueJob(d, "lib_e", "v2", "transcribe", "local", true);
+      const later = await progress("lib_e", "local");
+      expect(later).toMatchObject({ clips: 1 });
+      expect(later.stages![0]).toMatchObject({ kind: "blur", done: 1, of: 2, failed: 0 });
+      d.prepare("DELETE FROM jobs WHERE state != 'done'").run();
       preparing.ids = [];
       expect(await progress("lib_e", "local")).toMatchObject({ left: 0, clips: 0 });
     } finally {

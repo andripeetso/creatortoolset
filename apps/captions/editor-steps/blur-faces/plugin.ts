@@ -411,9 +411,14 @@ export const autoJobs = {
     const now = Date.now();
     const ok = new Map<string, boolean>(); // ready() reads files: once per owner, not once per file
     const isReady = (owner: string) => ok.get(owner) ?? ok.set(owner, ready(owner)).get(owner)!;
-    return all()
-      .filter((j) => j.libraryId === libraryId && (j.state === "running" ? isOnline(j.device ?? "") : offered(j, j.mac, now) && isOnline(j.mac)) && isReady(j.owner))
-      .map((j) => j.versionId);
+    const out: { versionId: string; running?: true; waiting?: true; failed?: true }[] = [];
+    for (const j of all()) {
+      if (j.libraryId !== libraryId) continue;
+      if (j.state === "failed") out.push({ versionId: j.versionId, failed: true });
+      else if (!(j.state === "running" ? isOnline(j.device ?? "") : offered(j, j.mac, now) && isOnline(j.mac)) || !isReady(j.owner)) out.push({ versionId: j.versionId, waiting: true });
+      else out.push({ versionId: j.versionId, ...(j.state === "running" ? { running: true as const } : {}) });
+    }
+    return out;
   },
   claim: (device: { id: string; owner: string }): DeviceJob | null => {
     releaseStale();
