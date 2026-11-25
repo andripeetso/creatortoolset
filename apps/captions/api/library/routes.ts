@@ -832,7 +832,7 @@ libraryApp.post("/:id/in-place", async (c) => {
   const libraryId = c.req.param("id");
   if (!libraryRole(user.username, libraryId) || !(await inAskedWorkspace(user, libraryId))) return c.json({ error: "Not found", code: "not_found" }, 404);
   if (!watchAllowed(user.username)) return c.json({ error: "This server is not on your computer: upload the file", code: "forbidden" }, 403);
-  const body = ((await c.req.json().catch(() => null)) ?? {}) as { path?: unknown; size?: unknown; collectionId?: unknown; again?: unknown; blur?: unknown };
+  const body = ((await c.req.json().catch(() => null)) ?? {}) as { path?: unknown; size?: unknown; collectionId?: unknown; again?: unknown; blur?: unknown; proxy?: unknown };
   const given = typeof body.path === "string" ? body.path : "";
   const refuse = (error: string) => c.json({ error, code: "invalid" }, 400);
   if (!path.isAbsolute(given)) return refuse("Not a full path");
