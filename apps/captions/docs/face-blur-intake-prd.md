@@ -39,8 +39,9 @@ file comes in on a Mac, marked Blur faces
 The chain is **Original → Blurred copy → Proxy** (owner, 2026-11-25). Blur faces and Generate proxies are two switches
 and neither changes the other. No proxy is ever made of a Blur faces file's original: with Generate proxies on, the
 proxy is made from the blurred copy, by the Mac that made the copy. A file with no blurred copy (no face found, or kept
-as filmed) gets its proxy from its original, and that original is never uploaded. Under Blur faces the stored Upload
-reads per file (`db.ts` `blurUpload`): its Originals part is the Blurred row, its Proxies part the Proxies row. The
+as filmed) follows Upload as any file does: its proxy is made from its original, and under Blurred it goes up as filmed.
+Under Blur faces the stored Upload (`db.ts` `libraryUploadStored`) has two parts: Originals is the Blurred row, Proxies
+the Proxies row. An original waiting for its blur follows neither. The
 blurred copy is saved as a version (`blurred_of`), not as a proxy
 file, so exports on the owner's own Mac use it too (they read the original when the file is on that Mac).
 
@@ -77,7 +78,7 @@ file, so exports on the owner's own Mac use it too (they read the original when 
   back). The copy is then sent as Upload asks (Blurred: the copy; Proxies: the proxy made from it).
 - **R10** No proxy is made of a Blur faces file's original (`on-mac.ts`, `worker.ts`); its proxy is made from its
   blurred copy.
-- **R11** Why a file's answer is no is kept (`assets.blur_note`, contracts `BlurNote`): `none`, Face Blur went over it
+- **R10a** Why a file's answer is no is kept (`assets.blur_note`, contracts `BlurNote`): `none`, Face Blur went over it
   and found no face ("No faces found" on the clip); `skipped`, it was in the library when Blur faces went on and was
   left as it was; absent, a person kept it as filmed. Switching Blur faces on never touches the files already there
   unless the person answers Blur all files. What's made → Blurred copies counts the skipped ones as missing, and its Make

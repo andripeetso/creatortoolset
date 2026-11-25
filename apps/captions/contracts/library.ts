@@ -288,8 +288,9 @@ export const uploadFrom = (originals: boolean, proxies: boolean): LibraryUpload 
  * Hosted media as the owner sets it (setup step 5 and the owner page, one component): the Upload to server master, and
  * under it Final exports, Proxies and Originals in any mix. Off = nothing goes up, final exports included. Stored as the
  * two values it always was (upload, finalsUpload; a missing finalsUpload is "all", as the server reads it).
- * Under Blur faces `originals` is the Blurred row: the blurred copies themselves, never an original (api/library/db.ts
- * blurUpload); `proxies` stays the proxies, made from the blurred copies.
+ * Under Blur faces `originals` is the Blurred row: the blurred copies themselves, and the original of a clip with none (no
+ * face found, kept as filmed), never an original waiting for its blur (api/library/db.ts libraryUploadStored); `proxies`
+ * stays the proxies, made from the blurred copies.
  */
 export interface HostedMix {
   finals: boolean;
@@ -942,9 +943,9 @@ export const LIBRARY_WORDS = {
   finalExportsUpload: { label: "Final exports", tip: "Finished videos are uploaded so they can be reviewed and shared." },
   proxiesUpload: { tip: "Smaller copies of every clip are uploaded, so your team can play and edit them. The originals stay on your computers." },
   originalsUpload: { tip: "The full files are uploaded, so they can be downloaded anywhere." },
-  blurFaces: { label: "Blur faces", tip: "Only blurred videos leave your computers. Originals are never uploaded, shared or shown to your team." },
+  blurFaces: { label: "Blur faces", tip: "A clip with faces is uploaded, shared and shown to your team only as its blurred copy." },
   blurred: "Blurred",
-  blurredUpload: { tip: "The blurred copy of each clip is uploaded as it is. The originals stay on your computers." },
+  blurredUpload: { tip: "The blurred copy of each clip is uploaded as it is, and a clip with no faces to blur as filmed." },
   proxiesFromBlurred: "Made from the blurred copies",
   notBlurred: "Not blurred yet",
   noFaces: "No faces found",

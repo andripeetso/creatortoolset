@@ -26,7 +26,7 @@ export function checkMade(b: unknown): Made | string {
 /**
  * Records a copy on `device` (a Mac of `owner`'s) in the library: with `blurredOf` (its original's full SHA-256) it becomes
  * that clip's current, blurred version (routes.ts originalClipOf). Its Mac then sends what Upload asks for (job "send",
- * derived.ts sendLater): the copy itself under Blurred, the proxy it makes from the copy under Proxies (db.ts blurUpload).
+ * derived.ts sendLater): the copy itself under Blurred, the proxy it makes from the copy under Proxies (db.ts libraryUploadStored).
  */
 export async function recordCopy(libraryId: string, owner: string, device: string, m: Made, blurredOf?: string) {
   const r = await indexOnMac(libraryId, owner, {

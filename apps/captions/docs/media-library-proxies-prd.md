@@ -1,6 +1,6 @@
 # Media Library: blurred copies and proxies — plan
 
-Status: draft 4, 2026-11-25. Replaces draft 3 (proxies alone). The chain itself is built (`9a8453275`); this is what is
+Status: draft 5, 2026-11-25 (the owner's answers to draft 4: §2, D3, D6, R13). Replaces draft 3 (proxies alone). The chain itself is built (`9a8453275`); this is what is
 left, in build order, with the review findings three earlier changes left open (§5). Tool: Media Library, with the Face
 Blur plug-in (`editor-steps/blur-faces`, `docs/face-blur-intake-prd.md`).
 
@@ -21,8 +21,9 @@ Original  ─►  Blurred copy  ─►  Proxy
 - A switch decides for files added from then on. Files already in the library are touched only by a press: What's made
   → Blurred copies or Proxies → Make N missing.
 - Final renders use the blurred copy, or the original where the clip has none. Never the proxy.
-- Blur is not a privacy wall inside the team. It matters in what is rendered. One promise stays: under Blur faces an
-  original with faces is never uploaded.
+- Blur is not a privacy wall inside the team. It matters in what is rendered. One promise stays: under Blur faces the
+  server never keeps or shows the original of a clip with faces. A file from a phone passes through it, held, on its
+  way to the computer that blurs it (R13).
 
 ## 2. What a proxy is for
 
@@ -39,6 +40,11 @@ So **Generate proxies** means: a proxy where one is needed. That is a clip this 
 every video while Upload → Proxies is on. It does not mean a proxy of every clip kept on the computer; that is decided
 with the Editor.
 
+**The main job of a proxy is the team's copy** (owner, 2026-11-25): a light file of every clip on the server, so the
+people who share the library can watch it. For a library that blurs faces and shares with a team the setup is Blur
+faces on, Generate proxies on, Upload → Proxies on: the server then holds one light copy of each clip, blurred where it
+has faces.
+
 ## 3. Decisions
 
 - **D1 Frame rate.** Every copy keeps its original's frame rate, always. A 119.88 fps clip gives a 119.88 fps blurred
@@ -47,12 +53,15 @@ with the Editor.
 - **D2 Where copies are written.** Blurred copies: the library's `Imports/Blurred` folder (Settings → Face Blur →
   Output can change it). Proxies: the computer's Download location (Settings → Storage). No new choice is added, and
   nothing is written to the internal disk because another disk is missing.
-- **D3 Upload, under Blur faces.** Two rows: **Blurred** sends the blurred copies as they are; **Proxies** sends the
-  proxies and shows only while proxies are made. A clip with no blurred copy goes up only as its proxy.
+- **D3 Upload, under Blur faces.** Two rows, and what goes up is what is ticked, nothing else. **Blurred** sends each
+  clip's blurred copy as it is, and a clip with no faces to blur as filmed (owner, 2026-11-25: "they should go up").
+  **Proxies** sends the proxies and shows only while proxies are made. Proxies alone means only proxies go up.
 - **D4 Words.** On screen the three files are Original, Blurred and Proxy (File row, Location menu, Upload rows); in a
   sentence "blurred copy". Never "blurred proxy".
 - **D5 Nothing changes by itself.** A default that changes (R7) is stored first as each existing library reads it
   today.
+- **D6 One proxy for each clip.** One file at the library's Proxy quality (540p, 720p or 1080p), for the team and for
+  whatever plays it. No second kind for the Editor; if the Editor needs another, that is decided with it (§8).
 
 ## 4. What is built (`9a8453275`, with `9628e3ecf`, `ef8292c2b`, `e752de444`, `571f6fec2`)
 
@@ -61,16 +70,16 @@ with the Editor.
 | off | off | any | nothing made | nothing made |
 | off | on | off | proxy from the original where needed, kept on the computer | same |
 | off | on | Proxies | proxy of every video, uploaded | same |
-| on | off | Blurred | blurred copy made, uploaded as it is | marked "No faces found", nothing uploaded |
+| on | off | Blurred | blurred copy made, uploaded as it is | marked "No faces found", uploaded as filmed |
 | on | on | off | blurred copy; a proxy from it where needed, kept on the computer | proxy from the original where needed |
 | on | on | Proxies | blurred copy; proxy made from it and uploaded | proxy from the original, uploaded |
-| on | on | Blurred + Proxies | both uploaded | its proxy uploaded |
-| on | on | Blurred alone | blurred copy uploaded, **no proxy made** (R11) | **no proxy made** (R11) |
+| on | on | Blurred + Proxies | both uploaded | original and its proxy uploaded |
+| on | on | Blurred alone | blurred copy uploaded, **no proxy made** (R11) | uploaded as filmed, **no proxy made** (R11) |
 
 Also built: the Proxy workflow card with both switches; What's made → Blurred copies (count, New files switch, Make N
 missing); the switch asks about old files only when one has no answer; why a file is not blurred is kept
-(`assets.blur_note`: no face found, left as it was, or kept by a person); the stored Upload read per file
-(`db.ts` `blurUpload`); the migration that moved Blurred from the stored "proxies" to "originals".
+(`assets.blur_note`: no face found, left as it was, or kept by a person); the stored Upload's two parts under Blur
+faces (`db.ts` `libraryUploadStored`); the migration that moved Blurred from the stored "proxies" to "originals".
 
 ## 5. Left open by earlier reviews
 
@@ -149,8 +158,9 @@ In this order. Each is one small change with its test.
   of each new video too heavy to play smoothly, and of every new video while Upload to server sends proxies."
 - **R5 Upload → Proxies shows only while Generate proxies is on**, in every library (today only under Blur faces) and
   in setup. Turning Generate proxies off turns Upload → Proxies off in the same save, with Undo for both.
-- **R6 Setup asks, starting on No.** The Proxy workflow step's lead is "Make proxies?" with a Generate proxies
-  checkbox, unticked (`Setup.tsx:87`). The chat's setup card stops turning proxies on unasked: `quickSetup`
+- **R6 Setup asks, starting on No.** Setting up a Media Library asks about proxies already (its Proxy workflow step);
+  the answer is filled in as Yes before the person chooses. New: the step's lead is "Make proxies?" with a Generate
+  proxies checkbox, unticked (`Setup.tsx:87`). The chat's setup card stops turning proxies on unasked: `quickSetup`
   (`contracts/library.ts:1062`) sends `proxy: false`, and its route stores what it is sent, checked (`proxy === true`),
   where today it stores `proxy: true` whatever comes (`routes.ts:1358`).
 - **R7 A new library starts with proxies off** (`SETTING_DEFAULTS.proxy`, `db.ts:202`). Before that default changes, a
@@ -175,6 +185,25 @@ In this order. Each is one small change with its test.
   a send job, and once its original is on the server the proxy job must stay with the computer. Test both orders. If
   the Mac app that reads `keepProxy` is newer than `MIN_MAC_APP`, raise it in the same commit.
 
+### Files from a phone or a browser
+
+- **R13 A file from a phone is a Media Library add, taken through the main computer.** Today, under Blur faces, a file
+  sent from the phone or dropped in a browser is refused when it starts (`upload-gate.ts` `mayReceive`), unless its
+  owner turns Blur faces off for that upload; a file dropped in a chat is kept as filmed and is not a library add. New
+  (owner, 2026-11-25), the same for the phone's upload screen, a file dropped in the phone's chat and a browser:
+  1. It is a Media Library add. One the library has already (the same fingerprint, `derived.ts` `duplicateOf`) is not
+     added again; the chat uses the clip that is there.
+  2. It is uploaded and held: played, shared and handed to no one but the main computer, the one with the library's
+     Source media folder (the import rule, `routes.ts` `saveOnComputer`). With that computer offline it waits, held.
+  3. The main computer copies it into the library's Imports folder. That copy is the master, and nothing is processed
+     before it is there.
+  4. Then it is processed as any file on that computer. Faces found: the blurred copy is made, the held file is
+     deleted from the server, and what goes up follows Upload (D3). No faces: the held file stays as the clip's
+     uploaded original where Upload → Blurred is on, and is deleted where it is off.
+  The held file is the one case of an unblurred original with faces on the server, and it is there only until step 4.
+  `api/prevention.test.ts` and `upload-gate.test.ts` get their rows (a route that takes a file). Its own change, after
+  R1–R11.
+
 ### Checked in the running app
 
 - **R12 Click through what `9a8453275` built**, which no one has: the Proxy workflow card under each switch; the
@@ -191,7 +220,8 @@ In this order. Each is one small change with its test.
 5. R8, R9: guards.
 6. R10: a check, perhaps nothing to change.
 7. R11: last, alone, with its two-order test.
-8. L10, L11, R12: in the running app, after a deploy.
+8. R13: its own change, with the upload gate's tests first.
+9. L10, L11, R12: in the running app, after a deploy.
 
 ## 8. Parked: the Editor
 
@@ -205,8 +235,10 @@ send makes the proxy.
 
 ## 9. Open questions
 
-- **Q1** A clip with no faces has no blurred copy, so Upload → Blurred sends nothing for it; it reaches the server
-  only as a proxy. Kept as built unless the owner wants its original sent under Blurred.
-- **Q2** R7 keeps proxies on for libraries that never stored the switch. Draft 3 read them as off.
-- **Q3** A camera's slow-and-quick mode films at one rate and saves at another: the Frame rate row shows the saved
+- **Q1** A camera's slow-and-quick mode films at one rate and saves at another: the Frame rate row shows the saved
   rate. The filmed rate is in the camera's sidecar file, which the app does not read. Not planned.
+- **Q2** R13, step 2: which computer is the main one when a library's Source media folder is on a network disk two
+  computers reach. The first one online that reaches it, unless the owner wants to name one.
+
+Answered (owner, 2026-11-25): a clip with no faces goes up as filmed under Blurred (D3); setup asks about proxies and
+no library changes by itself (R6, R7); the Editor is a later conversation (§8).

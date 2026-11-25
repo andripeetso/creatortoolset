@@ -15,7 +15,7 @@ import { currentWorkspaceId } from "../lib/workspace-scope";
 import { sharedHere, workspaceScope } from "../lib/workshop/workspace";
 import { expandCollection } from "./collections";
 import { libraryMade, makeMissing, retryFailed, retryUnreadable, stopQueued, unreadableOf } from "./made";
-import { blobs, BLUR_SQL, blursFaces, blurUpload, proxyAsked, type ProxyAnswer, finalsUpload, isBlurred, keepsOnlyOriginals, libraryDb, librarySetting, libraryStore, libraryUpload, libraryUploadStored, meter, newLibrarySettings, proxiesInCloud, SETTING_DEFAULTS, SINCE, uploadOf } from "./db";
+import { blobs, BLUR_SQL, blursFaces, proxyAsked, type ProxyAnswer, finalsUpload, isBlurred, keepsOnlyOriginals, libraryDb, librarySetting, libraryStore, libraryUpload, libraryUploadStored, meter, newLibrarySettings, proxiesInCloud, SETTING_DEFAULTS, SINCE, uploadOf } from "./db";
 import { estimate, libraryStatus, progress } from "./estimate";
 import { sendFile } from "../lib/send-file";
 import { emitEvent, notifyLibraryChanges } from "../lib/events";
@@ -305,7 +305,7 @@ export async function saveToLibrary(
   // Upload none: the file goes to the asker's computer and is indexed there, never kept here (under Blur faces Upload
   // reads none for anything not blurred, so it goes there too); a file kept as filmed, and a blurred render, follow the
   // Upload the owner chose (upload-gate.ts uploadFor)
-  const upload = opts.finals ? finalsUpload(lib) : blursFaces(lib) && (opts.blur === "no" || blurredOf) ? blurUpload(lib, !!blurredOf) : libraryUpload(lib);
+  const upload = opts.finals ? finalsUpload(lib) : opts.blur === "no" || blurredOf ? libraryUploadStored(lib) : libraryUpload(lib);
   if (serverKind() !== "mac" && hostsNone(upload)) {
     // a member's computer is not where the owner keeps this library's files: refused, as a member's upload is (startUpload)
     if (as === "member") return { error: REFUSED_COMPUTER_OFF, code: "failed" };
@@ -1258,7 +1258,7 @@ async function patchLibrary(c: Context<{ Variables: AuthVars }>, libraryId: stri
   // going off (libraryUpload reads none under it), so the proxy backfill below runs for that save alone
   const wasHosted = hostsProxies(libraryUploadStored(libraryId));
   // Blur faces going on or off changes what Originals means (under it the Blurred row: the blurred copies, db.ts
-  // blurUpload), so a save that flips it and names no Upload of its own drops that part: no original starts going up because
+  // libraryUploadStored), so a save that flips it and names no Upload of its own drops that part: no original starts going up because
   // Blur faces went off, and no blurred copy because it went on. Proxies stays as it was
   const flips = typeof s.blurFaces === "boolean" && s.blurFaces !== blursFaces(libraryId);
   // on from off, the one question the switch asks: blurExisting (a request flag, never stored) blurs the files already

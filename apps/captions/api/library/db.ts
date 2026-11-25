@@ -218,18 +218,14 @@ export const newLibrarySettings = (extra: Record<string, unknown> = {}): string 
 /** What a file added from a computer the server is not on sends here (contracts LibrarySettings.upload); old true/false read as all/none. */
 export const uploadOf = (v: unknown): LibraryUpload => (v === true || v === 1 ? "all" : LIBRARY_UPLOADS.includes(v as LibraryUpload) ? (v as LibraryUpload) : "none");
 export const libraryUpload = (libraryId: string): LibraryUpload => (blursFaces(libraryId) ? "none" : libraryUploadStored(libraryId));
-/** The Upload the owner chose, Blur faces or not. Under Blur faces read it per file, through blurUpload. */
+/**
+ * The Upload the owner chose, Blur faces or not. Under Blur faces (Original → Blurred copy → Proxy) it is what a file that
+ * may leave follows: its Originals part is the Blurred row, a clip's blurred copy as it is, or the original of a clip with
+ * no blurred copy (no face found, kept as filmed: owner, 2026-11-25, "they should go up"); its Proxies part the proxies,
+ * made from that same file. An original waiting for its blur follows neither (libraryUpload reads none).
+ */
 export const libraryUploadStored = (libraryId: string): LibraryUpload =>
   uploadOf((libraryDb().prepare("SELECT json_extract(settings, '$.upload') AS v FROM libraries WHERE id = ?").get(libraryId) as { v: unknown } | undefined)?.v);
-/**
- * Under Blur faces, the stored Upload as one file reads it (Original → Blurred copy → Proxy): Originals there is the
- * Blurred row, the blurred copies themselves, so only a blurred render follows that part; Proxies is the proxies, made
- * from the blurred copy. A file kept as filmed has no blurred copy: it follows Proxies alone, its original never sent.
- */
-export const blurUpload = (libraryId: string, blurred: boolean): LibraryUpload => {
-  const u = libraryUploadStored(libraryId);
-  return blurred ? u : hostsProxies(u) ? "proxies" : "none";
-};
 /** What a final sends from a computer (contracts LibrarySettings.finalsUpload): "all" when it was never set; under Blur faces none. */
 export const finalsUpload = (libraryId: string): LibraryUpload => (blursFaces(libraryId) ? "none" : finalsUploadStored(libraryId));
 const finalsUploadStored = (libraryId: string): LibraryUpload => {
@@ -296,7 +292,7 @@ export function versionUpload(versionId: string): LibraryUpload {
     )
     .get(versionId) as { lib: string; fin: number } | undefined;
   // a blurred render, or a file kept as filmed, follows what the owner chose; under Blur faces any other clip reads none
-  if (r && blursFaces(r.lib) && (isBlurred(versionId) || fileBlur(versionId)?.blur === "no")) return r.fin ? finalsUploadStored(r.lib) : blurUpload(r.lib, isBlurred(versionId));
+  if (r && blursFaces(r.lib) && (isBlurred(versionId) || fileBlur(versionId)?.blur === "no")) return r.fin ? finalsUploadStored(r.lib) : libraryUploadStored(r.lib);
   return !r ? "none" : r.fin ? finalsUpload(r.lib) : libraryUpload(r.lib);
 }
 

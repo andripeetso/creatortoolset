@@ -656,7 +656,7 @@ describe("after a full ingest the server's disk holds no frame of an original", 
 });
 
 describe("Upload under Blur faces: Blurred is the blurred copies, Proxies the proxies (Original → Blurred copy → Proxy)", () => {
-  it("a blurred copy follows both rows, a file kept as filmed only Proxies, an original waiting for its blur neither", async () => {
+  it("a blurred copy and a file with no faces follow both rows, an original waiting for its blur neither", async () => {
     lib("lib_rows", { upload: "all", blurFaces: true });
     const ORIGINAL = sha("rows-original");
     const yes = await body(onMac("lib_rows", "Rows take.mov", { sha256: ORIGINAL }));
@@ -669,9 +669,10 @@ describe("Upload under Blur faces: Blurred is the blurred copies, Proxies the pr
       d.prepare("UPDATE libraries SET settings = json_set(settings, '$.upload', ?) WHERE id = 'lib_rows'").run(upload);
       return [versionUpload(blurred.versionId!), versionUpload(kept.versionId), versionUpload(original), keepsOnlyOriginals("lib_rows")];
     };
-    expect(rows("originals")).toEqual(["originals", "none", "none", true]); // Blurred alone: the copies, and no proxy kept
+    // Blurred alone: the copies as they are, a clip with no faces as filmed, and no proxy kept
+    expect(rows("originals")).toEqual(["originals", "originals", "none", true]);
     expect(rows("proxies")).toEqual(["proxies", "proxies", "none", false]);
-    expect(rows("all")).toEqual(["all", "proxies", "none", false]); // a kept file's original never goes up
+    expect(rows("all")).toEqual(["all", "all", "none", false]);
     expect(rows("none")).toEqual(["none", "none", "none", false]);
     // the card says why a no: Face Blur went over it and found no face
     const card = d.prepare(`SELECT ${CARD} FROM assets a JOIN asset_versions v ON v.id = a.current_version_id WHERE a.id = ?`).get(kept.assetId);

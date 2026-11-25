@@ -15,7 +15,7 @@ const BLURRED: Part = { key: "originals", label: LIBRARY_WORDS.blurred, tip: LIB
  * Proxies and Originals in any mix. The master off sends nothing up; on again it brings back the mix it had (in this
  * view), else Final exports only. All three off is the master off. Rendered inside a Card.
  * Blur faces (its switch here only with `onBlurFaces`): on, the rows are Final exports, Blurred (the blurred copies
- * themselves; an original never goes up, the server refuses it too) and, while proxies are made (`proxies`), Proxies.
+ * themselves, and a clip with no faces as filmed; an original waiting for its blur never goes up, the server refuses it) and, while proxies are made (`proxies`), Proxies.
  * Blurred is the Originals part of the mix, so switching Blur faces either way turns that part off.
  */
 export function HostedSwitches({ value, onChange, blurFaces, onBlurFaces, proxies = true }: { value: HostedMix; onChange: (m: HostedMix) => void; blurFaces?: boolean; onBlurFaces?: (on: boolean, m: HostedMix) => void; proxies?: boolean }) {
