@@ -517,7 +517,8 @@ export async function progress(libraryId: string, username: string): Promise<Lib
   const run = runs.get(libraryId) ?? new Set<string>();
   runs.set(libraryId, run);
   // the run before is through (nobody looked while the queue was empty): this one counts from nothing
-  if (![...run].some((v) => open.some((o) => o.v === v))) run.clear();
+  // while a computer is still making files ready (coming), the run goes on between them
+  if (!coming.length && ![...run].some((v) => open.some((o) => o.v === v))) run.clear();
   if (!run.size) runSince.set(libraryId, Math.max(Date.now() - 60_000, runEnded.get(libraryId) ?? 0));
   for (const { v } of open) run.add(v);
   // a clip, not a file: its original and its blurred copy are one clip

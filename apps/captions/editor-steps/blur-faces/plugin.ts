@@ -406,10 +406,13 @@ export const autoJobs = {
     return all().some((j) => j.owner === owner && offered(j, device, now));
   },
   // a file its Mac is blurring, or will take now: not one on a Mac that is offline, paused or without an AI provider
+  // (a running job's Mac gone to sleep is not counted either: nothing releases it until a computer asks for work)
   preparing: (libraryId: string) => {
     const now = Date.now();
+    const ok = new Map<string, boolean>(); // ready() reads files: once per owner, not once per file
+    const isReady = (owner: string) => ok.get(owner) ?? ok.set(owner, ready(owner)).get(owner)!;
     return all()
-      .filter((j) => j.libraryId === libraryId && ready(j.owner) && (j.state === "running" || (offered(j, j.mac, now) && isOnline(j.mac))))
+      .filter((j) => j.libraryId === libraryId && (j.state === "running" ? isOnline(j.device ?? "") : offered(j, j.mac, now) && isOnline(j.mac)) && isReady(j.owner))
       .map((j) => j.versionId);
   },
   claim: (device: { id: string; owner: string }): DeviceJob | null => {

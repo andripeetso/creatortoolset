@@ -120,6 +120,24 @@ describe("the Mac that has the file", () => {
     expect(autoJobs.claim(mac)).not.toBeNull();
   });
 
+  it("counts in the library's progress only while its Mac can take the file: never offline, nor a sleeping Mac's running one", async () => {
+    await settings({});
+    const v = await added("mp4");
+    await queueVersion(event(v));
+    expect(autoJobs.preparing("lib_a")).toEqual([v]);
+    expect(autoJobs.preparing("lib_b")).toEqual([]);
+    macs.online = new Set();
+    expect(autoJobs.preparing("lib_a")).toEqual([]);
+    macs.online = new Set(["mac-1"]);
+    expect(autoJobs.claim(mac)).not.toBeNull();
+    expect(autoJobs.preparing("lib_a")).toEqual([v]);
+    macs.online = new Set(); // asleep mid-file: nothing has released it yet
+    expect(autoJobs.preparing("lib_a")).toEqual([]);
+    macs.online = new Set(["mac-1"]);
+    ai.configured = false;
+    expect(autoJobs.preparing("lib_a")).toEqual([]);
+  });
+
   it("writes the copy at the resolution and bitrate set, into the folder the location says", async () => {
     await settings({ resolution: "original", bitrate: 80, location: "beside" });
     const v = await added("mp4");

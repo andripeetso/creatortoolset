@@ -228,9 +228,12 @@ describe("clips being blurred", () => {
     preparing.ids = ["v2", "v3"];
     try {
       expect(await progress("lib_e", "local")).toMatchObject({ clips: 3 });
-      // nothing queued yet, only the Mac blurring: still said
-      d.prepare("DELETE FROM jobs WHERE state != 'done'").run();
-      expect(await progress("lib_e", "local")).toMatchObject({ clips: 2 });
+      // a1 through before the next copy is in, only the Mac blurring: still said, and the run goes on (its line stays)
+      d.prepare("UPDATE jobs SET state = 'done', done_at = ? WHERE version_id IN ('v1', 'v1b') AND state != 'done'").run(Date.now());
+      const between = await progress("lib_e", "local");
+      expect(between).toMatchObject({ clips: 2 });
+      expect(between.stages.find((s) => s.kind === "transcribe")).toMatchObject({ done: 1, of: 1 });
+      expect(between.share).toBeGreaterThan(0);
       preparing.ids = [];
       expect(await progress("lib_e", "local")).toMatchObject({ left: 0, clips: 0 });
     } finally {
