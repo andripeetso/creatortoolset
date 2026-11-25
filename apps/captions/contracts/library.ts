@@ -24,6 +24,8 @@ export interface AssetCard {
   versionId: string;
   versionN: number;
   durationS?: number;
+  /** the file's frames per second (a camera's slow motion filmed at 120 shows 120 when the file plays at that rate) */
+  fps?: number;
   /** as shown: with `turn` 90 or 270 they are the file's, swapped */
   width?: number;
   height?: number;
@@ -260,6 +262,8 @@ export type LibraryUpload = "none" | "originals" | "proxies" | "all";
 export const LIBRARY_UPLOADS: readonly LibraryUpload[] = ["none", "originals", "proxies", "all"];
 export const hostsOriginals = (u: LibraryUpload | null | undefined): boolean => u === "originals" || u === "all";
 export const hostsProxies = (u: LibraryUpload | null | undefined): boolean => u === "proxies" || u === "all";
+/** Plain proxies are made: Generate proxies, or forced on while the server hosts proxies; never under Blur faces (the blurred render is the proxy). */
+export const makesProxies = (s: Pick<LibrarySettings, "proxy" | "upload" | "blurFaces">): boolean => !s.blurFaces && (s.proxy || hostsProxies(s.upload));
 /** Under Blur faces Upload is Off or Blurred, stored as "none" and "proxies" (the blurred render is the proxy). */
 export const BLURRED_UPLOADS: readonly LibraryUpload[] = ["none", "proxies"];
 /** What a new file sends: under Blur faces nothing, since a file is not blurred when it is added. */

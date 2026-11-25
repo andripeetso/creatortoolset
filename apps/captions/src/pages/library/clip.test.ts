@@ -33,11 +33,12 @@ describe("the clip panel's player", () => {
 });
 
 describe("the clip panel's facts and share links", () => {
-  it("lists the day it was filmed, length, size and roll, and a version only past the first", () => {
+  it("lists the day it was filmed, length, frame rate, size and roll, and a version only past the first", () => {
     const filmed = new Date(2026, 10, 3).getTime();
-    const facts = factsOf({ ...card, durationS: 74, width: 3840, height: 2160, roll: "b", capturedAt: filmed });
-    expect(facts.map(([label]) => label)).toEqual(["Filmed", "Length", "Size", "Roll"]);
-    expect(facts.slice(1)).toEqual([["Length", "1:14"], ["Size", "3840×2160"], ["Roll", "B-roll"]]);
+    const facts = factsOf({ ...card, durationS: 74, fps: 29.97, width: 3840, height: 2160, roll: "b", capturedAt: filmed });
+    expect(facts.map(([label]) => label)).toEqual(["Filmed", "Length", "Frame rate", "Size", "Roll"]);
+    expect(facts.slice(1)).toEqual([["Length", "1:14"], ["Frame rate", "29.97 fps"], ["Size", "3840×2160"], ["Roll", "B-roll"]]);
+    expect(factsOf({ ...card, fps: 119.88 })).toEqual([["Frame rate", "119.88 fps"]]);
     expect(factsOf({ ...card, roll: "a", versionN: 2 })).toEqual([["Roll", "A-roll"], ["Version", "2"]]);
   });
 

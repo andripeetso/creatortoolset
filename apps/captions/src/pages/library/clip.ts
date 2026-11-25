@@ -30,11 +30,12 @@ export function shotsByMoment(events: Moment[], shots: Shot[]): { event?: Moment
 }
 export const day = (ms: number) => new Date(ms).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
 
-/** The clip's facts as label and value: when it was filmed, its length, size, roll, and its version past the first. */
+/** The clip's facts as label and value: when it was filmed, its length, frame rate, size, roll, and its version past the first. */
 export function factsOf(a: AssetCard): [string, string][] {
   const out: [string, string][] = [];
   if (a.capturedAt) out.push(["Filmed", day(a.capturedAt)]);
   if (a.durationS !== undefined) out.push(["Length", clock(a.durationS)]);
+  if (a.fps) out.push(["Frame rate", `${+a.fps.toFixed(2)} fps`]);
   if (a.width) out.push(["Size", `${a.width}×${a.height}`]);
   if (a.roll) out.push(["Roll", a.roll === "a" ? "A-roll" : "B-roll"]);
   if (a.versionN > 1) out.push(["Version", String(a.versionN)]);

@@ -318,6 +318,7 @@ export function toCard(r: CardRow): AssetCard {
     versionId: r.version_id,
     versionN: r.version_n,
     ...(p.duration ? { durationS: p.duration } : {}),
+    ...(p.fps ? { fps: p.fps } : {}),
     ...(p.width ? (side ? { width: p.height, height: p.width } : { width: p.width, height: p.height }) : {}),
     ...(turn ? { turn } : {}),
     // a turned clip's pictures were made again: a new address, so no window shows the one it kept
