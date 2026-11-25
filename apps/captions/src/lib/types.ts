@@ -1,3 +1,5 @@
+import { intoBand, intoBandMargin } from "../../contracts/design";
+
 export interface Word {
   id: number;
   text: string;
@@ -341,7 +343,7 @@ export const STYLE_PRESETS: { name: string; style: CaptionStyle }[] = [
     },
   },
   {
-    name: "Classic",
+    name: "Classic Low",
     style: {
       fontFamily: "Inter",
       fontSizePct: 3.4,
@@ -424,3 +426,13 @@ export const STYLE_PRESETS: { name: string; style: CaptionStyle }[] = [
 ];
 
 export const DEFAULT_STYLE: CaptionStyle = STYLE_PRESETS[0].style;
+
+/**
+ * A style placed on a `w`×`h` video (as shown, after its turn): on a vertical one the captions move clear of the
+ * reel's buttons and caption. Only where captions are placed (new project, preset applied), never on open.
+ */
+export function placeForReel(s: CaptionStyle, w: number, h: number): CaptionStyle {
+  if (s.fitBox) return intoBand(s, w, h);
+  const marginVPct = intoBandMargin(s.position, s.marginVPct, w, h);
+  return marginVPct === s.marginVPct ? s : { ...s, marginVPct };
+}

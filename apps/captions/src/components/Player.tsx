@@ -6,6 +6,7 @@ import {
   Lock,
   Play,
   RefreshCw,
+  Smartphone,
   Square,
   TriangleAlert,
 } from "lucide-react";
@@ -31,6 +32,8 @@ import { EnginePicker } from "./EnginePicker";
 import type { TextOverlay } from "@/lib/types";
 import { textOverlayFrameStyle } from "@/lib/caption-css";
 import { CaptionVisual, TextOverlayVisual } from "./CaptionRenderSurface";
+import { isVertical } from "@contracts/design";
+import { safeOf } from "@/lib/design/aids";
 
 /** Nearest standard frame rate within 2%, else the raw estimate rounded. */
 const STD_FPS = [23.976, 24, 25, 29.97, 30, 48, 50, 59.94, 60, 90, 120];
@@ -564,6 +567,14 @@ export function Player() {
   // any pointer held down on the preview (dragging the caption box, text
   // overlays, resize handles…) hides the paused badge until release
   const [interacting, setInteracting] = useState(false);
+  const [reelGuide, setReelGuide] = useState(() => {
+    try {
+      return localStorage.getItem(REEL_GUIDE_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
+  const vertical = isVertical(videoWidth, videoHeight);
 
   // Let an estimated bar visibly reach a truthful 100% before the status
   // card disappears and the editor unlocks.
@@ -833,7 +844,31 @@ export function Player() {
           onSelect={() => setBoxSelected(true)}
         />
         <TextOverlays rect={rect} />
+        {vertical && reelGuide && <ReelGuide w={videoWidth} h={videoHeight} />}
       </div>
+
+      {videoUrl && vertical && (
+        <button
+          type="button"
+          aria-pressed={reelGuide}
+          aria-label="Reel buttons and caption"
+          title="Reel buttons and caption"
+          onClick={() => {
+            const on = !reelGuide;
+            setReelGuide(on);
+            try {
+              localStorage.setItem(REEL_GUIDE_KEY, on ? "1" : "0");
+            } catch {
+              // a browser that keeps nothing still shows the guide for this visit
+            }
+          }}
+          className={`absolute right-3 top-3 z-40 flex h-8 w-8 items-center justify-center rounded-md border border-zinc-700/80 backdrop-blur-sm ${
+            reelGuide ? "bg-zinc-100 text-zinc-900" : "bg-zinc-900/80 text-zinc-300 hover:text-zinc-50"
+          }`}
+        >
+          <Smartphone className="h-4 w-4" />
+        </button>
+      )}
 
       {/* paused badge — fades out while playing, dragging, or editing text;
           pointer-events-none so the click still lands on the video to play */}
@@ -935,6 +970,24 @@ export function Player() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+const REEL_GUIDE_KEY = "ct.captions.reelGuide";
+
+/** The parts of a reel its buttons and caption cover, tinted as the Designer's guide does. */
+function ReelGuide({ w, h }: { w: number; h: number }) {
+  const s = safeOf("reel", w, h);
+  return (
+    <div data-reel-guide className="absolute inset-0">
+      <svg className="absolute inset-0 h-full w-full" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none">
+        {s.covered.map((c, i) => <rect key={i} x={c.x} y={c.y} width={c.w} height={c.h} fill="#ff3b30" fillOpacity={0.14} />)}
+        <rect x={s.safe.x} y={s.safe.y} width={s.safe.w} height={s.safe.h} fill="none" stroke="#ff3b30" strokeDasharray="4 3" vectorEffect="non-scaling-stroke" />
+      </svg>
+      <span className="absolute whitespace-nowrap px-1 text-[10px] leading-4 text-[#ff3b30]" style={{ left: `${(s.safe.x / w) * 100}%`, top: `${(s.safe.y / h) * 100}%` }}>
+        Reel buttons and caption
+      </span>
     </div>
   );
 }

@@ -60,6 +60,7 @@ import { isMobileDevice } from "./mobile";
 import {
   BUSY_PHASES,
   DEFAULT_STYLE,
+  placeForReel,
   type CaptionStyle,
   type Cue,
   type TranscribeStatus,
@@ -467,6 +468,9 @@ function newClipId(): string {
     ? crypto.randomUUID()
     : `clip-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
 }
+
+/** Clips of a project made in this tab whose captions wait for the video's size to be placed (never on open). */
+const unplaced = new Set<string>();
 
 function newProjectId(): string {
   return typeof crypto !== "undefined" && crypto.randomUUID
@@ -1568,6 +1572,8 @@ export const useStudio = create<StudioState>((rawSet, get) => {
     files.forEach((f, i) => {
       clipSlots.set(clips[i].id, { ...blankSlot(seedStyle), file: f });
     });
+    unplaced.clear();
+    for (const c of clips) unplaced.add(c.id);
     const first = clips[0];
     set({
       clips,
@@ -2045,6 +2051,8 @@ export const useStudio = create<StudioState>((rawSet, get) => {
       // a fresh import plays the original file itself — capture its
       // resolution unless a loaded project already told us the source's
       ...(s.sourceWidth === 0 ? { sourceWidth: w, sourceHeight: h } : {}),
+      // the player's size is the shown one (after the clip's turn): a new project's captions go clear of a reel's buttons
+      ...(s.activeClipId && unplaced.delete(s.activeClipId) ? { style: placeForReel(s.style, w, h) } : {}),
     });
     // keep the clip record in sync for the bar / saves
     if (s.activeClipId) {
@@ -2657,7 +2665,12 @@ export const useStudio = create<StudioState>((rawSet, get) => {
     if (isEditorBusy(s0) && !isCadenceBusy(s0)) return;
     // presets carry their own box position/size — applying one places
     // the caption box where the preset wants it. Every preset is box mode.
-    const style = { ...s, fitBox: true, fillGaps: s0.style.fillGaps };
+    const frame = frameOf(s0);
+    const style = placeForReel(
+      { ...s, fitBox: true, fillGaps: s0.style.fillGaps },
+      frame?.w ?? s0.videoWidth,
+      frame?.h ?? s0.videoHeight,
+    );
     if (s0.cadenceApplied || isCadenceBusy(s0)) {
       // keep the matched grouping, laid out for the preset's box
       set({
@@ -2669,7 +2682,6 @@ export const useStudio = create<StudioState>((rawSet, get) => {
     }
     clearHistory();
     cueGen++;
-    const frame = frameOf(s0);
     const cues = regen(
       s0.words,
       style,

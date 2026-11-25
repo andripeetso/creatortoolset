@@ -1,5 +1,6 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { isVertical } from "../../contracts/design";
 import type { PlanEffect, PlanText } from "../../contracts/edit-plan";
 import type { Item, Timeline, TrackId } from "../../contracts/editor";
 import { filterEscape, requireFontsDir } from "../export";
@@ -200,7 +201,9 @@ export function stretchFilter(tl: Timeline, item: Item, s: Stretch, at: number, 
   for (const x of o.texts ?? []) {
     if (!o.font) break;
     const size = Math.round(Math.min(PH * 0.07, (PW * 1.7) / Math.max(4, x.text.length)));
-    const y = x.place === "top" ? "h*0.12" : x.place === "bottom" ? "h*0.82-th" : "(h-th)/2";
+    // a reel's buttons and caption cover its top 14 % and bottom 35 %
+    const [top, bottom] = isVertical(tl.width, tl.height) ? ["0.14", "0.65"] : ["0.12", "0.82"];
+    const y = x.place === "top" ? `h*${top}` : x.place === "bottom" ? `h*${bottom}-th` : "(h-th)/2";
     out.push(
       `drawtext=fontfile='${filterEscape(o.font)}':textfile='${filterEscape(x.file)}':fontsize=${size}:fontcolor=white:borderw=${Math.max(2, Math.round(PH / 240))}:bordercolor=black:x=(w-tw)/2:y=${y}:enable='between(t+${n4(at)},${n4(x.at)},${n4(x.at + x.dur)})'`,
     );

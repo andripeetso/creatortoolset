@@ -76,6 +76,16 @@ describe("a planned shot's filter graph, per effect", () => {
     expect(withText).toContain("y=h*0.12:enable='between(t+2,2.5,3.5)'");
   });
 
+  it("keeps plan texts clear of a reel's buttons on a vertical timeline", () => {
+    const i = shot([]);
+    const texts = [{ at: 0, dur: 1, text: "GO", place: "top" as const, file: "/t/0.txt" }, { at: 0, dur: 1, text: "NOW", place: "bottom" as const, file: "/t/1.txt" }];
+    const at = (t: Timeline) => stretchFilter(t, i, { off: 0, frames: 30, speed: 1 }, 0, { font: "/fonts/A.ttf", texts });
+    const upright = Object.assign(tl([i]), { width: 180, height: 320 });
+    expect(at(upright)).toContain("y=h*0.14:");
+    expect(at(upright)).toContain("y=h*0.65-th:");
+    expect(at(tl([i]))).toContain("y=h*0.82-th:");
+  });
+
   it("frames each shot as its frame says, the extra pictures as inputs 2 and 3", () => {
     const t = tl();
     t.sources.wide = { versionId: "wide", name: "Wide", fps: 30, tc: 0, dur: 240, w: 640, h: 180 };
