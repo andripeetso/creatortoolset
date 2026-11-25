@@ -974,7 +974,7 @@ export default function LibraryPage() {
     const done = (await Promise.all(cards.map((a) => setAssetBlur(lib, a.id, "yes").then(() => a.id, () => null)))).filter((id): id is string => !!id);
     if (done.length < cards.length) setError(`Could not blur ${plural(cards.length - done.length)}`);
     picks.clear();
-    changeCards((all) => all.map((x) => (done.includes(x.id) ? { ...x, blur: "yes" } : x)));
+    changeCards((all) => all.map((x) => (done.includes(x.id) ? { ...x, blur: "yes", notBlurred: true } : x)));
   };
   // one clip downloads as its original, several as one zip of theirs
   const download = (cards: AssetCard[]) =>
@@ -1011,9 +1011,9 @@ export default function LibraryPage() {
       <ClipMenu
         inTrash={trash}
         readOnly={readOnly}
-        // a copy kept for when the original's disk is away: none offered while this computer reads the original itself
+        // a copy kept for when the original's drive or share is away: none offered for a file on this Mac's own disk
         offline={
-          thisMacDevice() && (offline.versions.includes(a.versionId) || a.placeWord?.word !== "here")
+          thisMacDevice() && (offline.versions.includes(a.versionId) || a.placeWord?.word !== "here" || a.onDrive)
             ? { on: offline.versions.includes(a.versionId), set: (on) => void keepOffline({ version: a.versionId }, on) }
             : undefined
         }
@@ -1028,7 +1028,8 @@ export default function LibraryPage() {
           move: (to) => void move(carried(a).map((x) => x.id), to),
           folder: smart ? undefined : () => void folderWith(carried(a).map((x) => x.id)),
           tag: (t) => void tagMany(carried(a), t),
-          blur: carried(a).some((x) => x.blur === "no") ? () => void blurMany(carried(a).filter((x) => x.blur === "no")) : undefined,
+          // Blur faces is the Face Blur plug-in's: without it nothing blurs, so nothing offers it
+          blur: faceBlur && carried(a).some((x) => x.blur === "no") ? () => void blurMany(carried(a).filter((x) => x.blur === "no")) : undefined,
           trash: () => void trashMany(carried(a)),
           restore: () => void trashMany(carried(a), false),
         }}

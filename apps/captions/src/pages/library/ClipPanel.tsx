@@ -249,7 +249,7 @@ function Panel({ libraryId, asset, startAt, serverPlays, inTrash, readOnly, mayK
             New project
           </DropdownMenuItem>
         )}
-        {a.blur === "yes" && !fixed && mayKeepAsFilmed && (
+        {a.blur === "yes" && !fixed && mayKeepAsFilmed && faceBlur && (
           <DropdownMenuItem onSelect={() => void changeBlur(false)}>
             <ScanFace className="h-4 w-4" />
             Keep as filmed
@@ -341,10 +341,11 @@ function Panel({ libraryId, asset, startAt, serverPlays, inTrash, readOnly, mayK
           </Button>
         </div>
       )}
-      {/* kept as filmed: one press queues its blur (Keep as filmed, the way back, is in the ⋯ menu) */}
-      {a.blur === "no" && !fixed && (
+      {/* kept as filmed: one press queues its blur (Keep as filmed, the way back, is in the ⋯ menu). The app can't tell
+          a file blurred before it came in, so it says what it knows. Only with the Face Blur plug-in: nothing else blurs */}
+      {a.blur === "no" && !fixed && faceBlur && (
         <div className="flex items-center justify-between gap-2 text-sm text-zinc-400">
-          Not blurred
+          Kept as filmed
           <Button size="sm" variant="outline" className="h-7" onClick={() => void changeBlur(true)}>
             <ScanFace className="h-3.5 w-3.5" />
             Blur faces

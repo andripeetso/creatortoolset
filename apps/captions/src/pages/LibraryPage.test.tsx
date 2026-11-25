@@ -707,16 +707,21 @@ describe("Media Library picks, menu, keys, link and drop", () => {
     for (const item of ["Open", "Share…", "Download", "Copy link", "Add tag", "Move to trash"]) expect(menu).toContain(item);
   });
 
-  it("right-click on a clip kept as filmed offers Blur faces, which queues its blur; any other clip has none", async () => {
+  it("right-click on a clip kept as filmed offers Blur faces where Face Blur is on, which queues its blur; any other clip has none", async () => {
     server.items = [clip("one", { blur: "no" }), clip("two")];
-    const host = await mount();
-    const menuOf = async (i: number) => {
+    const menuOf = async (host: HTMLElement, i: number) => {
       await act(async () => void cards(host)[i].dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 5, clientY: 5 })));
       return [...document.querySelectorAll('[role="menuitem"]')].find((x) => x.textContent === "Blur faces") as HTMLElement | undefined;
     };
-    expect(await menuOf(1)).toBeUndefined();
+    // no Face Blur plug-in: nothing blurs, so nothing offers it
+    expect(await menuOf(await mount(), 0)).toBeUndefined();
+    act(() => root?.unmount());
+    document.body.innerHTML = "";
+    server.faceBlur = true; // set back after each test
+    const host = await mount();
+    expect(await menuOf(host, 1)).toBeUndefined();
     await key("Escape");
-    const item = await menuOf(0);
+    const item = await menuOf(host, 0);
     expect(item).toBeDefined();
     await act(async () => item!.click());
     expect(server.sent).toContain("blur one yes");
