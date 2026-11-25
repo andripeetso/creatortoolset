@@ -20,6 +20,7 @@ import {
   textOverlayLines,
 } from "./captions";
 import { cueLineCounts, sliceLines } from "./caption-layout";
+import { READING } from "../../contracts/reading";
 import {
   fontWeightFor,
   type CaptionRenderSpec,
@@ -165,10 +166,10 @@ function captionAnimation(
 ): { alpha: number; scale: number } {
   const elapsed = Math.max(0, currentTime - cue.start);
   if (style.animation === "fade") {
-    return { alpha: Math.min(1, elapsed / 0.3), scale: 1 };
+    return { alpha: Math.min(1, elapsed / READING.entranceS), scale: 1 };
   }
-  if (style.animation === "pop" && elapsed < 0.28) {
-    const p = elapsed / 0.28;
+  if (style.animation === "pop" && elapsed < READING.entranceS) {
+    const p = elapsed / READING.entranceS;
     if (p <= 0.55) {
       return {
         alpha: 1,

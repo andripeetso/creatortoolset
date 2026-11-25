@@ -198,14 +198,23 @@ describe("the plan: checked and repaired, never trusted", () => {
     expect(second!.fx?.map((f) => f.type)).toEqual(["flash"]);
   });
 
+  it("holds a plan text long enough to read after its entrance, as far as the video lasts", () => {
+    const words = "one two three four five six seven eight nine";
+    const { plan } = repairPlan(
+      { kind: "recap", texts: [{ at: 0, dur: 0.4, text: "Go now" }, { at: 0.5, dur: 0.5, text: words }], shots: [{ src: "S1", in: 2, dur: 1 }, { src: "S2", in: 0, dur: 1 }] },
+      ctx(),
+    );
+    expect(plan.texts?.map((t) => t.dur)).toEqual([1.1, 1.5]);
+  });
+
   it("lays a plan as the draft: shots filling the frame on V1 with their speed and effects, their own sound where asked, the song on A2", () => {
     const { plan } = repairPlan(
-      { kind: "hard edit", texts: [{ at: 0.5, dur: 1, text: "GO", place: "top" }], shots: [{ src: "S1", in: 2, dur: 1, speed: 2, fx: [{ type: "shake", at: 0 }], sound: "under" }, { src: "S2", in: 0, dur: 1 }] },
+      { kind: "hard edit", texts: [{ at: 0.5, dur: 1.2, text: "GO", place: "top" }], shots: [{ src: "S1", in: 2, dur: 1, speed: 2, fx: [{ type: "shake", at: 0 }], sound: "under" }, { src: "S2", in: 0, dur: 1 }] },
       ctx(),
     );
     const src = (id: string, w: number, h: number) => ({ versionId: id, name: id, fps: 30, tc: 0, dur: 1800, w, h });
     const tl = planTimeline(plan, { ver_game: src("ver_game", 1920, 1080), ver_mute: src("ver_mute", 1080, 1920), ver_song: src("ver_song", 0, 0) }, "Run v1");
-    expect(tl.plan).toEqual({ kind: "hard edit", texts: [{ at: 0.5, dur: 1, text: "GO", place: "top" }] });
+    expect(tl.plan).toEqual({ kind: "hard edit", texts: [{ at: 0.5, dur: 1.2, text: "GO", place: "top" }] });
     expect(tl.tracks.V1.items).toEqual([
       { src: "ver_game", in: 60, len: 30, rec: 0, link: "c1", zoom: 3.16, speed: 2, fx: [{ type: "shake", at: 0, dur: 0.3, amount: 0.5 }] },
       { src: "ver_mute", in: 0, len: 30, rec: 30, link: "c2" },

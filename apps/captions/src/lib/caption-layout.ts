@@ -1,5 +1,6 @@
 import { isSentenceEnd, lineBreakCost } from "./caption-constraints";
 import type { Cue, Word } from "./types";
+import { READING } from "../../contracts/reading";
 
 /**
  * Caption layout for the bounding-box mode.
@@ -283,6 +284,18 @@ export function cuesFitBox(cues: Cue[], caps: BoxCaps): boolean {
   });
 }
 
+/** The shortest a caption stays up: its entrance and half a second to read it. */
+export const MIN_CUE_S = READING.entranceS + 0.5;
+
+/**
+ * When a caption ends: its last word + 0.08 s, held at least MIN_CUE_S from its start, never into the next
+ * caption. The video's end is not known here; a renderer stops at it.
+ */
+export function cueEnd(start: number, lastWordEnd: number, nextStart?: number): number {
+  const end = Math.max(lastWordEnd + 0.08, start + MIN_CUE_S);
+  return nextStart === undefined ? end : Math.min(end, nextStart - 0.001);
+}
+
 /** Timing and ids for laid-out groups. Ends never overlap the next start. */
 function toCues(
   groups: { words: Word[]; lines: number[] }[],
@@ -301,14 +314,12 @@ function toCues(
     return {
       id,
       start: g.words[0].start,
-      end: g.words[g.words.length - 1].end + 0.08,
+      end: 0,
       words: g.words,
       lines: g.lines,
     };
   });
-  for (let i = 0; i < cues.length - 1; i++) {
-    cues[i].end = Math.min(cues[i].end, cues[i + 1].start - 0.001);
-  }
+  cues.forEach((c, i) => (c.end = cueEnd(c.start, c.words[c.words.length - 1].end, cues[i + 1]?.start)));
   return cues;
 }
 

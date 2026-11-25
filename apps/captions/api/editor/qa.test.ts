@@ -74,6 +74,12 @@ describe("AI Editor QA", () => {
     expect(loudnessNotes({ lufs: NaN, truePeak: NaN })).toHaveLength(2);
   });
 
+  it("notes a plan text held less than its reading time", () => {
+    const t = tl([["A", 0, 40]]);
+    t.plan = { kind: "recap", texts: [{ at: 8, dur: 1.6, text: "one two three four five six seven eight nine" }, { at: 70, dur: 1.1, text: "Go now" }] };
+    expect(qaOf(t).notes).toEqual(["Text at 0:08 holds 9 words for 1.6 s (needs 3.0 s)"]);
+  });
+
   it("notes sound running on past the picture", () => {
     const t = tl([["A", 0, 40]]);
     t.tracks.A2.items.push({ src: "A", in: 0, len: 50, rec: 0 });

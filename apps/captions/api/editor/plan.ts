@@ -5,6 +5,7 @@ import path from "node:path";
 import type { Coverage, EditPlan, Focus, FootageIndex, GenSpec, IndexShot, IndexSource, PlanEffect, PlanFrame, PlanShot, PlanText, SongBeats } from "../../contracts/edit-plan";
 import type { EditFeedback, Item, Sentence, Timeline, TimelineSource } from "../../contracts/editor";
 import { SOUNDS } from "../../contracts/library";
+import { READING, readS } from "../../contracts/reading";
 import { aiFor, completeWithFallback } from "../ai-complete";
 import { parseJsonObject } from "../lib/instagram/vision";
 import { packInstructions } from "../lib/packs";
@@ -336,7 +337,7 @@ Answer with JSON only, in this shape:
 - frame: how the shot sits in the frame. fill (crops to the frame, the default), fit (the whole picture on black), blur (whole, over a blurred copy of itself), letterbox (a widescreen band), inset (a smaller picture over the shot before; scale = its share of the width, 0.3-0.9). split: [{"src":"S4","in":30}] stacks 1-2 more pictures in a column with this one. Not every shot has to fill the frame.
 - enter: cut, flash, whip or dissolve. sound: off, under (beneath the song) or full.
 - lead: "song" to cut to the song, "sources" to keep the footage's own sound.
-- texts only when the brief or the setup asks for words on screen.`;
+- texts only when the brief or the setup asks for words on screen. A text stays at least ${READING.perWordS} s a word (${READING.minS} s at the least) plus ${READING.entranceS} s for its entrance; a shorter dur is lengthened.`;
 
 export interface PlanInput {
   brief: string;
@@ -1049,7 +1050,9 @@ export function repairPlan(raw: Record<string, unknown>, c: RepairContext): { pl
     if (!text || a === undefined || a >= length) return [];
     const place = (["top", "middle", "bottom"] as const).find((p) => p === x.place);
     const style = str(x.style, 80);
-    return [{ at: r3(Math.max(0, a)), dur: r3(clamp(num(x.dur) ?? 1.5, 0.3, length - Math.max(0, a))), text, ...(place ? { place } : {}), ...(style ? { style } : {}) }];
+    const left = length - Math.max(0, a);
+    // held long enough to read once its entrance is done, as far as the video lasts
+    return [{ at: r3(Math.max(0, a)), dur: r3(clamp(num(x.dur) ?? 1.5, Math.min(readS(text) + READING.entranceS, left), left)), text, ...(place ? { place } : {}), ...(style ? { style } : {}) }];
   }).slice(0, MAX_TEXTS);
 
   const even = (x: number) => Math.round(x / 2) * 2;

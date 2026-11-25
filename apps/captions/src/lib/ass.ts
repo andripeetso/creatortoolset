@@ -7,6 +7,7 @@ import {
   wrapLines,
 } from "./captions";
 import { cueLineCounts, sliceLines } from "./caption-layout";
+import { READING } from "../../contracts/reading";
 import {
   assBaselineShift,
   assBoldField,
@@ -213,7 +214,8 @@ function cueTokens(cue: Cue, style: CaptionStyle): WordToken[] {
 /** Animation tag group applied to every line (and the box) of a cue. */
 function animPrefix(style: CaptionStyle): string {
   if (style.animation === "pop") {
-    return "{\\fscx55\\fscy55\\t(0,140,\\fscx112\\fscy112)\\t(140,280,\\fscx100\\fscy100)}";
+    const ms = Math.round(READING.entranceS * 1000);
+    return `{\\fscx55\\fscy55\\t(0,${ms / 2},\\fscx112\\fscy112)\\t(${ms / 2},${ms},\\fscx100\\fscy100)}`;
   }
   if (style.animation === "fade") return "{\\fad(140,140)}";
   return "";

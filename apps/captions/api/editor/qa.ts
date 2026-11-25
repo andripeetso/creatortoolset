@@ -1,4 +1,5 @@
 import type { Item, QaReport, Timeline, TrackId } from "../../contracts/editor";
+import { READING, readS, wordCount } from "../../contracts/reading";
 import { fitted, tiltLimit } from "./framing";
 
 /** Checks on a draft, pure. Starting values: per edit later; failures are notes, never a block. */
@@ -96,6 +97,12 @@ export function qaOf(tl: Timeline, others: Record<string, Timeline> = {}): QaRep
   const picture = Math.max(0, ...tl.tracks.V1.items.map(end), ...tl.tracks.V2.items.map(end));
   const sound = Math.max(0, ...(["A1", "A2", "A3"] as const).flatMap((t) => tl.tracks[t].items.map(end)));
   if (sound > picture) notes.push(`The last ${sound - picture} frames have sound over black`);
+  for (const t of tl.plan?.texts ?? []) {
+    const needs = readS(t.text) + READING.entranceS;
+    const n = wordCount(t.text);
+    const at = `${Math.floor(t.at / 60)}:${String(Math.floor(t.at % 60)).padStart(2, "0")}`;
+    if (t.dur < needs - 1e-6) notes.push(`Text at ${at} holds ${n} ${n === 1 ? "word" : "words"} for ${t.dur.toFixed(1)} s (needs ${needs.toFixed(1)} s)`);
+  }
   const shared: QaReport["shared"] = [];
   for (const [name, other] of Object.entries(others)) {
     const s = sharedVoice(tl, other);

@@ -6,6 +6,7 @@ import {
   layoutGroups,
   lineCountsFor,
   marksFromCues,
+  MIN_CUE_S,
   sliceLines,
   tooWideThoughts,
   unplannedBreaks,
@@ -257,5 +258,21 @@ describe("thought lines and planned splits", () => {
   it("puts planned split points in, and leaves thought starts alone", () => {
     const next = withSplits(ws, tooWideThoughts(ws, 26), [[3], [2]]);
     expect(next.map((w) => w.cut)).toEqual([0, 0, 0, 1, 0, 2, 0, 1, 0, 0, 2]);
+  });
+});
+
+describe("how long a caption stays up", () => {
+  const w = (id: number, text: string, start: number, end: number): Word => ({ id, text, start, end });
+
+  it("holds a short one-word caption into free time, never past the next start", () => {
+    const free = layoutGroups([[w(1, "Hi.", 1, 1.2)], [w(2, "Next", 5, 5.4)]], { maxChars: 20, maxLines: 1 }, newId);
+    expect(free[0].end).toBeCloseTo(1 + MIN_CUE_S);
+    const tight = layoutGroups([[w(1, "Hi.", 1, 1.2)], [w(2, "Next", 1.4, 1.8)]], { maxChars: 20, maxLines: 1 }, newId);
+    expect(tight[0].end).toBeCloseTo(1.399);
+  });
+
+  it("keeps a long caption's end at its last word", () => {
+    const cues = layoutGroups([[w(1, "A", 0, 1), w(2, "long", 1, 2)]], { maxChars: 20, maxLines: 1 }, newId);
+    expect(cues[0].end).toBeCloseTo(2.08);
   });
 });

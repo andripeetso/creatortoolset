@@ -1,5 +1,5 @@
 import { sentenceStartIndexes } from "./caption-constraints";
-import { layoutCaptions, layoutGroups, type BoxCaps } from "./caption-layout";
+import { cueEnd, layoutCaptions, layoutGroups, type BoxCaps } from "./caption-layout";
 import type { Cue, CaptionStyle, PosSegment, TextOverlay, Word } from "./types";
 
 /**
@@ -68,8 +68,7 @@ export function naturalCueEnds(cues: Cue[]): Cue[] {
   return cues.map((c, i) => {
     const last = c.words[c.words.length - 1];
     if (!last) return c;
-    const end = last.end + 0.08;
-    return { ...c, end: i < cues.length - 1 ? Math.min(end, cues[i + 1].start - 0.001) : end };
+    return { ...c, end: cueEnd(c.start, last.end, cues[i + 1]?.start) };
   });
 }
 
@@ -144,12 +143,10 @@ export function cuesFromGroups(groups: Word[][]): Cue[] {
     .map((g) => ({
       id: cueId++,
       start: g[0].start,
-      end: g[g.length - 1].end + 0.08,
+      end: 0,
       words: g,
     }));
-  for (let i = 0; i < cues.length - 1; i++) {
-    cues[i].end = Math.min(cues[i].end, cues[i + 1].start - 0.001);
-  }
+  cues.forEach((c, i) => (c.end = cueEnd(c.start, c.words[c.words.length - 1].end, cues[i + 1]?.start)));
   return cues;
 }
 

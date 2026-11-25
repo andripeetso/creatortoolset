@@ -8,6 +8,7 @@ import {
   textOverlayLines,
 } from "@/lib/captions";
 import { cueLineCounts, sliceLines } from "@/lib/caption-layout";
+import { READING } from "@contracts/reading";
 import { outlineCss, textOverlayFrameStyle } from "@/lib/caption-css";
 import {
   fontWeightFor,
@@ -78,9 +79,9 @@ function animationStyle(
 ): CSSProperties {
   const animation =
     style.animation === "pop"
-      ? "cap-pop 0.28s ease-out"
+      ? `cap-pop ${READING.entranceS}s ease-out`
       : style.animation === "fade"
-        ? "cap-fade 0.3s ease-in"
+        ? `cap-fade ${READING.entranceS}s ease-in`
         : "";
   if (!animation) return {};
   if (!deterministic) return { animation };
