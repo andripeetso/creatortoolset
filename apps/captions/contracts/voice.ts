@@ -131,13 +131,36 @@ export const runsOn = (m: SttModel, os: string | undefined, version?: string): b
 /** The download size on a computer that runs `os`. */
 export const sizeOn = (m: SttModel, os: string | undefined): number | undefined => (os === "mac" ? m.coremlMb ?? m.mb : m.mb);
 
+/**
+ * A name or term the engines are told to listen for (`term`, the spelling kept), and what it is misheard as
+ * (`soundsLike`, rewritten to `term` after the words come back). At most 100, each spelling unique and 1–50 characters.
+ */
+export interface SpeechWord {
+  term: string;
+  soundsLike: string[];
+}
+export const SPEECH_WORDS_MAX = 100;
+export const SPEECH_WORD_ALIASES_MAX = 8;
+export const SPEECH_WORD_CHARS_MAX = 50;
+
+/**
+ * Why speech could not be written down, sent as 422 `{ error, code: "SPEECH", reason, engine? }` (never 502/504, which a
+ * proxy in front blanks): `error` is `speechReasonLine`'s words, and a client offers the matching next step (Settings →
+ * API keys for a key, Settings → AI → Voice for a model or engine) from `reason`.
+ */
+export const SPEECH_REASONS = ["missing-key", "rejected-key", "rate-limit", "model-unavailable", "computer-off", "unavailable"] as const;
+export type SpeechReason = (typeof SPEECH_REASONS)[number];
+export const SPEECH_CODE = "SPEECH";
+
 export interface VoicePrefs {
   /** ISO 639-1 codes, the ones this person speaks: dictation, talking to the assistant, and the videos of a workspace with no language of its own. */
   languages: string[];
   stt: { default: SttChoice; per: Partial<Record<SpeechUse, SttChoice>> };
+  /** Names and terms every engine listens for (Settings → AI → Voice → Words). */
+  words?: SpeechWord[];
 }
 
-export const DEFAULT_VOICE_PREFS: VoicePrefs = { languages: [], stt: { default: { engine: "auto" }, per: {} } };
+export const DEFAULT_VOICE_PREFS: VoicePrefs = { languages: [], stt: { default: { engine: "auto" }, per: {} }, words: [] };
 
 /** What one use runs on now, for the page: the engine that will be asked, or why none can be. */
 export type SttResolved =
