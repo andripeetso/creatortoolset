@@ -64,10 +64,10 @@ describe("with no service named (the default)", () => {
 });
 
 describe("with a service named in the server's .env", () => {
-  it("shows the Google and Apple buttons and starts at the service, without asking it anything first", async () => {
+  it("shows the Google, Apple and GitHub buttons and starts at the service, without asking it anything first", async () => {
     process.env.ACCOUNT_SIGNIN_SERVICE = SERVICE;
     const asked = service({}, () => "");
-    expect(await providers()).toEqual({ apple: true, google: true, github: false });
+    expect(await providers()).toEqual({ apple: true, google: true, github: true });
     const to = await start("google", "site");
     expect(`${to.origin}${to.pathname}`).toBe(`${SERVICE}/api/account-signin/start/google`);
     expect(to.searchParams.get("return")).toBe("http://localhost/api/auth/service/callback");
@@ -75,7 +75,7 @@ describe("with a service named in the server's .env", () => {
     // the verifier stays on this server
     expect(to.search).not.toContain("verifier");
     expect((await start("apple", "site")).pathname).toBe("/api/account-signin/start/apple");
-    expect((await app.request("/api/account/login/github?for=site")).status).toBe(501);
+    expect((await start("github", "site")).pathname).toBe("/api/account-signin/start/github");
     expect(asked).toEqual([]);
   });
 

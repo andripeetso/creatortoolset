@@ -104,7 +104,7 @@ export function signinOn(origin: string): Record<Kind, boolean> {
 }
 
 /**
- * The account sign-in service: a server with no Google or Apple sign-in client of its own can sign its people in
+ * The account sign-in service: a server with no Google, Apple or GitHub sign-in client of its own can sign its people in
  * through another server's clients (the product site's, plugins/hosted/server/account-signin.ts). OFF unless this
  * server's .env names the service (ACCOUNT_SIGNIN_SERVICE=https://…): there is no default, so no server uses one by
  * itself. Nothing is asked of the service until a person presses a sign-in button; it then sees that sign-in (who, and
@@ -120,7 +120,7 @@ export function signinService(): string {
 export function signinVia(origin: string, kind: Kind): "own" | "service" | null {
   if (signinOn(origin)[kind]) return "own";
   const service = signinService();
-  return kind !== "github" && service && service !== origin ? "service" : null;
+  return service && service !== origin ? "service" : null;
 }
 
 /**
