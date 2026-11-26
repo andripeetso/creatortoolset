@@ -96,6 +96,19 @@ final class VoiceInputTests: XCTestCase {
         XCTAssertEqual(stopped, 1)   // the microphone it started is let go
     }
 
+    func testThePhoneWritesItDownOnlyOnAutomaticInOneLanguage() throws {
+        func prefs(_ json: String) throws -> PhoneSpeech.Prefs { try JSONDecoder().decode(PhoneSpeech.Prefs.self, from: Data(json.utf8)) }
+        let auto = #""stt":{"default":{"engine":"auto"},"per":{}}"#
+        XCTAssertEqual(PhoneSpeech.language(try prefs(#"{"languages":["en"],\#(auto)}"#), phone: ["en-GB", "et-EE"]), "en-GB")
+        XCTAssertEqual(PhoneSpeech.language(try prefs(#"{"languages":["et"],\#(auto)}"#), phone: ["en-GB"]), "et")
+        XCTAssertEqual(PhoneSpeech.language(try prefs(#"{"languages":[],\#(auto)}"#), phone: ["de-DE"]), "de-DE")
+        XCTAssertEqual(PhoneSpeech.language(nil, phone: ["en-US"]), "en-US")   // settings not read: Automatic
+        // several languages, or an engine chosen for the mic (or for everything): the server's
+        XCTAssertNil(PhoneSpeech.language(try prefs(#"{"languages":["et","en"],\#(auto)}"#), phone: ["en-GB"]))
+        XCTAssertNil(PhoneSpeech.language(try prefs(#"{"languages":["en"],"stt":{"default":{"engine":"auto"},"per":{"mic":{"engine":"deepgram"}}}}"#), phone: ["en-GB"]))
+        XCTAssertNil(PhoneSpeech.language(try prefs(#"{"languages":["en"],"stt":{"default":{"engine":"local"},"per":{}}}"#), phone: ["en-GB"]))
+    }
+
     func testLeavingWhileRecordingThrowsTheRecordingAway() async {
         var written = false
         let voice = VoiceInput(mic: .init(start: {}, stop: { nil })) { _ in written = true; return "x" }

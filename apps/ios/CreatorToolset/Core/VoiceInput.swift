@@ -1,15 +1,15 @@
 import AVFoundation
 import Foundation
 
-/// Talk instead of type in the assistant's message box. The phone only records: the person's server writes it down
-/// with the engine chosen for talking to the assistant (Settings → AI → Voice, `POST /api/transcribe/mic`), and the
-/// words go into the box to be read, changed and sent. Nothing is sent by itself.
+/// Talk instead of type in the assistant's message box. The phone writes it down itself when it can (PhoneSpeech), else
+/// the person's server does, with the engine chosen for talking to the assistant (Settings → AI → Voice,
+/// `POST /api/transcribe/mic`); the words go into the box to be read, changed and sent. Nothing is sent by itself.
 @MainActor
 final class VoiceInput: ObservableObject {
     enum Phase: Equatable {
         case idle
         case recording(since: Date)
-        /// The recording is with the server.
+        /// The recording is being written down.
         case writing
     }
 
@@ -34,7 +34,7 @@ final class VoiceInput: ObservableObject {
     private var limit: Task<Void, Never>?
     private var put: (String) -> Void = { _ in }
 
-    init(mic: Mic = .phone(), writeDown: @escaping (URL) async throws -> String = VoiceInput.upload) {
+    init(mic: Mic = .phone(), writeDown: @escaping (URL) async throws -> String = VoiceInput.writeDown) {
         self.mic = mic
         self.writeDown = writeDown
     }
@@ -116,6 +116,12 @@ final class VoiceInput: ObservableObject {
         (error as? LocalizedError)?.errorDescription ?? "Couldn't write that down"
     }
 
+    /// Written down on the phone when it can, else on the signed-in server.
+    nonisolated static func writeDown(_ file: URL) async throws -> String {
+        if let words = await PhoneSpeech.transcribe(file) { return words }
+        return try await upload(file)
+    }
+
     /// The recording to the signed-in server; its words back.
     nonisolated static func upload(_ file: URL) async throws -> String {
         guard let api = ToolsetAPI.current else { throw ToolsetAPI.Failure(status: 0, message: "Not signed in") }
@@ -153,6 +159,7 @@ extension VoiceInput.Mic {
                 throw MicProblem(errorDescription: "The microphone could not start")
             }
             recorder = made
+            PhoneSpeech.warm()
         }, stop: {
             guard let made = recorder else { return nil }
             made.stop()
