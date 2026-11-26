@@ -12,6 +12,8 @@
   { "id": "library.assets", "method": "GET", "path": "/api/library/:id/assets", "probe": "route" },
   { "id": "library.collections", "method": "GET", "path": "/api/library/:id/collections", "probe": "route" },
   { "id": "library.pieces", "method": "GET", "path": "/api/library/:id/pieces", "probe": "route" },
+  { "id": "library.intake", "method": "GET", "path": "/api/library/:id/intake", "probe": "route" },
+  { "id": "library.intake-retry", "method": "POST", "path": "/api/library/:id/assets/:assetId/intake/retry", "probe": "route" },
   { "id": "library.media", "method": "GET", "path": "/api/library/media/:versionId/:kind", "probe": "route" },
   { "id": "uploads.create", "method": "POST", "path": "/api/library/:id/uploads", "probe": "route" },
   { "id": "uploads.offset", "method": "GET", "path": "/api/library/uploads/:uploadId", "probe": "route" },

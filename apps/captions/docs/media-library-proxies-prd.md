@@ -248,6 +248,20 @@ In this order. Each is one small change with its test.
   a held file, so the phone has what the route needs. A clip's card carries `held: true` while its file is on the
   server only, and says "Waiting for the main computer" where it said "Not blurred yet".
 
+  **The chat.** A photo or video sent with a message from the iPhone app is a Media Library add by the upload screen's
+  own road (`apps/ios` `AssistantAdd`, `UploadEngine`): the message names its uploads (`uploads` on the turn), so the
+  gate, the hold and the duplicate check are the ones above, and the chat uses the clip the library has. The ask is
+  kept in the chat's own queue of replies that wait (`api/assistant.ts` `held`, on disk, taken up again at start) until
+  every file's upload is in and its intake says done, read each time from `intakeOf` and never stored; then it runs
+  once, on the asker's own AI, with each file as a library clip by its current version (the blurred copy where there is
+  one). It has no time limit. While it waits the reply says what for ("Uploading 2 of 5", "Waiting for the main
+  computer", "Blurring 1 of 2"); a file that failed keeps it waiting with the reason and Retry, and it goes on when the
+  retry does. An ask whose chat was deleted, or whose file's upload failed or clip was deleted, is ended without
+  running. One fact was added for it: the version an upload became is kept on its row (`uploads.version_id`), and a row
+  in `chat_starts` is the claim of the one server process that starts a reply. The phone reads each file's step from
+  the intake route, in the chat and in Upload's Activity; a photo also still goes to the reply as a picture, which
+  does not wait for its add. Not in it: the web chat's dropped files, and a workspace whose library is a plug-in's.
+
 ### Checked in the running app
 
 - **R12 Click through what `9a8453275` built**, which no one has: the Proxy workflow card under each switch; the

@@ -17,7 +17,7 @@ import { MODEL_RE, routeFor, routeForInstance, runFields, type Route } from "./l
 import { EFFORTS, type Selection } from "../contracts/providers";
 import { validTimezone } from "../contracts/automations";
 import { adoptKept, adoptMacClaude, dropUnowned, keptOpen, onAdopt, SILENT_MS, streamMacClaude, usageIn, type MacAsk, type MacAskStatus } from "./lib/mac-claude";
-import { announce } from "./lib/sync";
+import { announce, onLeave } from "./lib/sync";
 import { dockSkills, skillLines } from "./lib/skills";
 import { slug } from "./lib/workshop/folder";
 import { myKeys } from "./my-keys";
@@ -32,15 +32,17 @@ import { deviceOf, isThisMachine } from "./lib/devices";
 import { storageOf } from "./devices-storage";
 import { FOLDER_LIST, folderHere, knownDurations, listing, walkFolder, walkOnMac } from "./lib/folder-list";
 import { watchAllowed } from "./library/watch";
-import { clipsHere, libraryRole } from "./library/access";
+import { clipsHere, librariesHere, libraryRole } from "./library/access";
 import { libraryDb } from "./library/db";
+import { intakeOf } from "./library/held";
+import { onUploadDone } from "./library/routes";
 import { inCurrentWorkspace } from "./lib/workspace-scope";
 import { exportsOf, FOLDER_LABELS, folderIn, sourcesOf, THIS_COMPUTER, type StorageFolder } from "../contracts/storage";
 import { onChatMoves, resolveProjectId, workspaceScope } from "./lib/workshop/workspace";
 import { readWorkPrefs, writeWorkPrefs } from "./work-prefs";
-import { RETRY, type ActionNeeded } from "../contracts/library";
+import { LIBRARY_WORDS, RETRY, type ActionNeeded, type Intake } from "../contracts/library";
 import { onActionDone, publicOrigin } from "./lib/action-done";
-import type { AssistantApproval, AssistantChat, AssistantClip, AssistantContext, AssistantFile, AssistantFileUse, AssistantImage, AssistantMedia, AssistantMessage, AssistantPaste, AssistantProvider, AssistantView } from "../contracts/assistant";
+import type { AssistantAdd, AssistantApproval, AssistantChat, AssistantClip, AssistantContext, AssistantFile, AssistantFileUse, AssistantImage, AssistantMedia, AssistantMessage, AssistantPaste, AssistantProvider, AssistantView } from "../contracts/assistant";
 
 /**
  * The in-app assistant (the dock, src/components/assistant): an account's chats (the dock's open one and the earlier
@@ -360,6 +362,8 @@ interface TurnInput {
   /** Dropped videos and recordings: ids from the body, resolved to this account's files by POST /turn. */
   fileIds: string[];
   files: AssistantFile[];
+  /** The iPhone app's files, sent as Media Library uploads of the caller's own: their upload ids (sendTurn makes the message's `adds` of them). */
+  uploadIds?: string[];
   /** Folders dropped in the Mac app: absolute paths, only told to the AI (its tools read them on that computer). */
   paths: string[];
   /** Videos dropped in the Mac app: their paths, read where they are (nothing uploads). */
@@ -416,6 +420,8 @@ function parseTurn(raw: unknown): TurnInput {
   });
   if (b.files !== undefined && (!Array.isArray(b.files) || b.files.length > MAX_FILES || b.files.some((x) => typeof x !== "string"))) throw new Error(`Send up to ${MAX_FILES} videos at a time.`);
   const fileIds = (b.files ?? []) as string[];
+  if (b.uploads !== undefined && (!Array.isArray(b.uploads) || b.uploads.length > MAX_FILES || b.uploads.some((x) => typeof x !== "string" || !UUID.test(x)))) throw new Error(`Send up to ${MAX_FILES} files at a time.`);
+  const uploadIds = [...new Set((b.uploads ?? []) as string[])];
   if (b.paths !== undefined && (!Array.isArray(b.paths) || b.paths.length > MAX_PATHS || b.paths.some((x) => typeof x !== "string" || !x.startsWith("/") || x.length > 1000 || /[\n\r\0]/.test(x))))
     throw new Error(`Drop up to ${MAX_PATHS} folders at a time.`);
   const paths = (b.paths ?? []) as string[];
@@ -425,7 +431,7 @@ function parseTurn(raw: unknown): TurnInput {
   if (b.clips !== undefined && (!Array.isArray(b.clips) || b.clips.length > MAX_CLIPS || b.clips.some((x) => typeof x !== "string" || !x || x.length > 100)))
     throw new Error(`Add up to ${MAX_CLIPS} library clips at a time.`);
   const clipIds = [...new Set((b.clips ?? []) as string[])];
-  if (!text && !images.length && !pasted.length && !fileIds.length && !paths.length && !local.length && !clipIds.length) throw new Error("Write a message, or add a picture or pasted text.");
+  if (!text && !images.length && !pasted.length && !fileIds.length && !uploadIds.length && !paths.length && !local.length && !clipIds.length) throw new Error("Write a message, or add a picture or pasted text.");
   const c = (b.context && typeof b.context === "object" ? b.context : null) as Record<string, unknown> | null;
   const where = c && capped(c.path, CONTEXT_CAPS.path);
   const context: AssistantContext | undefined = c && where
@@ -440,7 +446,7 @@ function parseTurn(raw: unknown): TurnInput {
       }
     : undefined;
   const ai = b.ai === null ? null : b.ai === undefined ? undefined : readSelection(b.ai);
-  return { text, images, pasted, fileIds, files: [], paths, local, clipIds, clips: [], context, ...(ai !== undefined ? { ai } : {}), ...(b.later === true ? { later: true as const } : {}), ...(typeof b.workspace === "string" && b.workspace ? { workspace: b.workspace.slice(0, 100) } : {}) };
+  return { text, images, pasted, fileIds, files: [], uploadIds, paths, local, clipIds, clips: [], context, ...(ai !== undefined ? { ai } : {}), ...(b.later === true ? { later: true as const } : {}), ...(typeof b.workspace === "string" && b.workspace ? { workspace: b.workspace.slice(0, 100) } : {}) };
 }
 
 /** A turn's `ai`, checked for shape (its model goes to the AI program as an argument); whose AI it is, sendTurn checks. */
@@ -1075,6 +1081,7 @@ function view(username: string, admin: boolean, chat?: Chat): AssistantView {
     navigate: (!conv.navigateChat || conv.navigateChat === (chat?.id ?? conv.id) ? conv.navigate : undefined) ?? null,
     sendNow: true,
     videosLater: true,
+    adds: true,
     chats: true,
   };
 }
@@ -1543,9 +1550,10 @@ function attend(username: string, reply: string, kind: Attention["kind"], body: 
 
 /**
  * A turn that never started ends: stopped by the person (what it waited for is deleted here: nothing will use it), its
- * video never arrived, or the file it was to send isn't in the window any more (gone). The next one may start.
+ * video never arrived, the file it was to send isn't in the window any more (gone), or a Media Library add of its message
+ * is not in the library (removed: its upload failed or was dropped, or its clip was deleted). The next one may start.
  */
-function endHeld(username: string, m: AssistantMessage, how: "stopped" | "lost" | "gone"): void {
+function endHeld(username: string, m: AssistantMessage, how: "stopped" | "lost" | "gone" | "removed", removed: string[] = []): void {
   const conv = load(username);
   const h = conv.held?.[m.id];
   const asked = everyChat(conv).flat().find((x) => x.id === h?.ask);
@@ -1556,12 +1564,14 @@ function endHeld(username: string, m: AssistantMessage, how: "stopped" | "lost" 
   const text =
     how === "stopped"
       ? "*Stopped.*"
+      : how === "removed"
+      ? `${removed.map((n) => `"${n}"`).join(" and ")} ${removed.length > 1 ? "are" : "is"} not in the Media Library, so this message got no reply: add ${removed.length > 1 ? "them" : "it"} again and send the message again.`
       : how === "gone"
         ? `${lost[0]} was not sent (the page was reloaded): drop it in the chat again.`
         : m.send
           ? `${lost[0]} was not uploaded: drop it in the chat again.`
           : `${lost.length > 1 ? `${lost.join(" and ")} were not uploaded` : `${lost[0] ?? "A video"} was not uploaded`}, so this message got no reply: add ${lost.length > 1 ? "them" : "it"} again and send the message again.`;
-  Object.assign(m, { status: how === "lost" ? "error" : "done", text, wait: undefined });
+  Object.assign(m, { status: how === "lost" || how === "removed" ? "error" : "done", text, wait: undefined });
   sayLater(username, m.id);
   save(username);
   tell(username);
@@ -1591,8 +1601,68 @@ onFileIn.push((username, file) => {
   void pump(username);
 });
 
+/* ---- a message's Media Library adds (the iPhone app's files, sent by its upload road): the reply waits until each is ready ---- */
+
+/** How often a turn waiting on its adds looks again (a test shortens it). A finished upload wakes it at once (onUploadDone). */
+export const ADDS_POLL = { ms: 15_000 };
+
+/** One add now: its upload still going, gone (the upload failed or was dropped, or its clip is deleted or in the trash), or its clip with how far it is. */
+type AddNow = "uploading" | "gone" | Intake;
+
+/**
+ * How far each add is, read every time from the uploads and the library's own intake (library/held.ts intakeOf): nothing
+ * of it is kept, so a restart, a late answer and a second look all find the same.
+ */
+async function addsNow(adds: AssistantAdd[]): Promise<Map<string, AddNow>> {
+  const d = libraryDb();
+  const out = new Map<string, AddNow>();
+  const clips = new Map<string, Array<{ upload: string; asset: string }>>();
+  for (const a of adds) {
+    const up = d.prepare("SELECT state, version_id FROM uploads WHERE id = ?").get(a.id) as { state: string; version_id: string | null } | undefined;
+    const clip = up?.version_id ? (d.prepare("SELECT a.id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ? AND a.trashed_at IS NULL").get(up.version_id) as { id: string } | undefined) : undefined;
+    if (clip) clips.set(a.libraryId, [...(clips.get(a.libraryId) ?? []), { upload: a.id, asset: clip.id }]);
+    else out.set(a.id, up && (up.state === "open" || up.state === "finishing") ? "uploading" : "gone");
+  }
+  for (const [lib, of] of clips) {
+    const steps = new Map((await intakeOf(lib, of.map((x) => x.asset))).map((i) => [i.assetId, i]));
+    for (const x of of) out.set(x.upload, steps.get(x.asset) ?? "gone");
+  }
+  return out;
+}
+
+/** What a turn waiting on its adds says (the first that holds: a failed file, then the uploads, the main computer, the blur); undefined: every one is ready. */
+function addsWait(adds: AssistantAdd[], now: Map<string, AddNow>): AssistantMessage["wait"] {
+  const steps = adds.map((a) => now.get(a.id) ?? "uploading");
+  const of = (n: number) => (adds.length > 1 ? ` ${n} of ${adds.length}` : "");
+  const failed = steps.findIndex((x) => typeof x === "object" && x.step === "failed");
+  if (failed >= 0) {
+    const i = steps[failed] as Intake;
+    const part = i.failed === "copy" ? "copy" : "blur";
+    return { for: "files", text: `Could not ${part} "${adds[failed]!.name}"${part === "copy" ? " to the main computer" : ""}${i.error ? `: ${i.error}` : ""}`, failed: { part, libraryId: adds[failed]!.libraryId, assetId: i.assetId, versionId: i.versionId } };
+  }
+  const up = steps.filter((x) => x !== "uploading").length;
+  if (up < adds.length) return { for: "files", text: `Uploading${of(up + 1)}` };
+  const held = (steps as Intake[]).filter((x) => x.step === "held");
+  if (held.length) return { for: "files", text: held.some((x) => x.waiting) ? LIBRARY_WORDS.held : "Copying to the main computer" };
+  const done = (steps as Intake[]).filter((x) => x.step === "done").length;
+  return done < adds.length ? { for: "files", text: `Blurring${of(done + 1)}` } : undefined;
+}
+
+// a Media Library upload is in: an ask of its sender's that waits on it looks again (pump reads the upload itself)
+onUploadDone.push((id) => {
+  const by = (libraryDb().prepare("SELECT created_by FROM uploads WHERE id = ?").get(id) as { created_by: string } | undefined)?.created_by;
+  if (by && Object.keys(load(by).held ?? {}).length) void pump(by);
+});
+
 const pumping = new Map<string, { again: boolean; done?: Promise<void> }>();
 const wakes = new Map<string, ReturnType<typeof setTimeout>>();
+// a process that leaves (a deploy's swap) stops looking by the clock: the next process looks from its start (resumeFromDisk)
+let leaving = false;
+onLeave(() => {
+  leaving = true;
+  for (const w of wakes.values()) clearTimeout(w);
+  wakes.clear();
+});
 
 /**
  * The account's waiting turns, in order: each shows what it waits for, one whose video stopped arriving ends, and one
@@ -1636,10 +1706,16 @@ async function pumpOnce(username: string): Promise<void> {
       }),
     ),
   );
+  const asks = new Set(Object.values(conv.held ?? {}).map((h) => h.ask));
+  const adds = await addsNow(everyChat(conv).flat().filter((m) => asks.has(m.id)).flatMap((m) => m.adds ?? []));
+  // another server process wrote the conversation meanwhile (two answer side by side in a deploy's swap): look again at what it wrote
+  if (load(username) !== conv) return pumpOnce(username);
   // from here on nothing awaits: the conversation is read and changed in one go
   const t = Date.now();
   let changed = false;
   let soonest = Infinity;
+  // a turn waits on its Media Library adds: how soon to look again
+  let look = Infinity;
   // a reply a usage limit stopped, still the newest in its chat: once the limit resets (and the chat is no longer put
   // away), the chat says "Continue where you left off." by itself and that turn waits here like any other
   for (const [id, r] of Object.entries(conv.resume ?? {})) {
@@ -1709,8 +1785,30 @@ async function pumpOnce(username: string): Promise<void> {
       wait = m.send
         ? { for: "videos", videos: 1, text: `Sending "${m.send.name}" to ${m.send.to}` }
         : { for: "videos", videos: missing.length, text: `Waiting for ${missing.length === 1 ? "a video" : `${missing.length} videos`} to upload` };
-    } else if (runningBefore || stalled.has(list)) wait = { for: "reply", text: "Waiting for the reply before it" };
-    else if (busy >= MAX_RUNNING) wait = { for: "reply", text: `Waiting: ${MAX_RUNNING} other chats are working` };
+    } else if (asked?.adds?.length) {
+      // its Media Library adds: one that is gone ends it; else it waits, with no clock, until every one is ready
+      const gone = asked.adds.filter((a) => adds.get(a.id) === "gone");
+      if (gone.length) {
+        endHeld(username, m, "removed", gone.map((a) => a.name));
+        changed = true;
+        continue;
+      }
+      for (const a of asked.adds) {
+        const now = adds.get(a.id);
+        if (typeof now === "object" && a.assetId !== now.assetId) {
+          a.assetId = now.assetId;
+          changed = true;
+        }
+      }
+      wait = addsWait(asked.adds, adds);
+      if (wait) {
+        look = ADDS_POLL.ms;
+        // a file that stopped is told once, as a failed reply is: it waits for its Retry
+        if (wait.failed && JSON.stringify(m.wait) !== JSON.stringify(wait)) attend(username, m.id, "failed", wait.text);
+      }
+    }
+    if (!wait && (runningBefore || stalled.has(list))) wait = { for: "reply", text: "Waiting for the reply before it" };
+    else if (!wait && busy >= MAX_RUNNING) wait = { for: "reply", text: `Waiting: ${MAX_RUNNING} other chats are working` };
     if (wait) {
       if (JSON.stringify(m.wait) !== JSON.stringify(wait)) {
         m.wait = wait;
@@ -1718,6 +1816,18 @@ async function pumpOnce(username: string): Promise<void> {
       }
       stalled.add(list);
       continue;
+    }
+    // its adds are ready, and it starts now, in one server process only: the row is the claim, so a look in a second
+    // process (a deploy's swap) or a late answer finds it taken. The clips they became are the message's, as ones dragged
+    // in from the library (each one's current version: the blurred copy where there is one)
+    // shortcut: a process that stops between this row and its save leaves the reply waiting; end it there if that ever bites
+    if (asked?.adds?.length) {
+      if (!libraryDb().prepare("INSERT OR IGNORE INTO chat_starts (reply, at) VALUES (?, ?)").run(id, t).changes) {
+        stalled.add(list);
+        continue;
+      }
+      const title = libraryDb().prepare("SELECT title FROM assets WHERE id = ?");
+      asked.clips = [...(asked.clips ?? []), ...asked.adds.map((a) => adds.get(a.id) as Intake).map((i) => ({ id: i.assetId, versionId: i.versionId, title: (title.get(i.assetId) as { title: string }).title }))];
     }
     // one that can't start ends there, and the next may start in its place
     const started = startHeld(username, conv, list, i, h, h.files.flatMap((id) => inNow(id) ?? []));
@@ -1733,7 +1843,8 @@ async function pumpOnce(username: string): Promise<void> {
   }
   clearTimeout(wakes.get(username));
   wakes.delete(username);
-  if (soonest < Infinity) wakes.set(username, setTimeout(() => void pump(username), Math.min(soonest - t + 1000, 2 ** 31 - 1)).unref());
+  const next = Math.min(soonest - t + 1000, look);
+  if (next < Infinity && !leaving) wakes.set(username, setTimeout(() => void pump(username), Math.min(next, 2 ** 31 - 1)).unref());
   // a reply that started is with its computer once what it knows is read: whoever sent it gets their answer after that
   await Promise.allSettled(starting);
 }
@@ -2104,6 +2215,13 @@ async function sendTurn(c: Context<{ Variables: AuthVars }>, chatId?: string, ab
     if (!f) return c.json({ error: "A video was not found: add it again" }, 400);
     files.push("file" in f ? { id, name: f.file.name } : { id, name: f.name, uploading: true });
   }
+  // the iPhone app's files are Media Library adds, sent by its upload road: only the caller's own uploads
+  const adds: AssistantAdd[] = [];
+  for (const id of input.uploadIds ?? []) {
+    const up = libraryDb().prepare("SELECT filename, library_id FROM uploads WHERE id = ? AND created_by = ?").get(id, u.username) as { filename: string; library_id: string } | undefined;
+    if (!up) return c.json({ error: "A file was not found: add it again" }, 400);
+    adds.push({ id, name: up.filename, libraryId: up.library_id });
+  }
   // the chat's workspace: its own once it has one, while the account can still open it (workspaceNow); a chat from
   // before chats had one is the first brand's, whichever window sends to it, as its list says (chatsOf); a new chat's
   // is the one picked for it, else the app's current
@@ -2116,12 +2234,17 @@ async function sendTurn(c: Context<{ Variables: AuthVars }>, chatId?: string, ab
     if (!clips) return c.json({ error: CLIP_ELSEWHERE }, 400);
     input.clips = clips;
   }
+  // and only into the chat's workspace's library, as a clip dragged in
+  if (adds.length) {
+    const here = new Set((await inWs(() => librariesHere(u.username))).map((l) => l.id));
+    if (adds.some((a) => !here.has(a.libraryId))) return c.json({ error: CLIP_ELSEWHERE }, 400);
+  }
   // "Don't ask again" pressed under the fit question turns it off (only under that offer: the same words elsewhere don't)
   const lastReply = [...(target()?.messages ?? [])].reverse().find((m) => m.role === "assistant");
   const fitOff = input.text === FIT_OFF && !!lastReply?.choices?.includes(FIT_OFF) && lastReply.choices.includes(FIT_NEW);
   if (fitOff) writeWorkPrefs(u.username, { askFit: false });
   const project = await inWs(() => currentProject(u)).catch(() => undefined);
-  const footage = files.length || input.paths.length || input.local.length;
+  const footage = files.length || adds.length || input.paths.length || input.local.length;
   // the project is named once: by the question whether dropped footage belongs there, else by its own line
   const fit = fitOff ? FIT_OFF_SAID : !project ? undefined : footage && readWorkPrefs(u.username).askFit !== false ? fitLine(project.name) : projectLine(project);
   const conv = load(u.username);
@@ -2150,6 +2273,7 @@ async function sendTurn(c: Context<{ Variables: AuthVars }>, chatId?: string, ab
     ...(images.length ? { images } : {}),
     ...(input.pasted.length ? { pasted: input.pasted.map((p) => p.name) } : {}),
     ...(files.length ? { files } : {}),
+    ...(adds.length ? { adds } : {}),
     ...(input.paths.length ? { folders: input.paths } : {}),
     ...(input.local.length ? { localFiles: input.local } : {}),
     ...(input.clips.length ? { clips: input.clips } : {}),
@@ -2158,7 +2282,7 @@ async function sendTurn(c: Context<{ Variables: AuthVars }>, chatId?: string, ab
   const reply: AssistantMessage = { id: randomUUID(), role: "assistant", text: "", at: now + 1, status: "thinking" };
   chat.messages.push(asked, reply);
   if (chat.messages.length === 2 && chat.title === undefined && chat.id && namesOn()) {
-    const attachments = [...files.map((f) => f.name), ...input.paths, ...input.local, ...input.images.map((im) => im.name)];
+    const attachments = [...files.map((f) => f.name), ...adds.map((a) => a.name), ...input.paths, ...input.local, ...input.images.map((im) => im.name)];
     void nameChat(u.username, chat.id, { text: input.text, project: project?.name, page: input.context?.title, visible: input.context?.visible, quote: input.context?.selection, attachments }, chat.ai);
   }
   // every turn goes through the queue: one with nothing ahead and its videos in starts in this call (Stop counts on that)

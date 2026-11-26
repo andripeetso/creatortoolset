@@ -296,6 +296,13 @@ final class UploadEngine: ObservableObject {
         return route
     }
 
+    /// Whether the uploads of the workspace `api` works in go to its own Media Library (not a plug-in's, and not
+    /// refused): a chat's files take this road only then. false when the server can't be asked now.
+    func goesToOwnLibrary(_ api: API) async -> Bool {
+        guard let server = api.key else { return false }
+        return (try? await route(server: server, api: api)) == .library
+    }
+
     /// What the Blur faces switch needs to know of the workspace picked on `server` now.
     struct BlurSwitch: Equatable {
         /// Its uploads are blurred unless the switch is off: they go to a plug-in's library (the studio's), or to a
@@ -406,7 +413,7 @@ final class UploadEngine: ObservableObject {
     private func makeUpload(_ id: UUID, _ api: API) async throws {
         let libraries = try JSONDecoder().decode(Libraries.self, from: try await api.data(api.request("/api/library"), session: session))
         // the workspace's first library is the one here/uploads files into (access.ts ensureLibrary, librariesHere): its Upload setting
-        let proxies = libraries.libraries.first?.settings?.upload == "proxies"
+        let proxies = Self.sendsCopy(to: libraries.libraries.first, blur: store.item(id)?.blur)
         let made = (libraries.uploadTakes ?? 0) >= 1 ? await made(id, proxies: proxies) : [:]
         guard let item = store.item(id) else { return }
         // the copy above can take a while: the server may have been removed (or signed out) meanwhile
@@ -422,6 +429,14 @@ final class UploadEngine: ObservableObject {
             $0.direct = created.direct.map { UploadItem.Direct(partSize: $0.partSize, urls: $0.urls) }
             $0.sent = created.offset
         }
+    }
+
+    /// Whether the phone may send its own 720p copy in place of a video: to a library that keeps only proxies, and never
+    /// of a file to blur, whose original the main computer needs (the server refuses the copy). A file is to blur where
+    /// the library blurs faces, unless Blur faces was turned off for it by an account the server lets (`blur` false).
+    static func sendsCopy(to library: Libraries.Library?, blur: Bool?) -> Bool {
+        let toBlur = library?.settings?.blurFaces == true && !(blur == false && library?.mayKeepAsFilmed != false)
+        return library?.settings?.upload == "proxies" && !toBlur
     }
 
     /// The upload start's body: the name and size over what the phone made, and `blur: false` only when Blur faces was
@@ -602,6 +617,8 @@ final class UploadEngine: ObservableObject {
             Task { _ = await Connections.shared.renewedIfEnding(api) }
             return perform(.retryLater("Signing in again"), step.itemId)
         }
+        // a file the server holds for its blur: Activity reads how far it is from the library's intake
+        if step.kind == .finish, let held = Intake.Held(finish: body) { store.update(step.itemId) { $0.intake = held } }
         let action = Rules.after(step, status: response?.statusCode ?? 0,
                                  uploadOffset: response?.value(forHTTPHeaderField: "Upload-Offset").flatMap { Int64($0) },
                                  etag: response?.value(forHTTPHeaderField: "ETag"),

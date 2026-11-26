@@ -20,10 +20,13 @@ struct AssistantView: Decodable, Equatable {
     /// The reply starts at once and the videos go on up after it ends (a message sent with `later`). An older
     /// server sends nothing: it holds the reply until they are in, and a reply that ended (stopped) needs them no more.
     var videosLater: Bool
+    /// The server takes a message's files as Media Library uploads (`uploads`) and keeps the reply until each is
+    /// ready. An older server sends nothing: its files go up as the chat's own.
+    var adds: Bool
     /// The workspace the chat is in (set by its first message): its calls go there.
     var workspace: String?
 
-    enum CodingKeys: String, CodingKey { case id, provider, aiName, messages, past, navigate, sendNow, videosLater, workspace }
+    enum CodingKeys: String, CodingKey { case id, provider, aiName, messages, past, navigate, sendNow, videosLater, adds, workspace }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -35,6 +38,7 @@ struct AssistantView: Decodable, Equatable {
         navigate = try? c.decodeIfPresent(String.self, forKey: .navigate)
         sendNow = (try? c.decode(Bool.self, forKey: .sendNow)) ?? false
         videosLater = (try? c.decode(Bool.self, forKey: .videosLater)) ?? false
+        adds = (try? c.decode(Bool.self, forKey: .adds)) ?? false
         workspace = try? c.decodeIfPresent(String.self, forKey: .workspace)
     }
 
@@ -73,6 +77,8 @@ struct AssistantMessage: Decodable, Equatable, Identifiable {
     var images: [Named]?
     var pasted: [String]?
     var files: [Named]?
+    /// Files of his message that are Media Library adds: the reply waits until each is ready (a newer server).
+    var adds: [Add]?
     var quote: String?
     /// A reply that has not started: what it waits for ("Waiting for 2 videos to upload"). A newer server sends it.
     var wait: Wait?
@@ -90,8 +96,27 @@ struct AssistantMessage: Decodable, Equatable, Identifiable {
         var uploading: Bool?
     }
 
+    /// A file sent as a Media Library add: `id` is its upload, `assetId` the clip it became once it is in the library.
+    /// How far that clip is comes from the library's intake (`IntakeWatch`), never from here.
+    struct Add: Decodable, Equatable, Identifiable {
+        var id: String
+        var name: String
+        var libraryId: String
+        var assetId: String?
+    }
+
     struct Wait: Decodable, Equatable {
         var text: String?
+        /// One of the message's files stopped and waits for its retry: the reply goes on by itself after it.
+        var failed: Failed?
+
+        struct Failed: Decodable, Equatable {
+            /// "copy" (to the main computer) or "blur".
+            var part: String
+            var libraryId: String
+            var assetId: String
+            var versionId: String
+        }
     }
 }
 
@@ -241,7 +266,15 @@ struct AssistantServer {
     var queue: URL?
     /// One call (path, method, JSON body): the answer's body, or a `ToolsetAPI.Failure`.
     var call: (String, String, Any?) async throws -> Data
-    var uploader = AssistantOutbox.Uploader(begin: AssistantUpload.begin, send: AssistantUpload.send, handOver: AssistantUpload.handOver)
+    /// Each video by its own road: a Media Library add through the Upload tab's uploads (they carry on by themselves,
+    /// so nothing of them is handed over), any other as the chat's own upload.
+    var uploader = AssistantOutbox.Uploader(
+        begin: { $0.add == true ? try await AssistantAdd.begin($0) : try await AssistantUpload.begin($0) },
+        send: { video, begun, progress in
+            video.add == true ? try await AssistantAdd.send(video, progress: progress)
+                : try await AssistantUpload.send(video, begun: begun, progress: progress)
+        },
+        handOver: { await AssistantUpload.handOver($0.filter { $0.add != true }) })
 
     static var signedIn: AssistantServer? { signedIn(chat: nil) }
 
@@ -318,6 +351,7 @@ final class AssistantModel: ObservableObject {
         outbox.serverWaits = fresh.sendNow
         error = nil
         offline = false
+        askRoad()
         carryOn()
     }
 
@@ -383,9 +417,33 @@ final class AssistantModel: ObservableObject {
         // the next new chat starts where he wrote last
         if let ws = chatWorkspace ?? API.current?.workspace { startIn = ws }
         var message = message
-        message.videos = AssistantUpload.stamped(message.videos, api: chatAPI)
+        message.videos = AssistantUpload.stamped(message.videos, api: chatAPI, add: adds)
+        // each photo as it was picked goes into the Media Library too, where its files do; else its copy is dropped
+        for index in message.images.indices {
+            AssistantAdd.photo(message.images[index], api: adds ? chatAPI : nil)
+            message.images[index].copy = nil
+        }
         outbox.add(message)
         carryOn()
+    }
+
+    /// Where the uploads of each server's workspaces go, as asked this run: true is the workspace's own Media Library.
+    private var ownLibrary: [String: Bool] = [:]
+    private func road(_ api: ToolsetAPI) -> String { "\(api.key ?? "") \(api.workspace ?? "")" }
+
+    /// A message's files go into the Media Library of the chat's workspace: the server takes them so (`adds`), and
+    /// that workspace's uploads go to its own library, not a plug-in's. Not known yet: the chat's own upload.
+    var adds: Bool {
+        guard view?.adds == true, let api = chatAPI else { return false }
+        return ownLibrary[road(api)] ?? false
+    }
+
+    /// Asks once per workspace where its uploads go (the Upload tab's own question).
+    private func askRoad() {
+        guard !Self.pretend, view?.adds == true, let api = chatAPI, ownLibrary[road(api)] == nil else { return }
+        let key = road(api)
+        // only a yes is kept here: with no answer it is asked again (the engine remembers a real one for the run)
+        Task { if await UploadEngine.shared.goesToOwnLibrary(api) { ownLibrary[key] = true } }
     }
 
     /// A message marked "Not sent" is tried again.
@@ -496,7 +554,9 @@ final class AssistantModel: ObservableObject {
             guard let reply = message.reply else { continue }
             if message.failed != nil {
                 Task { await stop(reply: reply, of: message.id) }
-            } else if !view.videosLater, let held = view.messages.first(where: { $0.id == reply }), held.status != "thinking" {
+            } else if !view.videosLater || message.videos?.contains(where: { $0.add == true }) == true,
+                      let held = view.messages.first(where: { $0.id == reply }), held.status != "thinking" {
+                // (a reply kept for its Media Library adds never ends before they are in, unless he stopped it)
                 outbox.drop(message.id)
             }
         }
@@ -575,10 +635,14 @@ final class AssistantModel: ObservableObject {
             body["images"] = message.images.map { ["name": $0.name, "type": "image/jpeg", "data": $0.jpeg.base64EncodedString()] }
         }
         // a video still going up is named by the id the server gave it
-        let files = message.files.map(\.id) + (message.videos ?? []).compactMap(\.file)
+        let videos = message.videos ?? []
+        let files = message.files.filter { $0.add != true }.map(\.id) + videos.filter { $0.add != true }.compactMap(\.file)
         if !files.isEmpty { body["files"] = files }
-        // its videos keep going up after the reply ends: a server that knows this starts the reply at once
-        if message.videos?.isEmpty == false { body["later"] = true }
+        // Media Library adds, by their uploads there: the server keeps the reply until every one is ready
+        let uploads = message.files.filter { $0.add == true }.map(\.id) + videos.filter { $0.add == true }.compactMap(\.file)
+        if !uploads.isEmpty { body["uploads"] = uploads }
+        // its own videos keep going up after the reply ends: a server that knows this starts the reply at once
+        if videos.contains(where: { $0.add != true }) { body["later"] = true }
         return body
     }
 

@@ -5,6 +5,7 @@ struct ActivityView: View {
     @EnvironmentObject private var store: UploadStore
     @EnvironmentObject private var engine: UploadEngine
     @EnvironmentObject private var servers: Servers
+    @ObservedObject private var intake = IntakeWatch.shared
     @Environment(\.dismiss) private var dismiss
     @State private var signingIn = false
     /// A clip on its way asked to be removed: asked before it is stopped.
@@ -50,6 +51,12 @@ struct ActivityView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
             .refreshable { await engine.reconcile() }
+            // the files the server holds for their blur: how far each is, read from the library's intake
+            .task(id: items.compactMap(\.intake)) {
+                for (library, held) in Dictionary(grouping: items.filter { $0.intake != nil }, by: { $0.intake!.library }) {
+                    intake.watch(held.map { $0.intake!.asset }, library: library, api: engine.api(for: held[0]))
+                }
+            }
             .confirmationDialog("Stop this upload?", isPresented: Binding(get: { stopping != nil }, set: { if !$0 { stopping = nil } }),
                                 titleVisibility: .visible, presenting: stopping) { item in
                 Button("Stop and remove", role: .destructive) { engine.remove(item.id) }
@@ -82,7 +89,9 @@ struct ActivityView: View {
                         Text(ByteCountFormatter.string(fromByteCount: item.size, countStyle: .file)).font(.caption).foregroundStyle(.secondary)
                     }
                 }
-                Text(Self.status(item, sent: store.sentBytes(item))).font(.caption).foregroundStyle(color(item))
+                let step = item.intake.flatMap { intake.steps[$0.asset] }
+                Text(Self.status(item, sent: store.sentBytes(item), intake: step)).font(.caption)
+                    .foregroundStyle(step?.isFailed == true ? .red : step?.line != nil ? .secondary : color(item))
                 if item.state == .sending && item.size > 0 {
                     ProgressView(value: Double(min(store.sentBytes(item), item.size)), total: Double(item.size))
                 }
@@ -90,6 +99,16 @@ struct ActivityView: View {
                     Button("Try again", systemImage: "arrow.clockwise") { engine.retry(item.id) }
                         .buttonStyle(.bordered)
                         .padding(.top, 2)
+                }
+                if let step, step.isFailed, let held = item.intake, let api = engine.api(for: item) {
+                    Button("Retry", systemImage: "arrow.clockwise") {
+                        Task {
+                            try? await Intake.retry(part: step.failed, library: held.library, asset: held.asset, version: step.versionId, api: api)
+                            await intake.read()
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .padding(.top, 2)
                 }
             }
         }
@@ -103,7 +122,8 @@ struct ActivityView: View {
         }
     }
 
-    static func status(_ item: UploadItem, sent: Int64, now: Date = Date()) -> String {
+    /// `intake`: how far a file the server holds for its blur is (the library's intake); its line until it is ready.
+    static func status(_ item: UploadItem, sent: Int64, now: Date = Date(), intake: Intake? = nil) -> String {
         switch item.state {
         case .picked:
             return "Not sent yet"
@@ -119,7 +139,7 @@ struct ActivityView: View {
         case .confirming:
             return "Sent · the library is fetching it"
         case .done:
-            return item.duplicate ? "Already in the library" : "Uploaded"
+            return intake?.line ?? (item.duplicate ? "Already in the library" : "Uploaded")
         case .failed:
             return "Couldn't upload: \(item.note ?? "unknown error")"
         }

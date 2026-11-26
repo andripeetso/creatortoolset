@@ -73,7 +73,8 @@ libraryApp.route("/", placesApp); // GET, POST /:id/places, GET /:id/places/gone
 
 const CHUNK_BYTES = 32 * 1024 * 1024;
 
-/** Told each finished upload's id and the version it became (a duplicate's current version): an edit waiting on it starts. */
+/** Told each finished upload's id and the version it became (a duplicate's current version): an edit waiting on it starts.
+ *  The same version is kept on the upload's row (uploads.version_id), for a chat's ask that waits on it (assistant.ts). */
 export const onUploadDone: ((uploadId: string, versionId: string) => void)[] = [];
 const uploadDone = (uploadId: string, versionId: string | null | undefined) => {
   if (versionId) for (const f of onUploadDone) f(uploadId, versionId);
@@ -645,7 +646,7 @@ async function finishDirect(c: Context<{ Variables: AuthVars }>, row: UploadRow)
   const dup = duplicateOf(row, sha256);
   if (dup) {
     await store.delete(key); // not metered yet, so no usage to take back
-    db().prepare("UPDATE uploads SET state = 'done', made = NULL WHERE id = ?").run(row.id);
+    db().prepare("UPDATE uploads SET state = 'done', made = NULL, version_id = ? WHERE id = ?").run(dup.current, row.id);
     uploadDone(row.id, dup.current);
     return c.json({ duplicateOf: dup.id });
   }
@@ -673,7 +674,7 @@ async function finishDirect(c: Context<{ Variables: AuthVars }>, row: UploadRow)
       modifiedAt: row.modified_at,
     });
     if (row.made) d.prepare("DELETE FROM jobs WHERE version_id = ? AND kind = 'probe'").run(row.id); // fileMade queues what it needs
-    d.prepare("UPDATE uploads SET state = 'done', received = size WHERE id = ?").run(row.id);
+    d.prepare("UPDATE uploads SET state = 'done', received = size, version_id = id WHERE id = ?").run(row.id);
     d.exec("COMMIT");
   } catch (e) {
     d.exec("ROLLBACK");
@@ -1066,7 +1067,7 @@ libraryApp.post("/uploads/:uploadId/finish", async (c) => {
     const dup = duplicateOf(row, sha256);
     if (dup) {
       await rm(row.staging_path, { force: true });
-      db().prepare("UPDATE uploads SET state = 'done', made = NULL WHERE id = ?").run(row.id);
+      db().prepare("UPDATE uploads SET state = 'done', made = NULL, version_id = ? WHERE id = ?").run(dup.current, row.id);
       uploadDone(row.id, dup.current);
       return c.json({ duplicateOf: dup.id });
     }
@@ -1104,7 +1105,7 @@ libraryApp.post("/uploads/:uploadId/finish", async (c) => {
         d.prepare("DELETE FROM jobs WHERE version_id = ?").run(versionId);
         d.prepare("UPDATE asset_versions SET held = 1, state = 'ready', quick = ? WHERE id = ?").run(quick, versionId);
       } else if (row.made) d.prepare("DELETE FROM jobs WHERE version_id = ? AND kind = 'probe'").run(versionId); // fileMade queues what it needs
-      d.prepare("UPDATE uploads SET state = 'done', received = size WHERE id = ?").run(row.id);
+      d.prepare("UPDATE uploads SET state = 'done', received = size, version_id = ? WHERE id = ?").run(versionId, row.id);
       d.exec("COMMIT");
     } catch (e) {
       d.exec("ROLLBACK");

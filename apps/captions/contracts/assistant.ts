@@ -70,6 +70,8 @@ export interface AssistantMessage {
   localFiles?: string[];
   /** Media Library clips dragged into a user message: already in the library, nothing uploaded; the tools take versionId. */
   clips?: AssistantClip[];
+  /** Files the iPhone app sent with a user message as Media Library adds (the turn's `uploads`): its reply waits until each is ready. */
+  adds?: AssistantAdd[];
   /**
    * A reply that carries on once a file on the user's computer is on the server (a tool needs it there): the dock that
    * still has that file uploads it, then names the upload (`id`). `to` is the tool's name ("Review").
@@ -77,9 +79,12 @@ export interface AssistantMessage {
   send?: { path: string; name: string; to: string; id?: string };
   /**
    * A reply that hasn't started (status "thinking"): it waits for the message's videos to finish uploading ("videos",
-   * with how many), or for the reply before it to end ("reply"). `text` is the line to show: "Waiting for 2 videos".
+   * with how many), for the reply before it to end ("reply"), or for the message's Media Library adds to be ready
+   * ("files"). `text` is the line to show: "Waiting for 2 videos". `failed`: one of those files stopped (its copy to the
+   * main computer, or its blur) and waits for its retry: POST /api/library/:libraryId/assets/:assetId/intake/retry for a
+   * copy, the Face Blur plug-in's own retry with `versionId` for a blur. The reply goes on by itself after it.
    */
-  wait?: { for: "videos" | "reply"; videos?: number; text: string };
+  wait?: { for: "videos" | "reply" | "files"; videos?: number; text: string; failed?: { part: "copy" | "blur"; libraryId: string; assetId: string; versionId: string } };
   /** Folders dropped in the Mac app with a user message: their paths on the user's computer (nothing uploaded). */
   folders?: string[];
   /** The highlighted text a user message asked about. */
@@ -204,6 +209,12 @@ export interface AssistantTurnInput {
    * once, is told which videos are still on their way, and the tools that take them wait for them.
    */
   later?: true;
+  /**
+   * Ids of the caller's own Media Library uploads (POST /api/library/here/uploads, the iPhone app's upload road) for the
+   * files sent with the message: each is a Media Library add (AssistantAdd). The message is saved at once and its reply
+   * waits (`wait`), for as long as it takes, until every one is in the library and ready (GET /api/library/:id/intake).
+   */
+  uploads?: string[];
   /** Videos dropped in the Mac app: their absolute paths on the user's computer, read where they are (nothing uploads). */
   localFiles?: string[];
   /** Folders dropped in the Mac app: their absolute paths on the user's computer, pointed at where they lie. */
@@ -223,6 +234,18 @@ export interface AssistantClip {
   id: string;
   versionId: string;
   title: string;
+}
+
+/**
+ * A file sent with a user message as a Media Library add: `id` is its upload there. `assetId` once the upload is in the
+ * library: the clip it became, or the one the library had already. How far that clip is (held for the main computer,
+ * being blurred, done, failed) is read from GET /api/library/:libraryId/intake?assets=<assetId>, never kept here.
+ */
+export interface AssistantAdd {
+  id: string;
+  name: string;
+  libraryId: string;
+  assetId?: string;
 }
 
 /** A video or recording dropped in the chat, uploaded in parts while the message goes (api/assistant-files.ts; kept 7 days). */
@@ -306,6 +329,9 @@ export interface AssistantView {
   sendNow?: true;
   /** A turn sent with `later` starts at once, without waiting for its videos. Absent on older servers: the reply waits. */
   videosLater?: true;
+  /** This server takes a message's files as Media Library uploads (the turn's `uploads`) and holds the reply until each
+   *  is ready. Absent on older servers: there a client sends them as `files`. */
+  adds?: true;
   /** The chat is put away until this time (ms; POST /chats/:id/snooze), as AssistantChat.snoozed. */
   snoozed?: number;
   /** The workspace the chat works in, once its first message has set it (AssistantChat.workspace). */

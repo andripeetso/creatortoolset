@@ -26,11 +26,16 @@ struct QueuedMessage: Codable, Equatable, Identifiable {
         var id = UUID().uuidString
         var name: String
         var jpeg: Data
+        /// The photo as it was picked, kept until Send: the name of its folder in `AssistantPickedVideo.folder`. The
+        /// JPEG is what the reply reads; this one goes into the Media Library (`AssistantAdd.photo`).
+        var copy: String?
     }
 
     struct File: Codable, Equatable, Identifiable {
         var id: String
         var name: String
+        /// A Media Library add: `id` is its upload there, and the message names it in `uploads`.
+        var add: Bool?
     }
 
     /// A picked video until it is up.
@@ -49,6 +54,9 @@ struct QueuedMessage: Codable, Equatable, Identifiable {
         /// there, whatever the phone picks later. nil on one an older app saved: the phone's current ones.
         var server: String?
         var workspace: String?
+        /// It goes into the Media Library of its chat's workspace by the Upload tab's road (`AssistantAdd`): `file` is
+        /// its upload there. nil: the chat's own upload (an older server, or a workspace whose library is a plug-in's).
+        var add: Bool?
     }
 }
 
@@ -207,10 +215,14 @@ final class AssistantOutbox: ObservableObject {
         }
     }
 
-    /// A message marked "Not sent" goes back in line.
+    /// A message marked "Not sent" goes back in line. A Media Library add is asked for again: its upload may have
+    /// started over under another id meanwhile.
     func retry(_ id: String) {
         items.first { $0.id == id }?.videos?.forEach { stalls[$0.id] = nil }
-        change(id) { $0.failed = nil }
+        change(id) { queued in
+            queued.failed = nil
+            for index in (queued.videos ?? []).indices where queued.videos?[index].add == true { queued.videos?[index].file = nil }
+        }
     }
 
     func tried(_ id: String, after mark: String) {
@@ -398,7 +410,7 @@ final class AssistantOutbox: ObservableObject {
         change(message) {
             $0.videos?.removeAll { $0.id == video.id }
             if $0.videos?.isEmpty == true { $0.videos = nil }
-            $0.files.append(.init(id: file, name: video.name))
+            $0.files.append(.init(id: file, name: video.name, add: video.add))
         }
         video.discard()
         if let done = items.first(where: { $0.id == message }), done.reply != nil, done.videos == nil { remove(message) }

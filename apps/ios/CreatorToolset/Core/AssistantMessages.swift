@@ -42,11 +42,18 @@ struct AssistantUserMessage: View {
             }
             // owner, 2026-11-12: no upload progress in the chat, so nobody waits for it; the project shows it
             ForEach(message.files ?? []) { chip($0.name, "film") }
+            ForEach(message.adds ?? []) { AssistantAddChip(add: $0) }
             ForEach(message.pasted ?? [], id: \.self) { chip($0, "doc.text") }
             ForEach(message.folders ?? [], id: \.self) { chip(($0 as NSString).lastPathComponent, "folder") }
             if !message.text.isEmpty { UserBubble(text: message.text) }
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
+        // its Media Library adds that are in the library: how far each is, read from the library's intake
+        .task(id: (message.adds ?? []).compactMap(\.assetId)) {
+            for (library, adds) in Dictionary(grouping: message.adds ?? [], by: \.libraryId) {
+                IntakeWatch.shared.watch(adds.compactMap(\.assetId), library: library, api: AssistantModel.shared.chatAPI)
+            }
+        }
     }
 
     private func chip(_ name: String, _ symbol: String) -> some View {
@@ -78,7 +85,19 @@ struct AssistantReply: View {
                 HStack(spacing: 8) {
                     // nothing turns on a reply that has not started
                     if message.wait == nil { ProgressView().controlSize(.small).tint(.secondary) }
-                    Text(message.wait?.text ?? steps.last ?? "Thinking").font(.footnote).foregroundStyle(.secondary)
+                    Text(message.wait?.text ?? steps.last ?? "Thinking").font(.footnote)
+                        .foregroundStyle(message.wait?.failed == nil ? Color.secondary : .red)
+                    // a file of the message stopped: asked for again, the reply goes on by itself
+                    if let failed = message.wait?.failed {
+                        Button("Retry") {
+                            Task {
+                                guard let api = AssistantModel.shared.chatAPI else { return }
+                                try? await Intake.retry(part: failed.part, library: failed.libraryId, asset: failed.assetId, version: failed.versionId, api: api)
+                                await AssistantModel.shared.load()
+                            }
+                        }
+                        .font(.footnote.weight(.semibold))
+                    }
                     if let stop {
                         Button(action: stop) {
                             Image(systemName: "xmark.circle.fill")
@@ -453,6 +472,34 @@ struct AssistantQueuedBubble: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
+    }
+}
+
+/// A file of his message that is a Media Library add: its name, and under it where it is until it is ready. Its
+/// upload's share comes from the Upload tab's queue when this phone sends it, the rest from the library's intake.
+struct AssistantAddChip: View {
+    let add: AssistantMessage.Add
+    @ObservedObject private var intake = IntakeWatch.shared
+    @ObservedObject private var uploads = UploadEngine.shared.store
+
+    var body: some View {
+        let step = add.assetId.flatMap { intake.steps[$0] }
+        VStack(alignment: .trailing, spacing: 2) {
+            AssistantVideoChip(name: add.name)
+            if let line = Self.line(add, step: step, upload: uploads.items.first { $0.uploadId == add.id }, sent: uploads.sentBytes) {
+                Text(line).font(.caption).foregroundStyle(step?.isFailed == true ? Color.red : .secondary)
+            }
+        }
+    }
+
+    /// "Uploading · 40%" while it goes up (the share only on the phone that sends it), then the intake's own line;
+    /// nil once it is ready.
+    static func line(_ add: AssistantMessage.Add, step: Intake?, upload: UploadItem?, sent: (UploadItem) -> Int64) -> String? {
+        guard add.assetId != nil else {
+            guard let upload, upload.size > 0, upload.isWorking else { return "Uploading" }
+            return "Uploading · \(Int(100 * Double(min(sent(upload), upload.size)) / Double(upload.size)))%"
+        }
+        return step?.line
     }
 }
 

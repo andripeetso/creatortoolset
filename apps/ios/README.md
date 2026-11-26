@@ -9,7 +9,12 @@ counts what waits there). The app follows the phone's light or dark look:
 
 - **Chats** opens first: the assistant's chats, one row each, with a badge when one asks you something. The round
   button starts a new chat. Replies are text only: a picture in a reply keeps its description, and the app never
-  loads an address a reply names.
+  loads an address a reply names. A photo or video sent with a message goes into the workspace's Media Library by
+  Upload's own road (one the library has already is not added again), and the reply waits until every file is ready:
+  uploaded, and where the library blurs faces, copied to the main computer and blurred there. Each file says where
+  it is ("Uploading · 40%", "Waiting for the main computer", "Blurring") and the reply what it waits for; one that
+  failed says why, with Retry. The message can be sent and the app closed: the server starts the reply by itself. On
+  an older server, and in a workspace whose Media Library is a plug-in's, a video goes up as the chat's own file.
 - **Edits**: each video in Review and each New edit as a card, with the picture of its newest cut, its step and a
   badge when it waits on you; the ones that wait on top, then Working and Done. Swipe a card to dismiss it, or to
   delete a Review video (it stays in Review's trash for 30 days). **New edit** at the top: pick clips from Photos (in
@@ -20,6 +25,8 @@ counts what waits there). The app follows the phone's light or dark look:
   line that tells the phone what changed is closed while the app is in the background.
 - **Upload** is the camera roll. Pick clips and press Upload; they keep going with the phone locked. On a server whose
   Media Library belongs to a plug-in, the clips go there with the same sign-in. The Media Library sits beside the roll.
+  A file the server holds for its blur says in Activity how far it is, as in a chat, until it is ready. A file to
+  blur always goes up as it is, never as the phone's own 720p copy: the main computer needs the original.
 - **Finals** shows what is ready to post and every finished piece: save it to Photos, copy its post description, split
   it into stories, send it to the team or mark it published.
 - **More**: the tools the account has (Scripts opens a script to read while filming, with a record button that films

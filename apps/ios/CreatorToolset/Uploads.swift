@@ -105,6 +105,8 @@ struct UploadItem: Codable, Identifiable, Hashable {
     var workspace: String?
     /// false: the person turned Blur faces off for it (sent as `blur: false`); nil: the server's default.
     var blur: Bool?
+    /// The server holds it for its blur (the finish's answer): the clip its intake is asked by (`IntakeWatch`).
+    var intake: Intake.Held?
 
     struct Direct: Codable, Hashable {
         let partSize: Int64

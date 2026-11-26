@@ -767,4 +767,10 @@ export const MIGRATIONS: string[] = [
    UPDATE libraries SET settings = json_set(settings, '$.proxySince', CAST(strftime('%s', 'now') AS INTEGER) * 1000) WHERE json_extract(settings, '$.proxy') = 1;`,  // a file to blur that came from a phone or a browser (held.ts): 1 while the server holds its bytes (library/held/<version
   // id>) for the main computer and its blur; null once it is blurred or decided, and on every other version
   `ALTER TABLE asset_versions ADD COLUMN held INTEGER;`,
+  // the version an upload became once it is in the library (a file the library had already: that clip's current version),
+  // written with its 'done': a chat's ask that waits on the upload reads it, after a restart too (assistant.ts addsNow)
+  // and a chat reply that waited for its message's files has started (assistant.ts pumpOnce): the row is the claim, made
+  // by the one server process that starts it
+  `ALTER TABLE uploads ADD COLUMN version_id TEXT;
+  CREATE TABLE chat_starts (reply TEXT PRIMARY KEY, at INTEGER NOT NULL);`,
 ];

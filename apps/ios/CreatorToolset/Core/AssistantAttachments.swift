@@ -84,12 +84,14 @@ enum AssistantUpload {
         let parts: [Int]
     }
 
-    /// A message's videos, stamped with its chat's server and workspace (`api`) as it is sent.
-    static func stamped(_ videos: [QueuedMessage.Video]?, api: ToolsetAPI?) -> [QueuedMessage.Video]? {
+    /// A message's videos, stamped with its chat's server and workspace (`api`) as it is sent, and with the road
+    /// they take: `add`, into that workspace's Media Library. One stamped before keeps its road.
+    static func stamped(_ videos: [QueuedMessage.Video]?, api: ToolsetAPI?, add: Bool = false) -> [QueuedMessage.Video]? {
         videos?.map { video in
             var video = video
             video.server = api?.key ?? api?.server.absoluteString
             video.workspace = api?.workspace
+            if video.file == nil { video.add = add ? true : nil }
             return video
         }
     }
@@ -286,8 +288,11 @@ extension QueuedMessage.Video {
         self.init(name: picked.url.lastPathComponent, copy: picked.url.deletingLastPathComponent().lastPathComponent)
     }
 
-    /// Its copy on the phone, found again by name.
+    /// Its copy on the phone, found again by name. A Media Library add's copy is its upload's once that began.
     var url: URL {
+        if add == true, let id = UUID(uuidString: id), FileManager.default.fileExists(atPath: AppFiles.upload(id).path) {
+            return AppFiles.upload(id)
+        }
         let url = AssistantPickedVideo.folder.appendingPathComponent(copy, isDirectory: true).appendingPathComponent(name)
         let old = AssistantPickedVideo.before.appendingPathComponent(copy, isDirectory: true).appendingPathComponent(name)
         return !FileManager.default.fileExists(atPath: url.path) && FileManager.default.fileExists(atPath: old.path) ? old : url
@@ -308,10 +313,18 @@ extension QueuedMessage.Video {
         pending = nil
     }
 
-    /// The video is not wanted any more: its copy goes, and so do its parts still on their way.
+    /// The video is not wanted any more: its copy goes, and so do its parts still on their way. A Media Library add
+    /// that is not in yet is taken off the uploads; one that is in stays in the library.
     func discard() {
-        AssistantPickedVideo(url: url).discard()
-        if let file { Task { @MainActor in AssistantTransfers.shared.cancel(file) } }
+        // by its own folder, never by `url`: an add's copy is the upload's
+        for folder in [AssistantPickedVideo.folder, AssistantPickedVideo.before] {
+            try? FileManager.default.removeItem(at: folder.appendingPathComponent(copy, isDirectory: true))
+        }
+        if add == true {
+            Task { @MainActor in AssistantAdd.cancel(self) }
+        } else if let file {
+            Task { @MainActor in AssistantTransfers.shared.cancel(file) }
+        }
     }
 }
 
@@ -377,10 +390,29 @@ final class AssistantDraft: ObservableObject {
                 }
                 // a second pick may have filled the box while this one was read
                 guard pictures.count < Self.maxPictures else { dropped = true; continue }
-                pictures.append(.init(name: "Photo \(pictures.count + 1).jpg", jpeg: jpeg))
+                let ext = item.supportedContentTypes.first?.preferredFilenameExtension ?? "jpg"
+                pictures.append(.init(name: "Photo \(pictures.count + 1).jpg", jpeg: jpeg, copy: Self.keep(data, ext: ext, n: pictures.count + 1)))
             }
         }
         if dropped { notice = "Up to \(Self.maxPictures) pictures and \(Self.maxVideos) videos per message" }
+    }
+
+    /// A picked photo as it is (not the JPEG the reply reads), in a folder of its own until Send, when it goes into the
+    /// Media Library: the folder's name; nil when it could not be written.
+    static func keep(_ data: Data, ext: String, n: Int, now: Date = Date()) -> String? {
+        let own = UUID().uuidString
+        let folder = AssistantPickedVideo.folder.appendingPathComponent(own, isDirectory: true)
+        let stamp = DateFormatter()
+        stamp.locale = Locale(identifier: "en_US_POSIX")
+        stamp.dateFormat = "yyyy-MM-dd HH.mm.ss"
+        do {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try data.write(to: folder.appendingPathComponent("Photo \(stamp.string(from: now)) \(n).\(ext)"))
+            return own
+        } catch {
+            try? FileManager.default.removeItem(at: folder)
+            return nil
+        }
     }
 
     /// A video was picked: it stands in the box until Photos hands it over. Answers its id.
@@ -437,6 +469,9 @@ final class AssistantDraft: ObservableObject {
     }
 
     func remove(picture id: String) {
+        if let copy = pictures.first(where: { $0.id == id })?.copy {
+            try? FileManager.default.removeItem(at: AssistantPickedVideo.folder.appendingPathComponent(copy, isDirectory: true))
+        }
         pictures.removeAll { $0.id == id }
     }
 
