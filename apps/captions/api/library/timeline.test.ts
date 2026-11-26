@@ -586,6 +586,19 @@ describe("Antigravity", () => {
     }
   });
 
+  it("three videos at once on Antigravity: the fourth waits, however many a Gemini key may run", async () => {
+    const vs: { v: string; file: string }[] = [];
+    for (const n of ["agy-1", "agy-2", "agy-3", "agy-4"]) vs.push(await seed(n));
+    withAntigravity();
+    const answers: (() => void)[] = [];
+    vi.mocked(completeWithFallback).mockImplementation((_s, _u, _c, parse) => new Promise((go) => answers.push(() => go(parse(JSON.stringify({ events: [{ start: "0:01", end: "0:04", what: "a jump" }] }))))));
+    const runs = vs.map(({ v, file }) => watchAfter(libraryDb(), v, async () => file, "local"));
+    expect(vs.map(({ v }) => watching.has(v))).toEqual([true, true, true, false]);
+    while (answers.length < 3) await new Promise((go) => setTimeout(go, 10));
+    for (const go of answers) go();
+    await Promise.all(runs);
+  });
+
   it("a key two people share: one person's pick moves only their own waiting videos", async () => {
     const { creditWaitsChosen } = await import("./timeline");
     const { v: mine } = await seed("credit-mine");

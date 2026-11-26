@@ -67,8 +67,10 @@ const BUSY = [429, 500, 503];
 const RETRIES = 2;
 const CALL_MS = 30 * 60_000;
 export const watchTiming = { backoffMs: 60_000, post: longPost };
-/** Watches running now, by version, at most WATCHES_AT_ONCE (watchAfter). */
+/** Watches running now, by version (watchAfter): at most WATCHES_AT_ONCE on Gemini, ANTIGRAVITY_AT_ONCE on Antigravity. */
 export const watching = new Map<string, Promise<void>>();
+/** The ones of `watching` on Antigravity, counted apart so a Gemini backlog never holds them up. */
+const onAgy = new Set<string>();
 /**
  * Keys whose quota ran out (Gemini's 429 with a wait longer than ours) or whose prepaid credit did (CREDIT_GONE, until the
  * next try RETRY_MS later), until when and Gemini's words: no call is made on one before then, not the next part's, not
@@ -86,8 +88,9 @@ const parkedOf = (key: string) => {
  */
 const WATCHES_AT_ONCE = 16;
 const ANTIGRAVITY_AT_ONCE = 3;
-const watchesAtOnce = (db: DatabaseSync, libraryId: string, actor: string | null): number =>
-  libraryWatchModel(db, libraryId) === "antigravity" || onAntigravity(actor) ? ANTIGRAVITY_AT_ONCE : WATCHES_AT_ONCE;
+const agyHere = (db: DatabaseSync, libraryId: string, actor: string | null): boolean => libraryWatchModel(db, libraryId) === "antigravity" || onAntigravity(actor);
+/** No room for another watch on the road this library's watch takes. */
+const watchesFull = (agy: boolean): boolean => (agy ? onAgy.size >= ANTIGRAVITY_AT_ONCE : watching.size - onAgy.size >= WATCHES_AT_ONCE);
 /** Parts of one video asked at once. */
 const PARTS_AT_ONCE = 3;
 /** A watch that failed is tried again this long after. */
@@ -196,10 +199,7 @@ export function creditWaitsChosen(db: DatabaseSync, username: string, choice: Cr
     )
     .all(`${CREDIT_GONE}%`, username) as { v: string; lib: string }[];
   if (choice === "antigravity") {
-    for (const r of rows) {
-      db.prepare("UPDATE timelines SET at = 0 WHERE version_id = ?").run(r.v);
-      swept.delete(r.v);
-    }
+    for (const r of rows) askSoon(db, r.v);
     return [];
   }
   const libs = [...new Set(rows.map((r) => r.lib))].filter((lib) => libraryRole(username, lib) === "owner");
@@ -690,25 +690,35 @@ export async function watchVersion(
 
 /**
  * After a look: the timeline of `versionId` when it wants one (wantsWatch), from the file `src` gives. It runs beside
- * the look lane, at most watchesAtOnce at a time (one more waits for the sweep, sweepWatch; a copy a Mac sent, `sent`,
+ * the look lane, at most WATCHES_AT_ONCE on Gemini and ANTIGRAVITY_AT_ONCE on Antigravity at a time (one more waits for the sweep, sweepWatch; a copy a Mac sent, `sent`,
  * is watched anyway: asked for again, the Mac would read the whole file again): the look's job is done when this starts. `src` is asked at once; the promise ends with the watch. A failure is kept on the version (tried
  * again RETRY_MS later) and never thrown. New words: its search by meaning is made again.
  * ponytail: a watch in flight when the server restarts is lost and asked again by the sweep, paid twice
  */
 export function watchAfter(db: DatabaseSync, versionId: string, src: () => Promise<string>, actor: string | null, sent = false): Promise<void> {
   const lib = (db.prepare("SELECT a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(versionId) as { library_id: string } | undefined)?.library_id;
-  if (!actor || !lib || watching.has(versionId) || (!sent && !askedWatch.has(versionId) && watching.size >= watchesAtOnce(db, lib, actor)) || !wantsWatch(db, versionId, actor)) {
+  const agy = !!actor && !!lib && agyHere(db, lib, actor);
+  if (!actor || !lib || watching.has(versionId) || (!sent && !askedWatch.has(versionId) && watchesFull(agy)) || !wantsWatch(db, versionId, actor)) {
     if (!watching.has(versionId)) askedWatch.delete(versionId); // an ask this look cannot answer is not kept forever
     return Promise.resolve();
   }
+  if (agy) onAgy.add(versionId);
   const run = (async () => {
     try {
       const file = await src();
-      // the key's credit ran out on this watch and its owner picked Antigravity until then: watched there at once
+      // the key's credit ran out on this watch and its owner picked Antigravity until then: watched there at once while
+      // Antigravity has room, else the sweep asks it again as soon as it has (askSoon)
       const r = await watchVersion(db, versionId, file, actor, sent).catch((e: unknown) => {
-        if (e instanceof Error && e.message.startsWith(CREDIT_GONE) && onAntigravity(actor)) return watchVersion(db, versionId, file, actor, sent);
-        throw e;
+        if (!(e instanceof Error && e.message.startsWith(CREDIT_GONE) && onAntigravity(actor))) throw e;
+        if (watchesFull(true)) {
+          storeTimeline(db, versionId, { error: e.message });
+          askSoon(db, versionId);
+          return null;
+        }
+        onAgy.add(versionId);
+        return watchVersion(db, versionId, file, actor, sent);
       });
+      if (!r) return;
       console.log(`[library] timeline of ${versionId}: ${r.events} events, $${r.usd.toFixed(4)}, ${Math.round(r.ms / 1000)} s`);
     } catch (e) {
       storeTimeline(db, versionId, { error: e instanceof Error ? e.message : String(e) });
@@ -718,6 +728,7 @@ export function watchAfter(db: DatabaseSync, versionId: string, src: () => Promi
     if (librarySetting(lib, "embed") && canEmbed(actor)) enqueueJob(db, lib, versionId, "embed", actor, true);
   })().finally(() => {
     watching.delete(versionId);
+    onAgy.delete(versionId);
     askedWatch.delete(versionId);
   });
   watching.set(versionId, run);
@@ -726,6 +737,11 @@ export function watchAfter(db: DatabaseSync, versionId: string, src: () => Promi
 
 /** When the sweep last queued a version (ms): it looks again RETRY_MS later, or at once after a press of Make for the missing. */
 const swept = new Map<string, number>();
+/** A failed watch the sweep asks again as soon as there is room, not RETRY_MS later. */
+function askSoon(db: DatabaseSync, versionId: string): void {
+  db.prepare("UPDATE timelines SET at = 0 WHERE version_id = ?").run(versionId);
+  swept.delete(versionId);
+}
 
 /**
  * Timelines as a background index: the next video whose look is done that wants a timeline (Timelines switched on, or a
@@ -735,7 +751,7 @@ const swept = new Map<string, number>();
  * SINCE), or one Make for the missing covers (PRESSED). True when it queued one.
  */
 export function sweepWatch(db: DatabaseSync, queueLook: (versionId: string, actor: string) => boolean, now = Date.now()): boolean {
-  if (watching.size >= WATCHES_AT_ONCE) return false;
+  if (watchesFull(false) && watchesFull(true)) return false;
   const rows = db
     .prepare(
       `SELECT v.id, v.created_by AS actor, a.library_id AS lib, ${PRESSED_AT} AS pressed FROM assets a JOIN asset_versions v ON v.id = a.current_version_id
@@ -752,7 +768,7 @@ export function sweepWatch(db: DatabaseSync, queueLook: (versionId: string, acto
     // a failed watch waits RETRY_MS, unless Make for the missing was pressed since (What's made counts it queued then)
     if ((at !== undefined && at + RETRY_MS > now && r.pressed <= at) || watching.has(r.id)) continue;
     // no key or Antigravity for its uploader yet: passed over, not set aside, so a key saved later starts it on the next sweep
-    if (!canWatch(db, r.lib, r.actor) || watching.size >= watchesAtOnce(db, r.lib, r.actor)) continue;
+    if (!canWatch(db, r.lib, r.actor) || watchesFull(agyHere(db, r.lib, r.actor))) continue;
     swept.set(r.id, now);
     if (queueLook(r.id, r.actor)) return true;
   }
