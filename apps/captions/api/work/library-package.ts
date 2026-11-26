@@ -35,7 +35,8 @@ import { mayLeave, mayReceive, provesProxies, proxyTooBig, refuse, REFUSED_PROOF
 import { recordDerived, type DerivedFile } from "../library/derived";
 import { canEmbed } from "../library/embed";
 import { FRAMES } from "../library/describe";
-import { claimJob, enqueueJob, extendLease, finishJob, NOT_TRASHED, parkJob, type JobRow } from "../library/jobs";
+import { NEEDS_DISK } from "./cache";
+import { claimJob, defer, enqueueJob, extendLease, finishJob, NOT_TRASHED, parkJob, type JobRow } from "../library/jobs";
 import { lookHeldOn, lookReach, type PlaceRow } from "../library/mac-look";
 import { wakePictures } from "../library/pictures";
 import type { ProbeSummary } from "../library/media/probe";
@@ -186,6 +187,10 @@ export function libraryRank(d: Device, job: Pick<JobRow, "kind" | "actor">, r: L
   const at = fileFor(where(r), d.id, folders, isThisMachine);
   if (at && "path" in at) return 3;
   if (job.kind === "send") return 0;
+  // where the server keeps originals and no proxy (Originals alone, Blurred alone), the proxy of a file that came from a
+  // computer is that computer's own to make and keep, from the file it has (on-mac.ts queues it). Never another one's,
+  // which would download the whole original and keep a proxy the first never sees
+  if (job.kind === "proxy" && (r.mac_device || r.from_device) && keptBeside(versionUpload(r.id))) return 0;
   // a probe reads the original's own header, never its proxy's
   if (job.kind !== "proxy" && job.kind !== "probe" && r.proxy) return 2;
   // the original only for the proxy, or a kind with no proxy to read (and none on its way)
@@ -403,6 +408,8 @@ function waitsForWords(job: JobRow): boolean {
 
 /** A proxy a computer makes stays in its cache, never sent, where the server hosts no proxies (Upload off, Originals only). */
 export const keepsProxy = (upload: LibraryUpload | null | undefined): boolean => !hostsProxies(upload);
+/** The server takes the original and no proxy of it (Originals alone; under Blur faces, Blurred alone): its computer keeps the proxy beside the file it sent. */
+const keptBeside = (upload: LibraryUpload | null | undefined): boolean => hostsOriginals(upload) && !hostsProxies(upload);
 
 function packageOf(job: JobRow, r: LibRow, d: Device, folders: ReturnType<typeof foldersOf>): LibraryPackage {
   const at = fileFor(where(r), d.id, folders, isThisMachine);
@@ -456,6 +463,10 @@ function packageOf(job: JobRow, r: LibRow, d: Device, folders: ReturnType<typeof
  */
 export function computerTakesLibrary(job: JobRow): boolean {
   if (job.kind === "send") return true;
+  // a proxy a computer keeps of its own file waits for that computer, as a send does: this server would take the job
+  // and end it with no proxy made (it keeps none here, library/worker.ts)
+  const mine = job.kind === "proxy" ? rowOf(job.version_id) : undefined;
+  if (mine && (mine.mac_device || mine.from_device) && keptBeside(versionUpload(mine.id))) return true;
   if (!job.actor || !LIBRARY_ON_COMPUTER.includes(job.kind)) return false;
   const off = offOf(job.actor);
   const own = listDevices((x) => x.owner === job.actor && isOnline(x.id) && takesLibrary(x) && !off.has(x.id));
@@ -801,5 +812,14 @@ libWorkApp.post("/:id/fail", async (c) => {
   // handed back as newer than the worker reads: its package version is kept as too old, so no library package goes to it
   // (nor fails again) until it claims with a newer one (work/routes.ts)
   if (b?.update === true && d.work) setDeviceWork(d.id, { ...d.work, tooOld: d.work.v });
-  return c.json({ ok: failLibrary(job, typeof b?.error === "string" && b.error ? b.error.slice(0, 500) : "Your computer could not run this job") });
+  const error = typeof b?.error === "string" && b.error ? b.error.slice(0, 500) : "Your computer could not run this job";
+  // its Download location's disk is not connected (it went since the claim, the footage is on that same disk, or a Mac
+  // app the server could not tell of): a wait, never a failed try. The job comes back in ten minutes with its try given
+  // back, and three such answers no longer fail the clip for good
+  if (error.includes(NEEDS_DISK)) {
+    defer(libraryDb(), job.id, 600);
+    libraryChanged(job.library_id);
+    return c.json({ ok: true });
+  }
+  return c.json({ ok: failLibrary(job, error) });
 });

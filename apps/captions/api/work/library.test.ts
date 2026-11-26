@@ -589,6 +589,13 @@ describe("G4: a lease follows a transfer's progress, and a box short of disk or 
     expect(work().tooOld).toBeUndefined();
     expect(work().libraryAt).toBe(Date.now());
 
+    // a job handed back for its Download location's disk waits: no try is counted, the clip is not failed, and it comes back later
+    const waits = heldJob(box.device.id, "cd");
+    expect(await (await post(`/api/devices/relay/work/lib/${waits}/fail`, { error: "Needs the Download location's disk" }, { authorization: `Bearer ${box.token}`, "x-ct-claim": "cd" })).json()).toEqual({ ok: true });
+    const after = d.prepare("SELECT j.state, j.attempts, j.run_after, v.state AS clip FROM jobs j JOIN asset_versions v ON v.id = j.version_id WHERE j.id = ?").get(waits) as { state: string; attempts: number; run_after: number; clip: string };
+    expect(after).toMatchObject({ state: "queued", attempts: 0, clip: "ready" });
+    expect(after.run_after).toBeGreaterThan(Date.now());
+
     // a worker that also takes editor steps: stamped (its steps still come) but no library package, until it is newer
     const other = pairDevice("tiny", "Tiny Laptop");
     const v = "ver_g4_mine";

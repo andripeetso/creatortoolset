@@ -188,7 +188,7 @@ workApp.post("/claim", async (c) => {
     if (pics) return answer({ pkg: null, pics });
     const task = hold || libraryOnly ? null : claimTask(deviceOf(d.id)!);
     if (task) return answer({ pkg: null, task });
-    if (Date.now() >= end || gone || c.req.raw.signal.aborted || deviceOf(d.id)?.work?.empty) return answer({ pkg: null });
+    if (Date.now() >= end || gone || c.req.raw.signal.aborted || (deviceOf(d.id)?.work?.empty && !deviceOf(d.id)?.work?.cache?.away)) return answer({ pkg: null });
     let off = () => {};
     await new Promise<void>((r) => {
       setTimeout(r, Math.min(CLAIM_POLL.everyMs, Math.max(0, end - Date.now())));

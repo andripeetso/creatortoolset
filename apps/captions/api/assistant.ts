@@ -1554,7 +1554,7 @@ function attend(username: string, reply: string, kind: Attention["kind"], body: 
  * video never arrived, the file it was to send isn't in the window any more (gone), or a Media Library add of its message
  * is not in the library (removed: its upload failed or was dropped, or its clip was deleted). The next one may start.
  */
-function endHeld(username: string, m: AssistantMessage, how: "stopped" | "lost" | "gone" | "removed", removed: string[] = []): void {
+function endHeld(username: string, m: AssistantMessage, how: "stopped" | "lost" | "gone" | "removed" | "stalled", removed: string[] = []): void {
   const conv = load(username);
   const h = conv.held?.[m.id];
   const asked = everyChat(conv).flat().find((x) => x.id === h?.ask);
@@ -1565,6 +1565,8 @@ function endHeld(username: string, m: AssistantMessage, how: "stopped" | "lost" 
   const text =
     how === "stopped"
       ? "*Stopped.*"
+      : how === "stalled"
+      ? "This message got no reply: send it again."
       : how === "removed"
       ? `${removed.map((n) => `"${n}"`).join(" and ")} ${removed.length > 1 ? "are" : "is"} not in the Media Library, so this message got no reply: add ${removed.length > 1 ? "them" : "it"} again and send the message again.`
       : how === "gone"
@@ -1572,7 +1574,7 @@ function endHeld(username: string, m: AssistantMessage, how: "stopped" | "lost" 
         : m.send
           ? `${lost[0]} was not uploaded: drop it in the chat again.`
           : `${lost.length > 1 ? `${lost.join(" and ")} were not uploaded` : `${lost[0] ?? "A video"} was not uploaded`}, so this message got no reply: add ${lost.length > 1 ? "them" : "it"} again and send the message again.`;
-  Object.assign(m, { status: how === "lost" || how === "removed" ? "error" : "done", text, wait: undefined });
+  Object.assign(m, { status: how === "lost" || how === "removed" || how === "stalled" ? "error" : "done", text, wait: undefined });
   sayLater(username, m.id);
   save(username);
   tell(username);
@@ -1606,6 +1608,9 @@ onFileIn.push((username, file) => {
 
 /** How often a turn waiting on its adds looks again (a test shortens it). A finished upload wakes it at once (onUploadDone). */
 export const ADDS_POLL = { ms: 15_000 };
+
+/** How long a reply's start may stay claimed and not begun before it counts as lost: the process that claimed it stopped (a test shortens it). */
+export const CLAIM_STALE = { ms: 60_000 };
 
 /** One add now: its upload still going, gone (the upload failed or was dropped, or its clip is deleted or in the trash), or its clip with how far it is. */
 type AddNow = "uploading" | "gone" | Intake;
@@ -1646,6 +1651,8 @@ function addsWait(adds: AssistantAdd[], now: Map<string, AddNow>): AssistantMess
   const held = (steps as Intake[]).filter((x) => x.step === "held");
   if (held.length) return { for: "files", text: held.some((x) => x.waiting) ? LIBRARY_WORDS.held : "Copying to the main computer" };
   const done = (steps as Intake[]).filter((x) => x.step === "done").length;
+  // on the main computer with no blur running and one that can't start now: it waits for that computer, it is not blurring
+  if (done < adds.length && !(steps as Intake[]).some((x) => x.step === "blurring") && (steps as Intake[]).some((x) => x.step === "computer" && x.waiting)) return { for: "files", text: LIBRARY_WORDS.held };
   return done < adds.length ? { for: "files", text: `Blurring${of(done + 1)}` } : undefined;
 }
 
@@ -1821,9 +1828,18 @@ async function pumpOnce(username: string): Promise<void> {
     // its adds are ready, and it starts now, in one server process only: the row is the claim, so a look in a second
     // process (a deploy's swap) or a late answer finds it taken. The clips they became are the message's, as ones dragged
     // in from the library (each one's current version: the blurred copy where there is one)
-    // shortcut: a process that stops between this row and its save leaves the reply waiting; end it there if that ever bites
     if (asked?.adds?.length) {
       if (!libraryDb().prepare("INSERT OR IGNORE INTO chat_starts (reply, at) VALUES (?, ?)").run(id, t).changes) {
+        // taken: another process is starting it now, or the one that took it stopped before it saved, and the reply
+        // still waits here. A claim over a minute old on a reply not started is the second: it ends, saying to send again
+        // (never started a second time: its first start may have reached the AI)
+        const at = (libraryDb().prepare("SELECT at FROM chat_starts WHERE reply = ?").get(id) as { at: number } | undefined)?.at ?? t;
+        if (t - at > CLAIM_STALE.ms) {
+          endHeld(username, m, "stalled");
+          changed = true;
+          continue;
+        }
+        look = Math.min(look, CLAIM_STALE.ms);
         stalled.add(list);
         continue;
       }

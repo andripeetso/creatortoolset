@@ -22,7 +22,7 @@ built app. Feature notes are in `docs/features/`; the design notes for each tool
 
 ## Run it locally
 
-Requirements: Node.js 22 or newer, pnpm 10 (from the repository root, `corepack enable`), and `ffmpeg` and `zip`
+Requirements: Node.js 22 or newer, pnpm 10 (from the repository root, `corepack enable`), and `ffmpeg` (6.1 or newer) and `zip`
 on your PATH.
 
 ```sh

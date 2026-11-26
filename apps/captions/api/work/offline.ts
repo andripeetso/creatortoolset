@@ -173,7 +173,9 @@ export async function claimExtras(deviceId: string, kept?: string[], cached?: st
   for (const id of await dropFor(d.owner, cached ?? [])) if (!(await someAsync(slots, (s) => s.keeps(d.owner, id)))) gone.push(id);
   const make = (await Promise.all(slots.map((s) => s.make(d).catch(() => [])))).flat().filter((m) => !cached?.includes(m.id));
   const extras = { ...(list.length || kept?.length ? { offline: list } : {}), ...(gone.length ? { drop: gone } : {}), ...(make.length ? { make } : {}) };
-  if (!d.work?.empty) return extras;
+  // Empty waits while that computer's Download location's disk is away: told now, its worker could clear nothing
+  // (work/cache.ts emptyCache) and the full cache would be back with the disk
+  if (!d.work?.empty || d.work.cache?.away) return extras;
   const { empty: _, ...work } = d.work;
   setDeviceWork(d.id, work);
   return { empty: true, ...extras };

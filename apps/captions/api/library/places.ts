@@ -10,6 +10,7 @@ import { libraryChanged } from "./access";
 import { libraryDb } from "./db";
 import { enqueueJob } from "./jobs";
 import { needsProxy } from "./media/proxy";
+import { mayLeave } from "./upload-gate";
 import type { ProbeSummary } from "./media/probe";
 import { mergeSamePath } from "./place-rows";
 import { readerOf } from "./reader";
@@ -434,6 +435,8 @@ placesApp.post("/:id/proxies", async (c) => {
     if (!p?.width || !p.height) continue;
     // a file indexed on a Mac carries no codec (on-mac.ts): its size alone says it is heavy
     if (!(p.vcodec === "mac" ? Math.min(p.width, p.height) > 1080 : needsProxy(p))) continue;
+    // never of an original waiting for its blur: its proxy is made from its blurred copy (docs/media-library-proxies-prd.md §1)
+    if (!mayLeave(libraryId, { versionId: v.id }).ok) continue;
     enqueueJob(d, libraryId, v.id, "proxy", user.username, true);
     queued.push(v.id);
   }

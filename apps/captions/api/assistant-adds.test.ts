@@ -66,6 +66,7 @@ async function boot() {
   const app = (await import("./boot")).default;
   const assistant = await import("./assistant");
   assistant.ADDS_POLL.ms = 30; // a waiting ask looks again this often
+  assistant.CLAIM_STALE.ms = 500; // and a start claimed and not begun counts as lost this soon
   assistant.resumeFromDisk(); // what boot.ts does before it listens (not under tests)
   const server = {
     app,
@@ -174,7 +175,7 @@ describe("a message sent from the phone with files that are not ready", () => {
     await vi.waitFor(async () => expect(waits(await now.reply())).toEqual({ status: "thinking", wait: "Waiting for the main computer" }));
     await landed(second, one.versionId!);
     await landed(second, two.versionId!);
-    blur.jobs = [{ versionId: one.versionId!, running: true }];
+    blur.jobs = [{ versionId: one.versionId!, running: true }, { versionId: two.versionId! }]; // the second waits its turn in Face Blur's queue
     await vi.waitFor(async () => expect(waits(await now.reply())).toEqual({ status: "thinking", wait: "Blurring 1 of 2" }));
     await now.keepAsFilmed(one.assetId!);
     await vi.waitFor(async () => expect(waits(await now.reply())).toEqual({ status: "thinking", wait: "Blurring 2 of 2" }));
@@ -305,16 +306,21 @@ describe("a message sent from the phone with files that are not ready", () => {
     await me.send("Edit this", [up]);
     const clip = await me.finish(up, "a clip sent during a deploy");
     await landed(s, clip.versionId!);
-    await vi.waitFor(async () => expect(waits(await me.reply())).toEqual({ status: "thinking", wait: "Blurring" }));
+    // on the main computer with no blur running or able to start: it says it waits for that computer, not that it is blurring
+    await vi.waitFor(async () => expect(waits(await me.reply())).toEqual({ status: "thinking", wait: "Waiting for the main computer" }));
     // the other process took it: its claim is in the database both read
     s.db.prepare("INSERT INTO chat_starts (reply, at) VALUES (?, ?)").run((await me.reply()).id, Date.now());
     const claim = me.claim();
     await me.keepAsFilmed(clip.assetId!);
     await tick(300); // many looks with the file ready
     expect((await me.messages()).at(-2)!.clips).toBeUndefined();
+    // the process that took it stopped before it saved: once its claim is old and the reply still waits here, the reply
+    // ends saying to send again, and is never started a second time (its first start may have reached the AI)
+    s.db.prepare("UPDATE chat_starts SET at = ? WHERE reply = ?").run(Date.now() - 2 * 60_000, (await me.reply()).id);
+    await vi.waitFor(async () => expect(await me.reply()).toMatchObject({ status: "error", text: "This message got no reply: send it again." }), 4000);
+    expect((await me.messages()).at(-2)!.clips).toBeUndefined();
     s.leave(); // a poll with no reply to write ends
     expect(await claim).toBeNull();
-    await me.stop();
     await me.newChat();
   });
 

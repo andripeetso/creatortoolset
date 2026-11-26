@@ -346,6 +346,31 @@ describe("G1 taker gap and reach (tests 1–9, 9b)", () => {
     expect((await pollWait(localMac.token, { blobs: true, work: 1 })).status).toBe(204);
   });
 
+  it("a proxy a computer keeps of its own file (Upload sends originals alone) stays that computer's: no other computer downloads the original to make one, and the server never takes it", async () => {
+    libraryDb().prepare("INSERT OR IGNORE INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES ('lib_keeps', 'tiny', 'Keeps', 'local', ?, 0)").run(JSON.stringify({ upload: "originals", proxy: true }));
+    const { libraryRank, keepsProxy, rowOf } = await import("./library-package");
+    const { versionUpload } = await import("../library/db");
+    const other = pairDevice("tiny", "Other Mac", "0.28.0", "hw-other-keeps");
+    await report(other.token, MAC_MACHINE);
+    setDeviceWork(other.device.id, { v: WORK_V, steps: [], at: Date.now(), libraryAt: Date.now() });
+    const anyone = { off: [], originals: {}, libraries: {} } as never;
+    // sent from a Mac, its original on the server since: the proxy its Mac keeps is asked for after the send, or before
+    const own = addVersion({ lib: "lib_keeps", fromPath: "/Users/tiny/Shoots/own.mov", fromDevice: "the-mac-that-has-it" });
+    const job = enqueue("lib_keeps", own, "proxy");
+    expect([versionUpload(own), keepsProxy(versionUpload(own))]).toEqual(["originals", true]);
+    expect(libraryRank(deviceOf(other.device.id)!, job, rowOf(own)!, [], anyone)).toBe(0);
+    // with its own Mac away the job waits for it: taken here it would end with no proxy made
+    expect(computerTakesLibrary(job)).toBe(true);
+    // a file only the server holds (a browser's upload) is still any computer's to download: nothing changed for it
+    const served = addVersion({ lib: "lib_keeps" });
+    const before = libraryRank(deviceOf(other.device.id)!, enqueue("lib_keeps", served, "proxy"), rowOf(served)!, [], anyone);
+    libraryDb().prepare("UPDATE asset_versions SET from_device = 'the-mac-that-has-it' WHERE id = ?").run(served);
+    expect(before).toBeGreaterThan(0); // else the zero above would say nothing
+    expect(libraryRank(deviceOf(other.device.id)!, job, rowOf(served)!, [], anyone)).toBe(0);
+    libraryDb().prepare("DELETE FROM jobs WHERE version_id IN (?, ?)").run(own, served);
+    await revokeDevice(other.device.id);
+  });
+
   it("5. residue: a row stored as { v: 1, library: true } with no at is not a taker, computerTakesLibrary does not leave its server-held jobs, startsForLibrary is true, and its claim makes it a taker", async () => {
     const mac = pairDevice("tiny", "Mac Studio", "0.17.6", "hw-mac-5");
     await report(mac.token, MAC_MACHINE);

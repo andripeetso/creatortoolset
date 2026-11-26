@@ -8,6 +8,7 @@ import { projectOf } from "../lib/project-of";
 import { announce } from "../lib/sync";
 import { libraryDb } from "../library/db";
 import { defer, enqueueJob, extendLease, finishJob, heldBy, type JobRow, parkJob, requeueExpired } from "../library/jobs";
+import { NEEDS_DISK } from "../work/cache";
 import { NeedsKey } from "../library/transcribe";
 import type { SessionUser } from "../users";
 import { Waiting } from "./analyze";
@@ -286,6 +287,9 @@ export function failForDevice(device: string, id: number, why: string): boolean 
   db.prepare("UPDATE edit_jobs SET device = NULL WHERE id = ?").run(id);
   // a card script that threw would throw again: no retry, the card step asks the AI to fix it (cards/step.ts)
   if (job.kind === CARDS_DRAW_KIND && scriptThrew(why)) return fail(db, job, why.slice(0, 500)), true;
+  // its Download location's disk is not connected, and the step needed a proxy there: a wait, never a failed try (it
+  // comes back in ten minutes with the try given back, where three such answers failed the step for good)
+  if (why.includes(NEEDS_DISK)) return defer(db, id, 600, Date.now(), T), moved(job), true;
   finishJob(db, id, false, why.slice(0, 500), Date.now(), T);
   moved(job);
   return true;

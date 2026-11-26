@@ -88,3 +88,18 @@ describe("proxies for the editor", () => {
     expect([keepsProxy("none"), keepsProxy("originals"), keepsProxy("proxies"), keepsProxy("all")]).toEqual([true, true, false, false]);
   });
 });
+
+describe("an opened edit's proxies under Blur faces", () => {
+  it("never asks for a proxy of an original waiting for its blur (it is made from the blurred copy); a clip kept as filmed gets one as any clip", async () => {
+    add("toblur", HEVC_4K);
+    add("asfilmed", HEVC_4K);
+    d.prepare("UPDATE assets SET blur = 'yes' WHERE id = 'a_toblur'").run();
+    d.prepare("UPDATE assets SET blur = 'no' WHERE id = 'a_asfilmed'").run();
+    d.prepare("UPDATE libraries SET settings = json_set(settings, '$.blurFaces', json('true')) WHERE id = 'lib'").run();
+    try {
+      expect((await ask("ana", ["toblur", "asfilmed"])).json.queued).toEqual(["asfilmed"]);
+    } finally {
+      d.prepare("UPDATE libraries SET settings = json_remove(settings, '$.blurFaces') WHERE id = 'lib'").run();
+    }
+  });
+});

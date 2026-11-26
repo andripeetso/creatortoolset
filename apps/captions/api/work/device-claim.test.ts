@@ -261,6 +261,15 @@ describe.skipIf(rootReplaced)("a step that reads video goes to one of the asker'
     expect(row(e, "v1")).toMatchObject({ state: "queued", attempts: 1, error: "Creator Toolset stopped while it ran this step" });
     settle();
   });
+
+  it("a step handed back for the Download location's disk waits: no try is counted, however often", async () => {
+    const e = await newEdit("maker", ["ver_up"]);
+    queue("maker", e, "v1");
+    const id = (await claim(pc.token)).pkg!.job.id;
+    expect(await json(post(pc.token, `/api/devices/relay/work/${id}/fail`, { error: "Needs the Download location's disk" }))).toEqual({ ok: true });
+    expect(row(e, "v1")).toMatchObject({ state: "queued", attempts: 0, device: null });
+    settle();
+  });
 });
 
 describe.skipIf(rootReplaced)("the server's own loop", () => {

@@ -33,6 +33,14 @@ export function worst(levels) {
 export function ffmpegOk(output) {
   return /^ffmpeg version /m.test(output);
 }
+/**
+ * Older than 6.1: no proxy is made with it. The proxy's encode keeps every frame at its own time with flags an older
+ * FFmpeg refuses (api/library/media/proxy.ts). A build with no number in its name (a nightly) is taken as new enough.
+ */
+export function ffmpegOld(output) {
+  const m = /^ffmpeg version n?(\d+)\.(\d+)/m.exec(output);
+  return !!m && (Number(m[1]) < 6 || (Number(m[1]) === 6 && Number(m[2]) < 1));
+}
 
 /** S3 is used only when all four of its settings are present (api/media-store.ts). */
 export function storageState(e) {
@@ -112,7 +120,11 @@ async function checkFfmpeg() {
     if (bin !== "ffmpeg" && !existsSync(bin)) continue;
     try {
       const { stdout } = await run(bin, ["-version"], { timeout: TIMEOUT_MS });
-      if (ffmpegOk(stdout)) return add("ok", "ffmpeg", `${bin}: ${stdout.split("\n")[0].slice(0, 70)}`);
+      // the first one that runs is the one the app uses: too old, it is not passed over for the next
+      if (ffmpegOk(stdout)) {
+        const line = stdout.split("\n")[0].slice(0, 70);
+        return ffmpegOld(stdout) ? add("fail", "ffmpeg", `${bin}: ${line}. Proxies need FFmpeg 6.1 or newer: install one, or set FFMPEG_PATH`) : add("ok", "ffmpeg", `${bin}: ${line}`);
+      }
     } catch {
       // not runnable: try the next place
     }
@@ -194,6 +206,7 @@ function selfTest() {
   assert.equal(worst(["ok", "warn", "fail"]), "fail");
   assert.equal(ffmpegOk("ffmpeg version 7.1.5-static\nbuilt with gcc"), true);
   assert.equal(ffmpegOk("bash: ffmpeg: command not found"), false);
+  assert.deepEqual(["5.1.2-3", "6.0", "6.1.1-3ubuntu5", "7.1.5-static", "n9.0.2", "N-118771-g1234abc"].map((v) => ffmpegOld(`ffmpeg version ${v} Copyright`)), [true, true, false, false, false, false]);
   assert.equal(storageState({}), "local");
   assert.equal(storageState({ OBJECT_STORAGE_ENDPOINT: "https://s3.example", OBJECT_STORAGE_BUCKET: "b" }), "partial");
   assert.equal(storageState({
