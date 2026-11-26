@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { ArrowUp, Check, Loader2, Mic, Square, X } from "lucide-react";
+import { Link } from "react-router";
 import { BARS, useVoiceInput } from "@/lib/voice-input";
 import { tell, useMicMode } from "@/components/settings/ThisMacSection";
 import { cn } from "@/lib/utils";
@@ -37,7 +38,10 @@ export function VoiceStatus({ v }: { v: ChatVoice }) {
         <span className="w-9 shrink-0 text-xs tabular-nums text-muted-foreground">
           {Math.floor(v.voice.seconds / 60)}:{String(v.voice.seconds % 60).padStart(2, "0")}
         </span>
-        <span className="flex h-6 flex-1 items-center justify-end gap-[2px] overflow-hidden" aria-label="Listening">
+        <span className="min-w-0 flex-1 truncate text-sm text-foreground/80" title={v.voice.interim}>
+          {v.voice.interim}
+        </span>
+        <span className="flex h-6 shrink-0 items-center gap-[2px] overflow-hidden" aria-label="Listening">
           {v.voice.bars.map((b, i) => (
             <span
               key={i}
@@ -49,10 +53,17 @@ export function VoiceStatus({ v }: { v: ChatVoice }) {
       </div>
     );
   return (
-    <p className="flex h-8 flex-1 items-center gap-2 text-sm text-muted-foreground" aria-live="polite">
-      <Loader2 className="size-3.5 animate-spin" aria-hidden />
-      {v.voice.progress !== null && v.voice.progress < 1 ? `Loading speech model · ${Math.round(v.voice.progress * 100)}%` : "Transcribing…"}
-    </p>
+    <div className="flex h-8 min-w-0 flex-1 items-center gap-2">
+      <p className="flex min-w-0 flex-1 items-center gap-2 text-sm text-muted-foreground" aria-live="polite">
+        <Loader2 className="size-3.5 shrink-0 animate-spin" aria-hidden />
+        <span className="truncate">
+          {v.voice.progress !== null && v.voice.progress < 1 ? `Loading speech model · ${Math.round(v.voice.progress * 100)}%` : "Transcribing…"}
+        </span>
+      </p>
+      <button type="button" onClick={v.voice.cancel} className={quietBtn} aria-label="Cancel" title="Cancel">
+        <X className="size-4" />
+      </button>
+    </div>
   );
 }
 
@@ -96,12 +107,18 @@ export function MicButton({ v }: { v: ChatVoice }) {
 
 /** A voice error over the box, until dismissed. */
 export function VoiceError({ v }: { v: ChatVoice }) {
-  if (!v.voice.error) return null;
+  const fault = v.voice.error;
+  if (!fault) return null;
   return (
     <p role="alert" className="flex items-center gap-2 px-1 text-xs text-destructive motion-safe:animate-in motion-safe:fade-in">
-      <span className="min-w-0 flex-1 truncate" title={v.voice.error}>
-        {v.voice.error}
+      <span className="min-w-0 flex-1 truncate" title={fault.line}>
+        {fault.line}
       </span>
+      {fault.next && (
+        <Link to={fault.next.to} className="shrink-0 underline underline-offset-2 hover:opacity-80">
+          {fault.next.label}
+        </Link>
+      )}
       <button type="button" onClick={v.voice.clearError} aria-label="Dismiss" className="opacity-70 hover:opacity-100">
         <X className="size-3.5" />
       </button>

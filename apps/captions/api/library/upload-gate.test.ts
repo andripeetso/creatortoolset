@@ -442,6 +442,7 @@ const ROUTES: Record<string, string> = {
   "apps/captions/api/projects.ts": "P3a: POST /, POST /:id/clips and every /:id/clips/:clipId/original route call mayReceive (takesOriginal): a person's upload is taken, a computer's own file (?fromPath=) by the clip's library, none off This Mac without one",
   "apps/captions/api/clips.ts": "OPEN P3d: Video Notes recordings stay on the recorder's computer (decision 19)",
   "apps/captions/api/transcribe.ts": "OPEN P3f: speech for transcription",
+  "apps/captions/api/transcribe-live.ts": "OPEN P3f: the mic's interim words, the audio so far on the engine the mic uses (local only)",
   "apps/captions/api/lib/device-transcribe.ts": "OPEN P3f: the server speech model",
   "apps/captions/api/lib/device-embed.ts": "OPEN P3f: the server's search-by-meaning model",
   "apps/captions/api/assistant-files.ts": "OPEN decision 16: the chat dock sends on Send only; the upload link is reviewed in P2",
