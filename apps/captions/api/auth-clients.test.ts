@@ -207,6 +207,12 @@ describe("a session on /api", () => {
     expect(await (await call("POST", "/api/auth/pairing-links", { address: PHONE, token: t.access_token, body: {} })).json()).toMatchObject({ code: "SCOPE" });
   });
 
+  it("a phone signs itself out: its token opens nothing after", async () => {
+    const t = await pairBearer({ scopes: ["read"] });
+    expect((await call("POST", "/api/auth/clients/sign-out", { address: PHONE, token: t.access_token, body: {} })).status).toBe(200);
+    expect((await call("GET", "/api/auth/session", { address: PHONE, token: t.access_token })).status).toBe(401);
+  });
+
   it("a Standard session can't hand on more than it holds, but can make a Read only link", async () => {
     const t = await pairBearer();
     const r = await call("POST", "/api/auth/pairing-links", { address: PHONE, token: t.access_token, body: { scopes: ["read"] } });

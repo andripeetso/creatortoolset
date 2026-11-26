@@ -249,6 +249,14 @@ authClientsApp.post("/clients/revoke", async (c) => {
   return revokeSession(await idOf(c, "sessionId"), mayFor(who.user)) ? c.json({ ok: true }) : c.json({ error: "Not found" }, 404);
 });
 
+// a phone's Sign out: its own session ends, any scope (a Read only phone may sign itself out too)
+authClientsApp.post("/clients/sign-out", (c) => {
+  const k = callerOf(c);
+  if (k.kind !== "token") return c.json({ error: "Sign in first" }, 401);
+  revokeSession(k.row.id, () => true);
+  return c.json({ ok: true });
+});
+
 authClientsApp.post("/clients/revoke-others", (c) => {
   const who = accessCaller(c);
   if (who instanceof Response) return who;

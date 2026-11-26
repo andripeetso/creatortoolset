@@ -31,9 +31,8 @@ struct ToolsView: View {
                 if FaceBlurView.shows(plugins: plugins.known.plugins, me: access.me) { row("Face Blur", "face.dashed") { FaceBlurView() } }
             }
             Section("Settings") {
-                if let profile = account.profile {
-                    row("Account", "person.crop.circle", value: profile.title) { AccountSettings() }
-                }
+                // always shown: Sign out and Delete account must be found however the phone connected (App Store 5.1.1(v))
+                row("Account", "person.crop.circle", value: account.profile?.title ?? servers.current?.name) { AccountSettings() }
                 row("Computers", "desktopcomputer", value: servers.current?.name) { ServersView() }
                 row("Notifications", "bell") { Form { NotificationsRow() }.navigationTitle("Notifications").navigationBarTitleDisplayMode(.inline) }
                 row("Uploads", "arrow.up.circle", value: wifiOnly ? "Wi-Fi only" : "Any network") { UploadSettings() }
@@ -73,16 +72,28 @@ struct ToolsView: View {
     }
 }
 
-/// The account the phone signed in with, Sign out and Delete account.
+/// The account the phone signed in with, Sign out and Delete account; with no account, its sign-in buttons. The
+/// computer the phone connected to by code or address has its own Sign out.
 private struct AccountSettings: View {
     @ObservedObject private var account = Account.shared
+    @ObservedObject private var connections = Connections.shared
     @Environment(\.dismiss) private var dismiss
     @State private var confirming = false
     @State private var deleting = false
+    @State private var signingOut: ServerEntry?
     @State private var problem: String?
 
     var body: some View {
         Form {
+            if let entry = connections.current, !entry.onAccount {
+                Section {
+                    LabeledContent("Computer", value: entry.label)
+                    Button("Sign out", role: .destructive) { signingOut = entry }
+                }
+            }
+            if account.profile == nil {
+                Section("Creator Toolset account") { AccountSignInButtons(compact: true) }
+            }
             if let profile = account.profile {
                 Section {
                     LabeledContent("Signed in with", value: profile.provider.capitalized)
@@ -112,8 +123,22 @@ private struct AccountSettings: View {
         } message: {
             Text("The account and its sign-ins are deleted from creatortoolset.com; your servers and their files are kept.")
         }
+        .confirmationDialog("Sign out", isPresented: Binding(get: { signingOut != nil }, set: { if !$0 { signingOut = nil } }),
+                            titleVisibility: .visible, presenting: signingOut) { entry in
+            Button("Sign out", role: .destructive) { Task { await signOut(entry) } }
+        } message: { entry in
+            Text("This phone signs out of \(entry.label) and forgets it.")
+        }
         .navigationTitle("Account")
         .navigationBarTitleDisplayMode(.inline)
+    }
+
+    /// The computer ends this phone's sign-in (best effort: an older server or no connection leaves it to Revoke there),
+    /// then the phone forgets it.
+    private func signOut(_ entry: ServerEntry) async {
+        _ = try? await API.connected(entry).send("/api/auth/clients/sign-out", json: [String: String]())
+        connections.remove(entry.serverId)
+        dismiss()
     }
 
     private func delete() async {
