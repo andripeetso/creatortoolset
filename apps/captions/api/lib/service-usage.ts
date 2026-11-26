@@ -114,11 +114,13 @@ export async function serviceLines(since: number, username: string, admin: boole
   return out;
 }
 
-/* ---- a monthly budget per key ---- */
+/* ---- a monthly budget per key, and per workspace on it ---- */
 
 /** Whose key a budget is on: the server's, or one account's own ("own:<username>"). */
 export type Holder = "server" | `own:${string}`;
-type Budgets = Record<string, Partial<Record<ServiceId, number>>>;
+/** a key's budgets: the whole key's, and each workspace's (by id) */
+type Cap = { all?: number; ws?: Record<string, number> };
+type Budgets = Record<string, Partial<Record<ServiceId, Cap>>>;
 const BUDGETS = () => path.join(env.dataDir, "key-budgets.json");
 let budgets: Budgets | null = null;
 
@@ -132,11 +134,20 @@ const allBudgets = (): Budgets => {
   return budgets;
 };
 
-export const budgetOf = (service: ServiceId, holder: Holder): number | null => allBudgets()[holder]?.[service] ?? null;
+const capOf = (service: ServiceId, holder: Holder): Cap => allBudgets()[holder]?.[service] ?? {};
 
-export function setBudget(service: ServiceId, holder: Holder, usd: number | null): void {
-  const mine = Object.fromEntries(Object.entries(allBudgets()[holder] ?? {}).filter(([s]) => s !== service));
-  const next: Budgets = { ...allBudgets(), [holder]: usd === null ? mine : { ...mine, [service]: Math.round(usd * 100) / 100 } };
+/** The key's monthly budget, or with `workspace` that workspace's on it; null = no limit. */
+export const budgetOf = (service: ServiceId, holder: Holder, workspace?: string): number | null =>
+  (workspace ? capOf(service, holder).ws?.[workspace] : capOf(service, holder).all) ?? null;
+
+/** Sets (null: takes off) the key's monthly budget, or with `workspace` that workspace's on it. */
+export function setBudget(service: ServiceId, holder: Holder, usd: number | null, workspace?: string): void {
+  const was = capOf(service, holder);
+  const v = usd === null ? undefined : Math.round(usd * 100) / 100;
+  const ws = Object.fromEntries(Object.entries({ ...was.ws, ...(workspace ? { [workspace]: v } : {}) }).filter(([, x]) => x !== undefined)) as Record<string, number>;
+  const all = workspace ? was.all : v;
+  const cap: Cap = { ...(all !== undefined ? { all } : {}), ...(Object.keys(ws).length ? { ws } : {}) };
+  const next: Budgets = { ...allBudgets(), [holder]: { ...allBudgets()[holder], [service]: cap } };
   mkdirSync(env.dataDir, { recursive: true });
   const tmp = `${BUDGETS()}.tmp-${process.pid}`;
   writeFileSync(tmp, JSON.stringify(next), { mode: 0o600 });
@@ -144,38 +155,50 @@ export function setBudget(service: ServiceId, holder: Holder, usd: number | null
   budgets = next;
 }
 
-const spentCache = new Map<string, number>();
+const spentCache = new Map<string, Map<string, number>>();
 
-/** What `holder`'s key of `service` cost this calendar month (UTC): 0 until the tally is read (it is read on the first ask). */
-export function spentThisMonth(service: ServiceId, holder: Holder, now = Date.now()): number {
+/** What `holder`'s key of `service` cost this calendar month (UTC), by workspace ("" = in none): empty until the tally is read (it is read on the first ask). */
+function spentByWorkspace(service: ServiceId, holder: Holder, now: number): Map<string, number> {
   if (!loaded) {
     void load();
-    return 0;
+    return new Map();
   }
   const month = new Date(now).toISOString().slice(0, 7);
   const id = `${month}\0${service}\0${holder}`;
   const hit = spentCache.get(id);
-  if (hit !== undefined) return hit;
+  if (hit) return hit;
   const user = holder === "server" ? null : holder.slice(4);
-  let usd = 0;
+  const out = new Map<string, number>();
   for (const [hour, cells] of Object.entries(loaded)) {
     if (!hour.startsWith(month)) continue;
     for (const [key, x] of Object.entries(cells)) {
-      const [s, , whose, u] = JSON.parse(key) as [string, string, Whose, string];
-      if (s === service && (user === null ? whose === "server" : whose === "own" && u === user)) usd += x.costUsd;
+      const [s, , whose, u, ws] = JSON.parse(key) as [string, string, Whose, string, string];
+      if (s === service && (user === null ? whose === "server" : whose === "own" && u === user)) out.set(ws, (out.get(ws) ?? 0) + x.costUsd);
     }
   }
-  spentCache.set(id, usd);
-  return usd;
+  spentCache.set(id, out);
+  return out;
+}
+
+/** What the key cost this month, or with `workspace` what it cost in that workspace. */
+export function spentThisMonth(service: ServiceId, holder: Holder, now = Date.now(), workspace?: string): number {
+  const by = spentByWorkspace(service, holder, now);
+  return workspace !== undefined ? (by.get(workspace) ?? 0) : [...by.values()].reduce((a, b) => a + b, 0);
 }
 
 const keyName = (service: ServiceId) => (service === "APIFY_TOKEN" ? "Apify" : (MY_KEYS.find((k) => k.env === service)?.name ?? service));
 
-/** Why a call on this key may not run: it spent its monthly budget. null while it may. */
-export function budgetRefusal(service: ServiceId, holder: Holder, now = Date.now()): string | null {
-  const cap = budgetOf(service, holder);
-  if (cap === null || spentThisMonth(service, holder, now) < cap) return null;
-  return `${keyName(service)} key reached its monthly budget of $${cap}: raise it in Settings → API keys`;
+/**
+ * Why a call on this key may not run: the key spent its monthly budget, or the workspace the call runs in (the request's,
+ * or a background job's: usageWorkspace) spent its budget on this key. null while it may.
+ */
+export function budgetRefusal(service: ServiceId, holder: Holder, now = Date.now(), workspace = usageWorkspace()): string | null {
+  const all = budgetOf(service, holder);
+  if (all !== null && spentThisMonth(service, holder, now) >= all) return `${keyName(service)} key reached its monthly budget of $${all}: raise it in Settings → API keys`;
+  const mine = workspace ? budgetOf(service, holder, workspace) : null;
+  if (mine !== null && spentThisMonth(service, holder, now, workspace) >= mine)
+    return `${keyName(service)} key reached this workspace's monthly budget of $${mine}: raise it in Settings → API keys`;
+  return null;
 }
 
 /** The budgets `username` sees: one per key they have that can take one, and for an admin the server's keys too. */
@@ -188,7 +211,13 @@ async function budgetsFor(username: string, admin: boolean, now = Date.now()): P
     const own = service === "APIFY_TOKEN" ? apify?.source === "file" && !!apify.token : !!mine[service];
     const server = service === "APIFY_TOKEN" ? apify?.source === "env" && !!apify.token : !!process.env[service];
     const keys: Array<[boolean, KeyBudget["whose"], Holder]> = [[own, "own", `own:${username}`], [admin && server, "server", "server"]];
-    for (const [has, whose, holder] of keys) if (has) out.push({ service, whose, budget: budgetOf(service, holder), spent: spentThisMonth(service, holder, now) });
+    for (const [has, whose, holder] of keys) {
+      if (!has) continue;
+      const by = spentByWorkspace(service, holder, now);
+      const ids = new Set([...by.keys(), ...Object.keys(capOf(service, holder).ws ?? {})].filter(Boolean));
+      const workspaces = [...ids].map((id) => ({ id, budget: budgetOf(service, holder, id), spent: by.get(id) ?? 0 }));
+      out.push({ service, whose, budget: budgetOf(service, holder), spent: spentThisMonth(service, holder, now), workspaces });
+    }
   }
   return out;
 }
@@ -196,22 +225,32 @@ async function budgetsFor(username: string, admin: boolean, now = Date.now()): P
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const money = (n: number) => `$${n.toFixed(2).replace(/\.00$/, "")}`;
 
-/** Activity rows for the keys `username` sees that are near their budget (BUDGET_NEAR) or at it, opening Settings → API keys. */
+const near = (spent: number, budget: number | null): budget is number => budget !== null && budget > 0 && spent >= budget * BUDGET_NEAR;
+
+/** Activity rows for the keys `username` sees, and their workspaces, near their budget (BUDGET_NEAR) or at it, opening Settings → API keys. */
 export async function budgetRows(username: string, admin: boolean, now = Date.now()): Promise<ActivityRow[]> {
   const reset = `1 ${MONTHS[(new Date(now).getUTCMonth() + 1) % 12]}`;
-  return (await budgetsFor(username, admin, now))
-    .filter((b) => b.budget !== null && b.budget > 0 && b.spent >= b.budget * BUDGET_NEAR)
-    .map((b) => {
-      const at = b.spent >= b.budget!;
-      const name = `${keyName(b.service as ServiceId)}${b.whose === "server" ? " (server key)" : ""}`;
-      return {
-        id: `budget:${b.whose}:${b.service}`,
-        title: at ? `${name}: monthly budget reached` : `${name}: ${Math.floor((b.spent / b.budget!) * 100)}% of monthly budget`,
-        detail: `${money(b.spent)} of ${money(b.budget!)} this month${at ? ` · stopped until ${reset}` : ""}`,
-        state: "ready",
-        href: "/settings/keys",
-      } satisfies ActivityRow;
-    });
+  const all = await budgetsFor(username, admin, now);
+  const names = new Map<string, string>();
+  if (all.some((b) => b.workspaces.some((w) => near(w.spent, w.budget)))) {
+    const { ownedProjects, sharedProjects } = await import("./workshop/workspace");
+    for (const p of [...(await ownedProjects(username)), ...(await sharedProjects(username))]) names.set(p.id, p.name);
+  }
+  const row = (b: KeyBudget, spent: number, budget: number, ws?: string): ActivityRow => {
+    const at = spent >= budget;
+    const name = `${keyName(b.service as ServiceId)}${b.whose === "server" ? " (server key)" : ""}${ws ? ` in ${names.get(ws) ?? "a workspace"}` : ""}`;
+    return {
+      id: `budget:${b.whose}:${b.service}${ws ? `:${ws}` : ""}`,
+      title: at ? `${name}: monthly budget reached` : `${name}: ${Math.floor((spent / budget) * 100)}% of monthly budget`,
+      detail: `${money(spent)} of ${money(budget)} this month${at ? ` · stopped until ${reset}` : ""}`,
+      state: "ready",
+      href: "/settings/keys",
+    };
+  };
+  return all.flatMap((b) => [
+    ...(near(b.spent, b.budget) ? [row(b, b.spent, b.budget)] : []),
+    ...b.workspaces.flatMap((w) => (near(w.spent, w.budget) ? [row(b, w.spent, w.budget, w.id)] : [])),
+  ]);
 }
 
 /* ---- each service's own limits or balance, where its API offers one ---- */
@@ -295,10 +334,12 @@ serviceUsageApp.put("/budgets/:service", async (c) => {
   if (u.role === "visitor") return c.json({ error: "Sign in with an account to set a budget" }, 403);
   const service = c.req.param("service") as ServiceId;
   if (!(BUDGET_SERVICES as readonly string[]).includes(service)) return c.json({ error: "Key not found" }, 404);
-  const b = (await c.req.json().catch(() => null)) as { whose?: unknown; budget?: unknown } | null;
+  const b = (await c.req.json().catch(() => null)) as { whose?: unknown; budget?: unknown; workspace?: unknown } | null;
   const budget = b?.budget === null ? null : typeof b?.budget === "number" && Number.isFinite(b.budget) && b.budget >= 0 && b.budget <= 1_000_000 ? b.budget : undefined;
   if (budget === undefined || (b?.whose !== "own" && b?.whose !== "server")) return c.json({ error: "Needs an amount in dollars, or null for no limit" }, 400);
+  const workspace = b.workspace === undefined ? undefined : typeof b.workspace === "string" && /^[\w-]{1,100}$/.test(b.workspace) ? b.workspace : null;
+  if (workspace === null) return c.json({ error: "Workspace not found" }, 400);
   if (b.whose === "server" && !(u.role === "admin" || isAdminActor(u.username))) return c.json({ error: "Only an admin sets the server's key budgets" }, 403);
-  setBudget(service, b.whose === "server" ? "server" : `own:${u.username}`, budget);
+  setBudget(service, b.whose === "server" ? "server" : `own:${u.username}`, budget, workspace);
   return c.json({ ok: true });
 });

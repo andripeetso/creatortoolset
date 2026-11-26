@@ -42,13 +42,23 @@ export interface ServiceLimit {
 
 /**
  * A key's monthly budget and what it spent this calendar month (UTC). Set per key: the person's own key, or the server's
- * (an admin's). At the budget every tool's call on that key stops until the next month or a higher budget.
- *   PUT /api/usage/budgets/:service  { whose: "own" | "server", budget: number | null }  (null = no limit)
+ * (an admin's), for the whole key and, below that, for each workspace. At a budget the key's calls stop (in that workspace
+ * alone, for a workspace's) until the next month or a higher budget. Set on Settings → API keys; Usage only shows them.
+ *   PUT /api/usage/budgets/:service  { whose: "own" | "server", budget: number | null, workspace?: string }  (null = no limit)
  */
 export interface KeyBudget {
   service: string;
   whose: "own" | "server";
-  /** dollars a month; null = no limit */
+  /** dollars a month for the whole key; null = no limit */
+  budget: number | null;
+  spent: number;
+  /** each workspace that has a budget on this key or spent on it this month */
+  workspaces: WorkspaceBudget[];
+}
+
+export interface WorkspaceBudget {
+  /** the workspace's id */
+  id: string;
   budget: number | null;
   spent: number;
 }

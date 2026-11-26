@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { useSearchParams } from "react-router";
+import { Link, useSearchParams } from "react-router";
 import { ChevronDown, RefreshCw, X } from "lucide-react";
 import type { KeyBudget, ServiceLimit, ServiceUsageView } from "@contracts/service-usage";
 import { Button } from "@/components/ui/button";
@@ -9,7 +9,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, EmptyRow, ErrorRow, LoadingRow, Row } from "@/components/settings/ui";
 import { ProviderLogo } from "@/components/settings/ProviderLogos";
 import { PlanLimits } from "@/components/settings/UsageSection";
-import { BudgetDialog, BudgetLine } from "@/components/settings/KeyBudget";
+import { BudgetLines } from "@/components/settings/KeyBudget";
 import { hasThisMac, useThisMac } from "@/components/settings/ThisMacSection";
 import { useProviders, usageSince } from "@/lib/providers";
 import { useWorkspace } from "@/lib/workspace";
@@ -487,7 +487,7 @@ function Limits({ view, now, services, budgets, reload }: { view: NonNullable<Re
   return (
     <div className="flex flex-col gap-8">
       <PlanLimits view={view} now={now} bridge={bridge} />
-      <Budgets budgets={budgets} reload={reload} />
+      <Budgets budgets={budgets} />
       <section className="flex flex-col gap-3">
         <h2 className="text-sm font-medium">API keys</h2>
         <Card>
@@ -519,26 +519,29 @@ function Limits({ view, now, services, budgets, reload }: { view: NonNullable<Re
   );
 }
 
-/** Each key's monthly budget and what it spent this month (api/lib/service-usage.ts): the fullest first, each opens its budget. */
-function Budgets({ budgets, reload }: { budgets: KeyBudget[]; reload: () => void }) {
-  const [editing, setEditing] = useState<KeyBudget | null>(null);
-  const share = (b: KeyBudget) => (b.budget ? b.spent / b.budget : -1);
-  const rows = [...budgets].sort((a, b) => share(b) - share(a) || b.spent - a.spent);
+/** Each key's monthly budgets and what it spent this month (api/lib/service-usage.ts), the fullest first. Shown only: they are set on Settings → API keys. */
+function Budgets({ budgets }: { budgets: KeyBudget[] }) {
+  const fullest = (b: KeyBudget) => Math.max(b.budget ? b.spent / b.budget : -1, ...b.workspaces.map((w) => (w.budget ? w.spent / w.budget : -1)));
+  const rows = [...budgets].sort((a, b) => fullest(b) - fullest(a) || b.spent - a.spent);
   return (
     <section className="flex flex-col gap-3">
-      <h2 className="text-sm font-medium">Budgets</h2>
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-medium">Budgets</h2>
+        <Link to="/settings/keys" className="text-xs underline underline-offset-2">
+          Change in API keys
+        </Link>
+      </div>
       <Card>
         {rows.length === 0 ? (
           <EmptyRow title="No API keys" />
         ) : (
           rows.map((b) => (
-            <Row key={`${b.service}:${b.whose}`} title={serviceName(b.service)} description={b.whose === "server" ? "Server key" : undefined} control={<Button size="sm" variant="outline" onClick={() => setEditing(b)}>{b.budget === null ? "Set budget" : "Change"}</Button>}>
-              <BudgetLine b={b} onClick={() => setEditing(b)} />
+            <Row key={`${b.service}:${b.whose}`} title={serviceName(b.service)} description={b.whose === "server" ? "Server key" : undefined}>
+              <BudgetLines b={b} />
             </Row>
           ))
         )}
       </Card>
-      {editing && <BudgetDialog name={serviceName(editing.service)} b={editing} open onOpenChange={(o) => !o && setEditing(null)} saved={reload} />}
     </section>
   );
 }

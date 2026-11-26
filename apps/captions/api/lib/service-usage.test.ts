@@ -81,4 +81,20 @@ describe("service usage", () => {
     setBudget("DEEPGRAM_API_KEY", "own:lee", null);
     expect(keyFor("lee", "DEEPGRAM_API_KEY")).toEqual({ key: "lee-dg" });
   });
+
+  it("a workspace's budget on a key stops that key in that workspace alone, and is listed with its spend", async () => {
+    const { usageIn } = await import("./mac-claude");
+    await recordService({ service: "DEEPGRAM_API_KEY", key: "lee-dg", actor: "lee", label: "Caption Studio: captions", units: 100, unit: "audio minutes", workspace: "ws-aaaa01" });
+    setBudget("DEEPGRAM_API_KEY", "own:lee", 0.4, "ws-aaaa01");
+    setBudget("DEEPGRAM_API_KEY", "own:lee", 5, "ws-bbbb02");
+    expect(usageIn("ws-aaaa01", () => keyFor("lee", "DEEPGRAM_API_KEY"))).toEqual({ key: "", missing: expect.stringContaining("this workspace's monthly budget of $0.4") });
+    expect(usageIn("ws-bbbb02", () => keyFor("lee", "DEEPGRAM_API_KEY"))).toEqual({ key: "lee-dg" });
+    expect(keyFor("lee", "DEEPGRAM_API_KEY")).toEqual({ key: "lee-dg" });
+    const b = (await lee()).budgets.find((x) => x.service === "DEEPGRAM_API_KEY" && x.whose === "own")!;
+    expect(b.budget).toBeNull();
+    expect(b.workspaces).toEqual(expect.arrayContaining([{ id: "ws-aaaa01", budget: 0.4, spent: expect.closeTo(0.43, 2) }, { id: "ws-bbbb02", budget: 5, spent: 0 }]));
+    expect((await budgetRows("lee", false)).map((r) => r.id)).toEqual(["budget:own:DEEPGRAM_API_KEY:ws-aaaa01"]);
+    setBudget("DEEPGRAM_API_KEY", "own:lee", null, "ws-aaaa01");
+    expect(usageIn("ws-aaaa01", () => keyFor("lee", "DEEPGRAM_API_KEY"))).toEqual({ key: "lee-dg" });
+  });
 });
