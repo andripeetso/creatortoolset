@@ -1,8 +1,8 @@
 import { useEffect, useRef } from "react";
 import { create } from "zustand";
 import { planWarning, type Feature, type PlanId } from "@contracts/plans";
-import { applyNeedWays, DEFAULT_TOOLS, readiness, type Have, type HomeTile, type Need, type NeedForm, type SetupView, type Tool } from "@contracts/tools";
-import { DEFAULT_WORK_PREFS, JOBS, type Job, type Make, type WorkPrefs } from "@contracts/work-prefs";
+import { applyNeedWays, readiness, type Have, type HomeTile, type Need, type NeedForm, type SetupView, type Tool } from "@contracts/tools";
+import { DEFAULT_WORK_PREFS, JOBS, type Job, type WorkPrefs } from "@contracts/work-prefs";
 import { confirmDialog } from "./dialogs";
 import { useAuth } from "./auth";
 import { putCached, readCached, useCachedLoad, warmCached } from "./local-cache";
@@ -12,12 +12,13 @@ import { useWorkspace } from "./workspace";
 export type { SetupView };
 
 /**
- * First run: five screens for everyone (Pick your look, Connect your AI, What do you make?, What do you want to do
- * first?, How do you work best?), then Home. "With an AI app" is followed by one more, `own`: Creator Toolset is
+ * First run: four screens for everyone (Pick your look, Connect your AI, What do you want to do first?, How do you work
+ * best?), then Home. No screen asks which tools to turn on (owner, 2026-11-26): every tool is on from the start, and
+ * Settings → Tools turns one off. "With an AI app" is followed by one more, `own`: Creator Toolset is
  * installed in her AI apps there, so the answer is carried out where she can see it. Questions and their installs
  * only: no job to do is asked of her, and no tool's own setup opens in the middle (the assistant names those after).
  */
-export const SETUP_PATH = ["theme", "agents", "make", "job", "how"] as const;
+export const SETUP_PATH = ["theme", "agents", "job", "how"] as const;
 /**
  * Screens that open alone from a `?setup=` link and close with Done. `own` is also the path's last screen, and `social`
  * joins the path when the Content Analyzer is on (stepsFor). `check` is the whole checklist (Setup checklist).
@@ -29,16 +30,16 @@ export const SETUP_STEPS = [...SETUP_PATH, ...SIDE_STEPS, ACCOUNT_STEP] as const
 export type SetupStep = (typeof SETUP_STEPS)[number];
 
 /**
- * The click path: the five screens, `own` after them when the answer to the last is "With an AI app" (`both`, or a
+ * The click path: the four screens, `own` after them when the answer to the last is "With an AI app" (`both`, or a
  * saved `chat`), and last of all `account` when the Mac app offers a sign-in (`account`).
- * After "What do you make?": the social accounts when the Content Analyzer is on. The Media Library's setup is never on
+ * After "Connect your AI": the social accounts when the Content Analyzer is on. The Media Library's setup is never on
  * the path (owner, 2026-11-26: it is another window with steps of its own, and it cut the first run in two): the
  * Media Library asks for it when it is opened, and the assistant's next steps name it (setupLeft).
  */
 export const stepsFor = (talk?: string | null, account = false, tools: readonly Tool[] = []): readonly SetupStep[] => [
-  ...SETUP_PATH.slice(0, 3),
+  ...SETUP_PATH.slice(0, 2),
   ...(tools.includes("instagram") ? (["social"] as const) : []),
-  ...SETUP_PATH.slice(3),
+  ...SETUP_PATH.slice(2),
   ...(talk === "chat" || talk === "both" ? (["own"] as const) : []),
   ...(account ? ([ACCOUNT_STEP] as const) : []),
 ];
@@ -46,8 +47,8 @@ export const stepsFor = (talk?: string | null, account = false, tools: readonly 
 /** `?setup=` as this window reads it: on the Media Library, `1` is the library's own setup sheet, not a screen of setup. */
 export const setupAsked = (pathname: string, raw: string | null): string | null => (pathname.startsWith("/library") && raw === "1" ? null : raw);
 
-/** Ids from the older, longer setups still open the screen they now belong to. */
-const OLD_STEP: Record<string, SetupStep> = { tools: "make", ai: "agents", project: "make", left: "make", done: "make", try: "make" };
+/** An id from an older setup still opens the screen it now belongs to; one whose screen is gone opens setup's first. */
+const OLD_STEP: Record<string, SetupStep> = { ai: "agents" };
 
 /** The `?setup=` value as a step, or null when it names none (then setup opens on its first step). */
 export function setupStepFromParam(v: string | null): SetupStep | null {
@@ -56,9 +57,8 @@ export function setupStepFromParam(v: string | null): SetupStep | null {
   return (SETUP_STEPS as readonly string[]).includes(id) ? (id as SetupStep) : null;
 }
 
-/** The project made quietly on "What do you make?": its name, or null when the account already has one (then none is made). */
-export const firstProjectName = (makes: readonly Make[], projects: number): string | null =>
-  projects > 0 ? null : makes.length === 1 ? MAKE_NAMES[makes[0]!] : "My videos";
+/** The workspace setup makes quietly on its first press: its name, or null when the account already has one (then none is made). */
+export const firstProjectName = (projects: number): string | null => (projects > 0 ? null : "My videos");
 
 /** Setup is finished once `done` is saved with tools picked (leaving the last screen saves both). */
 export const setupFinished = (view: Pick<SetupView, "done" | "tools">): boolean => view.done && view.tools !== null;
@@ -468,36 +468,7 @@ export function remindLater(r: RemindLater, now = Date.now()): void {
   hideReminders([], now + (r === "tomorrow" ? 1 : 7) * 86_400_000);
 }
 
-/** The tools leaving setup switches on: the ones ticked, and the job's (Add captions turns Caption Studio on), in `mine`'s order. */
+/** The tools leaving setup switches on: the ones on already, and the job's (Add captions turns Caption Studio on), in `mine`'s order. */
 export const toolsWithJob = (ticked: readonly Tool[], job: Job | null | undefined, mine: readonly Tool[]): Tool[] =>
   mine.filter((t) => ticked.includes(t) || (!!job && JOB_SETUP[job].tools.includes(t)));
 
-/** "What do you make?": each answer, the words setup shows for it. */
-export const MAKE_NAMES: Record<Make, string> = {
-  reel: "Short videos",
-  youtube: "Long videos (YouTube)",
-  carousel: "Carousels, image posts",
-  ad: "Ads",
-  podcast: "Podcasts and audio",
-  course: "Courses and guides",
-  recording: "Screen recordings",
-  newsletter: "Newsletters and email",
-  thread: "X posts and threads",
-  article: "Articles and blogs",
-  other: "Something else",
-};
-
-/**
- * The one extra each answer switches on, and only when it clearly fits. Story Splitter is never
- * switched on by an answer (it stays off until picked), and an answer with no fit adds nothing.
- */
-const MAKE_EXTRA: Partial<Record<Make, Tool>> = { reel: "captions", carousel: "design", podcast: "enhance", course: "guides", recording: "notes" };
-
-/**
- * The tools "What do you make?" ticks, in `mine`'s order: the default tools (always on, DEFAULT_TOOLS) plus the extra
- * each answer fits. Not sure yet picks everything instead (the dialog does that itself).
- */
-export const toolsFor = (makes: readonly Make[], mine: readonly Tool[]): Tool[] => {
-  const want = new Set<Tool>([...DEFAULT_TOOLS, ...makes.flatMap((m) => (MAKE_EXTRA[m] ? [MAKE_EXTRA[m]!] : []))]);
-  return mine.filter((t) => want.has(t));
-};

@@ -6,7 +6,7 @@ import {
 } from "lucide-react";
 import { MY_KEYS, type MyKeyEnv } from "@contracts/service-keys";
 import { PLANS, type PlanId } from "@contracts/plans";
-import { DEFAULT_TOOLS, NEED_SENTENCE, readiness, TOOL_LINES, TOOL_NAMES, TOOL_NEEDS, type Have, type Need, type SetupView, type Tool } from "@contracts/tools";
+import { NEED_SENTENCE, readiness, TOOL_NAMES, TOOL_NEEDS, type Have, type Need, type SetupView, type Tool } from "@contracts/tools";
 import { Button } from "@/components/ui/button";
 import { ConnectorsSection } from "@/components/settings/ConnectorsSection";
 import { MyKeysSection } from "@/components/settings/MyKeysSection";
@@ -15,7 +15,6 @@ import { ProjectForm } from "@/components/workshop/ProjectForm";
 import { addProjectFiles, createProject } from "@/lib/workshop";
 import { useSetup } from "@/lib/setup";
 import { webPlugins } from "@/plugins.gen";
-import { Choice } from "./Choice";
 
 const isKey = (h: Have): h is MyKeyEnv => MY_KEYS.some((k) => k.env === h);
 
@@ -155,46 +154,6 @@ export const TOOL_ICONS: Record<Tool, LucideIcon> = {
   editor: Clapperboard, stories: Scissors, design: PenTool, notes: Video, guides: FileText,
 };
 
-/**
- * The tools, as a list: the default tools always on (shown locked, not part of the pick), then the extras as switches,
- * off unless picked. `tools` is what the account may use; `value` is what is on.
- */
-export function ToolsPicker({ tools, value, onChange }: { tools: readonly Tool[]; value: readonly Tool[]; onChange: (next: Tool[]) => void }) {
-  const fixed = tools.filter((t) => DEFAULT_TOOLS.includes(t));
-  const extras = tools.filter((t) => !DEFAULT_TOOLS.includes(t));
-  const toggle = (t: Tool) => {
-    const on = value.includes(t);
-    onChange(on ? value.filter((x) => x !== t) : tools.filter((x) => x === t || value.includes(x) || DEFAULT_TOOLS.includes(x)));
-  };
-  const card = (t: Tool, locked: boolean) => (
-    <Choice
-      key={t}
-      multi
-      locked={locked}
-      on={locked || value.includes(t)}
-      onClick={() => toggle(t)}
-      icon={TOOL_ICONS[t]}
-      name={TOOL_NAMES[t]}
-      line={TOOL_LINES[t]}
-    />
-  );
-  return (
-    <div className="space-y-3">
-      {fixed.length > 0 && (
-        <div className="space-y-2">
-          <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">Always on</p>
-          <div className="grid gap-2 sm:grid-cols-2">{fixed.map((t) => card(t, true))}</div>
-        </div>
-      )}
-      {extras.length > 0 && (
-        <div className="space-y-2">
-          <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">Extras</p>
-          <div className="grid gap-2 sm:grid-cols-2">{extras.map((t) => card(t, false))}</div>
-        </div>
-      )}
-    </div>
-  );
-}
 
 /**
  * "Which plan are you on?" (Settings → Setup only). Setup never asks, and nothing is saved from the CLI on its own:

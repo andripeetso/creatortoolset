@@ -68,9 +68,6 @@ export const TOOL_GROUPS: ReadonlyArray<{ id: "plan" | "make" | "distribute" | "
   { id: "tools", label: "Extras", tools: ["enhance", "captions", "design", "stories", "notes", "guides"] },
 ];
 
-/** Always on for every account and never part of the "What will you make?" pick: the Plan and Make tools above. */
-export const DEFAULT_TOOLS: readonly Tool[] = TOOL_GROUPS.filter((g) => g.id !== "tools").flatMap((g) => g.tools);
-
 /** A tile Home can show or hide: every tool, and the Screen Recorder (the Mac app's recorder: a tile, not a tool of its own). */
 export type HomeTile = Tool | "record";
 /** Home's tiles in its order: Plan, Make, the Extras, then the Screen Recorder (Settings → Tools lists them the same way). */

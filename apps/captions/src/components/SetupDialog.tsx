@@ -1,30 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router";
 import type { LibrarySummary } from "@contracts/library";
-import {
-  AtSign,
-  CircleEllipsis,
-  CircleHelp,
-  GalleryHorizontalEnd,
-  GraduationCap,
-  Mail,
-  Megaphone,
-  Mic,
-  MonitorPlay,
-  Newspaper,
-  ScreenShare,
-  Smartphone,
-  X,
-  type LucideIcon,
-} from "lucide-react";
-import { TOOLS, type Tool } from "@contracts/tools";
-import { MAKES, type Job, type Make } from "@contracts/work-prefs";
+import { X } from "lucide-react";
+import { TOOLS } from "@contracts/tools";
+import type { Job } from "@contracts/work-prefs";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { saveFailed } from "@/components/settings/kit-controls";
 import { AccountSetupView, offersAccount, useMacAccount } from "@/components/setup/AccountStep";
 import { AgentsStep } from "@/components/setup/AgentsStep";
-import { Choice } from "@/components/setup/Choice";
 import { ConnectStep, HERE } from "@/components/setup/ConnectStep";
 import { HelperPair, HelperSetup } from "@/components/setup/HelperStep";
 import { hasThisMac, useThisMac } from "@/components/settings/ThisMacSection";
@@ -40,13 +24,11 @@ import { LibrarySetup } from "@/pages/library/Setup";
 import { getWatch, listLibraries } from "@/lib/library";
 import { useShareTheme, type ThemeChoice } from "@/components/ShareTheme";
 import { OwnAiStep } from "@/components/setup/OwnAiStep";
-import { ToolsPicker } from "@/components/setup/ToolNeeds";
 import { canUse, useMe } from "@/lib/auth";
 import { openAssistant } from "@/lib/assistant";
 import { primeIntroSound } from "@/lib/intro-sound";
 import { isPhoneHub } from "@/lib/mobile";
 import {
-  MAKE_NAMES,
   SETUP_PATH,
   dismissSetup,
   firstProjectName,
@@ -62,7 +44,6 @@ import {
   stepsFor,
   setupAsked,
   stillMotion,
-  toolsFor,
   toolsWithJob,
   useSetup,
   useSetupLive,
@@ -80,7 +61,6 @@ const STEP: Record<SetupStep, { title: string; hint: string }> = {
   theme: { title: "Pick your look", hint: "" },
   job: { title: "What do you want to do first?", hint: "" },
   agents: { title: "Connect your AI", hint: "Creator Toolset works with the ChatGPT, Claude, Google, Grok or Meta plan you already have." },
-  make: { title: "What do you make?", hint: "Sets which tools are turned on." },
   connect: { title: "Connect your computers", hint: "Add a phone or another computer." },
   folders: {
     title: "Where are your videos?",
@@ -96,11 +76,6 @@ const STEP: Record<SetupStep, { title: string; hint: string }> = {
   helper: { title: "Help with heavy work", hint: "This computer makes drafts and renders when the other computer is busy." },
 };
 
-const MAKE_ICONS: Record<Make, LucideIcon> = {
-  reel: Smartphone, youtube: MonitorPlay, carousel: GalleryHorizontalEnd, ad: Megaphone, podcast: Mic, course: GraduationCap,
-  recording: ScreenShare, newsletter: Mail, thread: AtSign, article: Newspaper, other: CircleEllipsis,
-};
-
 /** "Pick your look": the choices Settings → Appearance has, under setup's names. */
 const LOOK_CHOICES: Array<{ id: ThemeChoice; name: string }> = [
   { id: "system", name: "System" },
@@ -114,9 +89,8 @@ const THIS_COMPUTER: ReadonlySet<string> = new Set([HERE]);
 const PRIMARY = "min-w-28 bg-[var(--tint)] text-white hover:bg-[var(--tint)] hover:brightness-110";
 
 /**
- * First-run setup in one window, five screens for everyone: your look (the theme, set as Settings → Appearance sets it)
- * → connect your AI → what you make (ticks the tools; the first project is made on leaving setup) → what you want to do
- * first (the choice alone) → how you work best (in the app, or with an AI app too), then Home. "With an AI app" gets
+ * First-run setup in one window, four screens for everyone: your look (the theme, set as Settings → Appearance sets it)
+ * → connect your AI → what you want to do first (the choice alone) → how you work best (in the app, or with an AI app too), then Home. "With an AI app" gets
  * one more screen first, where Creator Toolset is installed in the AI apps on this computer. Leaving the
  * last screen saves `done`; no job to do is asked of her. Not now (the X, the footer link, Escape) hides it for this
  * browser and remembers the screen; Home's card brings it back. A click outside never closes it. Never shown on a
@@ -136,12 +110,10 @@ export function SetupDialog() {
   const { projects, loaded, load: loadProjects } = useWorkspace();
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
-  const [ticked, setTicked] = useState<Tool[] | null>(null);
   const [note, setNote] = useState(false);
-  const [busy, setBusy] = useState(false); // leaving "What do you make?" saves first: one press, one project
+  const [busy, setBusy] = useState(false); // a press saves first: one press, one workspace
   const [library, setLibrary] = useState<LibrarySummary | null>(); // "Where are your videos?": the library its setup is for (null: none)
   const [ownSlot, setOwnSlot] = useState<HTMLElement | null>(null); // where the AI apps screen shows its rows
-  const [unsure, setUnsure] = useState<boolean | null>(null); // "Not sure yet" ticked here; null = read it from the saved answers
   const [accountStep, setAccountStep] = useState(false); // the Mac app offered a sign-in during this setup: its screen stays in the path
   const asked = setupAsked(useLocation().pathname, params.get("setup"));
   // the Help screen: this Mac, and the account's other computers. It opens only from a press (Settings → Setup, ?setup=helper)
@@ -213,8 +185,9 @@ export function SetupDialog() {
   if (!open) return savedNote;
 
   const mine = TOOLS.filter((t) => canUse(me, t));
-  const makes = prefs.makes;
-  const tools = ticked ?? view.tools ?? toolsFor(makes, mine);
+  // every tool the account may use is on from the start (owner, 2026-11-26: no screen asks which); Settings → Tools
+  // turns one off, and what someone set there before is kept
+  const tools = view.tools ?? mine;
   const path = stepsFor(prefs.talk, accountStep, tools);
   const at = path.indexOf(step);
   const side = at < 0 || params.has("alone"); // `&alone=1` (openSetupAt): a path screen shown on its own
@@ -242,28 +215,20 @@ export function SetupDialog() {
     startIntro(plays, connected ? openAssistant : undefined);
     navigate("/");
   };
-  const saveMakes = () => useWorkPrefs.getState().put({ makes });
-  const back = async () => {
-    if (step === "make") await saveMakes(); // the answers survive Back
-    to(path[at - 1]!);
-  };
+  const back = () => to(path[at - 1]!);
   const next = async () => {
     // the welcome has sound, and a browser lets sound start only from a press: this one, before anything is awaited
     const plays = at === path.length - 1 && welcomes(); // asked before the save below finishes setup
     if (plays) primeIntroSound();
     setBusy(true);
     try {
-      if (step === "make") {
-        await saveMakes();
-        // the workspace is made here, not at the end: the Media Library and the social accounts that follow belong to it
-        const name = loaded ? firstProjectName(makes, projects.length) : null;
-        if (name) await createProject({ name }).catch(() => {});
-      }
+      // the first workspace is made on the first press, not at the end: the social accounts that follow belong to it.
+      // Made once: creating it reloads the list, so the next press finds it
+      const name = loaded ? firstProjectName(projects.length) : null;
+      if (name) await createProject({ name }).catch(() => {});
       if (at === path.length - 1) {
         // the last screen: this is the end of setup, and it never opens by itself again
         await save({ tools: toolsWithJob(tools, prefs.job, mine), done: true });
-        const name = loaded ? firstProjectName(makes, projects.length) : null;
-        if (name) await createProject({ name }).catch(() => {});
         return goHome(plays);
       }
       to(path[at + 1]!);
@@ -275,21 +240,6 @@ export function SetupDialog() {
     }
   };
   finish.current = () => void (at === path.length - 1 && next());
-  const setMakes = (next: Make[]) => {
-    useWorkPrefs.setState({ prefs: { ...prefs, makes: next } });
-    setTicked(toolsFor(next, mine));
-  };
-  const toggleMake = (m: Make) => {
-    setUnsure(false);
-    setMakes(makes.includes(m) ? makes.filter((x) => x !== m) : MAKES.filter((x) => x === m || makes.includes(x)));
-  };
-  // "Not sure yet" is exclusive: on = every tool on and no answer ticked; picking an answer turns it off again
-  const notSure = unsure ?? (makes.length === 0 && tools.length > 0 && tools.length === mine.length);
-  const pickNotSure = () => {
-    setMakes([]);
-    setUnsure(!notSure);
-    if (!notSure) setTicked([...mine]);
-  };
   const pickJob = (j: Job) => void useWorkPrefs.getState().put({ job: j });
   const closeLabel = "Close";
   const { hint } = STEP[step];
@@ -356,22 +306,6 @@ export function SetupDialog() {
 
           {step === "agents" && <AgentsStep picked={THIS_COMPUTER} onConnectedChange={onConnected} />}
 
-          {step === "make" && (
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-1.5 min-[720px]:grid-cols-3" role="group" aria-label="What do you make?">
-                {MAKES.map((m) => (
-                  <Choice key={m} dense multi on={!notSure && makes.includes(m)} onClick={() => toggleMake(m)} icon={MAKE_ICONS[m]} name={MAKE_NAMES[m]} />
-                ))}
-                <Choice dense multi on={notSure} onClick={pickNotSure} icon={CircleHelp} name="Not sure yet" />
-              </div>
-              <details className="group rounded-xl border border-border/60 bg-card/40">
-                <summary className="cursor-pointer list-none px-4 py-3 text-sm text-muted-foreground hover:text-foreground">Tools: {tools.length} on</summary>
-                <div className="px-4 pb-4">
-                  <ToolsPicker tools={mine} value={tools} onChange={setTicked} />
-                </div>
-              </details>
-            </div>
-          )}
 
           {step === "connect" && <ConnectStep picked={THIS_COMPUTER} onPick={() => {}} />}
 

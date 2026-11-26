@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  dismissSetup, DOWNLOAD_URL, endIntro, firstProjectName, introPlays, introSeen, openSetupAt, jobsFor, MAKE_NAMES, markIntroSeen, resumeStep, startIntro, toolsWithJob, useIntro, SETUP_PATH, SIDE_STEPS, setupDismissed, setupFinished, setupOpen, setupOpensItself,
-  hideReminders, remindLater, remindersOn, setupGapIds, setupAsked, setupGaps, setupLeft, useReminders, setupStepFromParam, shareDownload, stepsFor, toolForPath, toolsFor, seedSetup, useWorkPrefs,
+  dismissSetup, DOWNLOAD_URL, endIntro, firstProjectName, introPlays, introSeen, openSetupAt, jobsFor, markIntroSeen, resumeStep, startIntro, toolsWithJob, useIntro, SETUP_PATH, SIDE_STEPS, setupDismissed, setupFinished, setupOpen, setupOpensItself,
+  hideReminders, remindLater, remindersOn, setupGapIds, setupAsked, setupGaps, setupLeft, useReminders, setupStepFromParam, shareDownload, stepsFor, toolForPath, seedSetup, useWorkPrefs,
 } from "./setup";
 import { useAuth } from "./auth";
 import { putCached, readCached } from "./local-cache";
@@ -11,25 +11,27 @@ import { JOBS } from "@contracts/work-prefs";
 afterEach(() => vi.unstubAllGlobals());
 
 describe("setup steps", () => {
-  it("is five screens, and a sixth that installs Creator Toolset in her AI apps after In my own AI or Both", () => {
-    // Pick your look, Connect your AI, What do you make?, What do you want to do first?, How do you work best?
-    const five = ["theme", "agents", "make", "job", "how"];
-    expect(stepsFor()).toEqual(five);
+  it("is four screens, and one more that installs Creator Toolset in her AI apps after With an AI app", () => {
+    // Pick your look, Connect your AI, What do you want to do first?, How do you work best?
+    const four = ["theme", "agents", "job", "how"];
+    expect(stepsFor()).toEqual(four);
     expect(stepsFor()).toEqual(SETUP_PATH);
-    for (const talk of ["app", null, undefined]) expect(stepsFor(talk)).toEqual(five);
+    for (const talk of ["app", null, undefined]) expect(stepsFor(talk)).toEqual(four);
     // the owner picked Both and setup "ended abruptly": the answer is carried out on a screen of its own, last
-    for (const talk of ["chat", "both"]) expect(stepsFor(talk)).toEqual([...five, "own"]);
+    for (const talk of ["chat", "both"]) expect(stepsFor(talk)).toEqual([...four, "own"]);
     // the account screen is last of all, and only when the Mac app offers a sign-in that works
-    expect(stepsFor("app", true)).toEqual([...five, "account"]);
-    expect(stepsFor("both", true)).toEqual([...five, "own", "account"]);
+    expect(stepsFor("app", true)).toEqual([...four, "account"]);
+    expect(stepsFor("both", true)).toEqual([...four, "own", "account"]);
     expect(stepsFor("both", false)).not.toContain("account");
+    // no screen asks which tools to turn on: every tool is on from the start
+    expect(stepsFor("both", true, ["instagram", "media"])).not.toContain("make");
   });
 
-  it("puts the social accounts on the path after What do you make? when the Content Analyzer is on, and never the Media Library's setup", () => {
+  it("puts the social accounts on the path after Connect your AI when the Content Analyzer is on, and never the Media Library's setup", () => {
     // the Media Library's setup is its own window with its own steps: it opens in the Media Library, not in the first run
     expect(stepsFor("app", false, ["media"])).toEqual(SETUP_PATH);
-    expect(stepsFor("app", false, ["editor", "instagram"])).toEqual(["theme", "agents", "make", "social", "job", "how"]);
-    expect(stepsFor("both", true, ["instagram"])).toEqual(["theme", "agents", "make", "social", "job", "how", "own", "account"]);
+    expect(stepsFor("app", false, ["editor", "instagram"])).toEqual(["theme", "agents", "social", "job", "how"]);
+    expect(stepsFor("both", true, ["instagram"])).toEqual(["theme", "agents", "social", "job", "how", "own", "account"]);
     expect(stepsFor("app", false, ["captions", "workshop"])).toEqual(SETUP_PATH);
     for (const tools of [["media"], ["editor"], ["media", "editor", "instagram"]] as const) expect(stepsFor("both", true, tools)).not.toContain("folders");
   });
@@ -85,13 +87,10 @@ describe("setup steps", () => {
     }
   });
 
-  it("maps the old step ids to the screen they now belong to", () => {
-    expect(setupStepFromParam("tools")).toBe("make");
+  it("maps an old step id to the screen it now belongs to, and one whose screen is gone to none (setup opens on its first)", () => {
     expect(setupStepFromParam("ai")).toBe("agents");
-    expect(setupStepFromParam("project")).toBe("make");
-    expect(setupStepFromParam("left")).toBe("make");
-    expect(setupStepFromParam("done")).toBe("make");
-    expect(setupStepFromParam("try")).toBe("make"); // the dropped "Try it" screen
+    // What do you make? and the screens before it that became it
+    for (const gone of ["make", "tools", "project", "left", "done", "try"]) expect(setupStepFromParam(gone)).toBeNull();
   });
 
   it("names no step for an empty, unknown or inherited id", () => {
@@ -101,15 +100,13 @@ describe("setup steps", () => {
   });
 });
 
-describe("the first project, made on What do you make?", () => {
-  it("is named after the one thing picked, else My videos", () => {
-    expect(firstProjectName(["podcast"], 0)).toBe(MAKE_NAMES.podcast);
-    expect(firstProjectName(["reel", "ad"], 0)).toBe("My videos");
-    expect(firstProjectName([], 0)).toBe("My videos");
+describe("the first workspace, made on setup's first press", () => {
+  it("is My videos", () => {
+    expect(firstProjectName(0)).toBe("My videos");
   });
-  it("is not made when the account already has a project", () => {
-    expect(firstProjectName(["podcast"], 1)).toBeNull();
-    expect(firstProjectName([], 3)).toBeNull();
+  it("is not made when the account already has one", () => {
+    expect(firstProjectName(1)).toBeNull();
+    expect(firstProjectName(3)).toBeNull();
   });
 });
 
@@ -125,7 +122,7 @@ describe("setupOpen", () => {
   });
   it("never opens on a phone, asked for or not", () => {
     expect(setupOpen(fresh, null, { firstRun: true, phone: true })).toBe(false);
-    expect(setupOpen(fresh, "make", { firstRun: true, phone: true })).toBe(false);
+    expect(setupOpen(fresh, "job", { firstRun: true, phone: true })).toBe(false);
   });
   it("stays shut with no setup to show (a guest, the demo)", () => {
     expect(setupOpen(null, "agents", { firstRun: true, phone: false })).toBe(false);
@@ -202,8 +199,8 @@ describe("Not now and resume", () => {
       vi.stubGlobal("sessionStorage", { getItem: () => old, setItem: () => {} });
       expect(resumeStep()).toBe("theme");
     }
-    vi.stubGlobal("sessionStorage", { getItem: () => "project", setItem: () => {} });
-    expect(resumeStep()).toBe("make");
+    vi.stubGlobal("sessionStorage", { getItem: () => "ai", setItem: () => {} });
+    expect(resumeStep()).toBe("agents");
   });
 
   it("starts at the first step when storage throws", () => {
@@ -238,35 +235,6 @@ it("knows each tool's pages", () => {
   expect(toolForPath("/video-notes/abc")).toBe("notes");
   expect(toolForPath("/settings/setup")).toBeNull();
   expect(toolForPath("/")).toBeNull();
-});
-
-it("always on: the Plan and Make tools, whatever the answer; the Workshop and the rest are not part of the pick", () => {
-  const defaults = ["instagram", "workshop", "review", "media", "editor"];
-  expect(toolsFor(["newsletter", "article"], TOOLS)).toEqual(defaults);
-  expect(toolsFor([], TOOLS)).toEqual(defaults);
-  expect(toolsFor(["thread"], TOOLS)).toEqual(defaults);
-  expect(toolsFor(["reel"], ["workshop", "review"])).toEqual(["workshop", "review"]); // only what the account may use
-});
-
-it("an answer switches on only the extra that clearly fits it", () => {
-  expect(toolsFor(["reel"], TOOLS)).toEqual(["instagram", "workshop", "captions", "review", "media", "editor"]);
-  expect(toolsFor(["podcast"], TOOLS)).toContain("enhance");
-  expect(toolsFor(["recording"], TOOLS)).toContain("notes");
-  expect(toolsFor(["course"], TOOLS)).toContain("guides");
-  expect(toolsFor(["podcast"], TOOLS)).not.toContain("captions");
-  expect(toolsFor(["carousel"], TOOLS)).toContain("design");
-  expect(toolsFor(["youtube", "ad"], TOOLS)).toEqual(toolsFor([], TOOLS)); // no extra fits
-});
-
-it("Story Splitter is never switched on by an answer", () => {
-  for (const m of ["reel", "youtube", "carousel", "ad", "podcast", "course", "recording", "thread", "newsletter", "article", "other"] as const) {
-    expect(toolsFor([m], TOOLS)).not.toContain("stories");
-  }
-});
-
-
-it("names all eleven makes", () => {
-  expect(Object.keys(MAKE_NAMES)).toHaveLength(11);
 });
 
 describe("setup opens by itself only on a first sign-in", () => {

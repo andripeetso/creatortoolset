@@ -992,7 +992,7 @@ export const DOC_KINDS: { id: Exclude<DocKind, "notes">; label: string }[] = [
 ];
 
 let makesOnce: Promise<string[]> | null = null;
-/** DOC_KINDS with the kinds the person makes (work-prefs `makes`, setup's "What will you make?") first, for the new-piece menus. */
+/** DOC_KINDS with the kinds the person makes (work-prefs `makes`) first, for the new-piece menus. */
 export function useDocKinds(): typeof DOC_KINDS {
   const [makes, setMakes] = useState<string[]>([]);
   useEffect(() => {

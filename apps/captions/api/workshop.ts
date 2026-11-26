@@ -1056,11 +1056,11 @@ async function ensureDocuments(meta: SessionMeta): Promise<Document[]> {
   });
 }
 
-/** The answers to "What will you make?" that are also a Workshop piece. */
+/** The kinds a person makes (work-prefs `makes`) that are also a Workshop piece. */
 type PieceKind = Exclude<DocKind, "notes" | "free">;
 const PIECE_KINDS = new Set<string>(["reel", "carousel", "ad", "youtube", "newsletter", "thread", "article"] satisfies PieceKind[]);
 
-/** A session always has a document to write in besides Notes: the first kind its owner makes (setup's "What will you make?"), else a reel; the kind is switched in the editor. */
+/** A session always has a document to write in besides Notes: the first kind its owner makes (work-prefs `makes`), else a reel; the kind is switched in the editor. */
 /** A finished draft as a piece of its session, by the AI, its first version "generated draft". */
 async function draftDoc(sessionId: string, draft: DraftMeta, md: string, now: number): Promise<Document> {
   const doc = newDocument(randomUUID(), sessionId, draft.kind, draft.title || draft.kind, { text: md, author: "ai", frameworkIds: draft.frameworkIds ?? [], ruleIds: draft.ruleIds, now });

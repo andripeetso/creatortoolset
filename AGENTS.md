@@ -361,8 +361,8 @@ and answers:
       stops what has not happened; Stop stops what is running. In a sentence it is still "try again later".
     - A tooltip may keep a how-to that is said nowhere else, and a credit or licence line stays. Cut the visible
       paragraph, never the only place a fact lives.
-    - A screen that asks the person something by design keeps its question: first-run setup's titles ("What do you
-      make?", "Where are your videos?", "How do you work best?"), the new chat screen ("What should we make?"), the
+    - A screen that asks the person something by design keeps its question: first-run setup's titles ("What do you want
+      to do first?", "Where are your videos?", "How do you work best?"), the new chat screen ("What should we make?"), the
       chat list's "Needs you". The owner's own labels stay as they are: "Write it for me", "My words only", "New edit
       defaults", "Headless access", "Sign-in code", the Media Library's "Standard" / "Automatic" / "None", the
       rolls A-roll and B-roll, the grade panel's control names.
