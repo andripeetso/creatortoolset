@@ -63,8 +63,8 @@ describe("usage and crash reports", () => {
     noteFailure("ana", "work", "Audio Enhancer", { error: "engine down" });
     await t.sendCheckin();
     expect(sent[0].body.failed).toEqual([
-      { kind: "request", what: "POST /api/projects/:id/export", status: 500, error: "no file <path>", count: 2 },
-      { kind: "work", what: "Audio Enhancer", error: "engine down", count: 1 },
+      { kind: "request", what: "POST /api/projects/:id/export", status: 500, count: 2 },
+      { kind: "work", what: "Audio Enhancer", count: 1 },
     ]);
     expect(JSON.stringify(sent[0].body)).not.toMatch(/ana|Tia/);
     await t.sendCheckin();
@@ -81,6 +81,7 @@ describe("usage and crash reports", () => {
     t.noteAction("POST", "/api/library/assets/:id/tags");
     t.noteAction("POST", "/api/library/assets/:id/tags");
     t.noteAction("GET", "/api/library/assets/:id"); // a read
+    t.noteAction("GET", "/api/exports"); // a list read again and again, not an export
     t.noteAction("GET", "/api/drafts/:name/export");
     await t.sendCheckin();
     expect(sent[0].body.actions).toEqual({ "DELETE /api/exports/:id": 1, "POST /api/library/assets/:id/tags": 2, "GET /api/drafts/:name/export": 1 });
@@ -112,6 +113,12 @@ describe("usage and crash reports", () => {
     ]);
     await t.sendEvents();
     expect(sent).toHaveLength(1);
+    sent.length = 0;
+    t.track("page", { page: "home" });
+    fakeFetch.mockImplementationOnce(async () => new Response(null, { status: 400 }));
+    await t.sendEvents(); // refused: dropped, so it never blocks what comes after
+    await t.sendEvents();
+    expect(sent).toEqual([]);
   });
 
   it("a crash goes at once with its file paths taken out, and its repeats within the hour fold into the next count", () => {

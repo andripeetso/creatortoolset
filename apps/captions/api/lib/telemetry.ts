@@ -22,7 +22,7 @@ import type { AuthVars } from "../auth";
  * - a check-in at start and every 6 hours: a random install id ($DATA_DIR/install-id), the version, the system, how
  *   many pages were opened since the last one and which (by page name only, from PAGES), whether Connect is linked,
  *   and which AIs are set up (their kind: claude, codex…), and what failed since the last one (an action's name or a
- *   request's route with no ids in it, the status and the error line with file paths taken out, how many times), the
+ *   request's route with no ids in it, the status, how many times; never the error line, which can name a file), the
  *   actions taken since (a request's route, as above, and how many times) and how big the Media Library is (clips,
  *   hours, bytes);
  * - events, every 15 minutes: each page opened, each AI run (the job's name, the model, its tokens and API-equivalent
@@ -58,10 +58,12 @@ function installId(): string {
 
 export const base = () => ({ id: installId(), version: process.env.CT_VERSION ?? "", os: platform(), arch: arch() });
 
-const post = (url: string, body: unknown) =>
+// "retry": offline or the site down, the counts wait for the next send; "refused": the site will never take them, so
+// they go (kept, they would be refused again each time and block what comes after)
+const post = (url: string, body: unknown): Promise<"sent" | "retry" | "refused"> =>
   fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(10_000) })
-    .then((r) => r.ok)
-    .catch(() => false); // offline or the site down: the counts wait for the next check-in
+    .then((r) => (r.ok ? "sent" : r.status >= 500 ? "retry" : "refused"))
+    .catch(() => "retry" as const);
 
 /* ---- check-ins ---- */
 
@@ -73,8 +75,10 @@ const ACTIONS_SENT = 60;
 
 /** A request a signed-in person made, by its route ("POST /api/library/assets/:id/tags"): writes, exports and downloads. */
 export function noteAction(method: string, route: string): void {
-  if (!telemetryOn() || !route.startsWith("/api/") || /^\/api\/(telemetry|bug-report)/.test(route)) return;
-  if ((method === "GET" && !/export|download/.test(route)) || method === "HEAD" || method === "OPTIONS") return;
+  if (!route.startsWith("/api/") || /^\/api\/(telemetry|bug-report)/.test(route)) return;
+  // a read counts only when it makes a file (an export, a download), never a list that is read again and again
+  if ((method === "GET" && !/\/(export(\.md)?|download)$/.test(route)) || method === "HEAD" || method === "OPTIONS") return;
+  if (!telemetryOn()) return;
   const key = `${method} ${route}`.slice(0, 120);
   if (key in actions || Object.keys(actions).length < ACTION_KEYS) actions[key] = (actions[key] ?? 0) + 1;
 }
@@ -118,8 +122,8 @@ export async function sendCheckin(): Promise<void> {
   } catch {
     // unreadable settings: the check-in goes without
   }
-  const ok = await post(pingUrl(), { ...base(), opened: took.opened, connected: connectState() !== null, ai, tools: took.pages, ...(took.failed.length ? { failed: took.failed } : {}), actions: top, used: took.used, ...(library ? { library } : {}) });
-  if (ok) return;
+  const sent = await post(pingUrl(), { ...base(), opened: took.opened, connected: connectState() !== null, ai, tools: took.pages, ...(took.failed.length ? { failed: took.failed } : {}), actions: top, used: took.used, ...(library ? { library } : {}) });
+  if (sent !== "retry") return;
   putBackFailureCounts(took.failed);
   for (const [k, n] of Object.entries(took.actions)) actions[k] = (actions[k] ?? 0) + n;
   used = took.used; // shortcut: what came in while this one was on its way is dropped; merge if it matters
@@ -168,7 +172,7 @@ export async function sendEvents(): Promise<void> {
   const took = events;
   events = [];
   for (let i = 0; i < took.length; i += BATCH) {
-    if (await post(`${pingUrl()}/events`, { ...base(), events: took.slice(i, i + BATCH) })) continue;
+    if ((await post(`${pingUrl()}/events`, { ...base(), events: took.slice(i, i + BATCH) })) !== "retry") continue;
     events = [...took.slice(i), ...events].slice(0, EVENTS_MAX); // not delivered: they go with the next batch
     return;
   }

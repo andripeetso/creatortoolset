@@ -54,10 +54,10 @@ export function noteFailure(user: string, kind: FailureKind, what: string, f: { 
   if (at >= 0) {
     const [same] = rows.splice(at, 1);
     rows.push({ ...same!, at: now, count: same!.count + (f.ref && same!.ref === f.ref ? 0 : 1), ref: f.ref });
-    if (!(f.ref && same!.ref === f.ref)) count({ kind, what: kind === "work" ? what : (f.route ?? "other"), status: f.status, error });
+    if (!(f.ref && same!.ref === f.ref)) count({ kind, what: kind === "work" ? what : (f.route ?? "other"), status: f.status });
   } else {
     rows.push({ at: now, user, kind, what: what.slice(0, 200), ...(f.status ? { status: f.status } : {}), ...(error ? { error } : {}), ...(f.ref ? { ref: f.ref } : {}), count: 1 });
-    count({ kind, what: kind === "work" ? what : (f.route ?? "other"), status: f.status, error });
+    count({ kind, what: kind === "work" ? what : (f.route ?? "other"), status: f.status });
   }
   const mine = rows.filter((r) => r.user === user && r.kind === kind);
   const drop = new Set(mine.slice(0, Math.max(0, mine.length - KEEP)));
@@ -68,14 +68,15 @@ export function noteFailure(user: string, kind: FailureKind, what: string, f: { 
 
 /* ---- the counts a check-in carries (lib/telemetry.ts): the whole server's, with no account ---- */
 
-export type FailureCount = { kind: FailureKind; what: string; status?: number; error?: string; count: number };
+// no error line: an error can name a file, a computer or a person ("Tia.mov isn't a video"); the route and status say where
+export type FailureCount = { kind: FailureKind; what: string; status?: number; count: number };
 const UNSENT_MAX = 50;
 const SEND_MAX = 15;
 let unsent = new Map<string, FailureCount>();
 
 function count(f: Omit<FailureCount, "count">, n = 1): void {
-  const row = { kind: f.kind, what: f.what.slice(0, 120), ...(f.status ? { status: f.status } : {}), ...(f.error ? { error: f.error.slice(0, 160) } : {}) };
-  const key = `${row.kind}\n${row.what}\n${row.status ?? ""}\n${row.error ?? ""}`;
+  const row = { kind: f.kind, what: f.what.slice(0, 120), ...(f.status ? { status: f.status } : {}) };
+  const key = `${row.kind}\n${row.what}\n${row.status ?? ""}`;
   const have = unsent.get(key);
   if (have) have.count += n;
   else if (unsent.size < UNSENT_MAX) unsent.set(key, { ...row, count: n });
