@@ -97,7 +97,7 @@ function OptionalBadge() {
   return (
     <Tooltip delayDuration={350}>
       <TooltipTrigger asChild>
-        <Badge variant="outline" tabIndex={0} className="ml-2 h-4 px-1.5 py-0 align-middle text-[10px] font-normal leading-none text-muted-foreground">
+        <Badge variant="outline" tabIndex={0} className="ml-2 h-4 cursor-default select-none px-1.5 py-0 align-middle text-[10px] font-normal leading-none text-muted-foreground">
           Optional
         </Badge>
       </TooltipTrigger>
