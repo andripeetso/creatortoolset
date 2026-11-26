@@ -543,15 +543,16 @@ final class Shell: NSObject, ObservableObject {
     /// window's own sign-in and put in the window's WebKit store, so the server's sign-in page asks for nothing
     /// (src/components/AuthGate.tsx asks, "window"). False, and that page shows as before, when this is the server on this
     /// Mac, the app has no account or no key, the server names no sign-in service, or the account never signed in to it.
-    /// The server is the one the window is set to, never an address the page gives.
-    private func signInWithAccount() async -> Bool {
+    /// The server is the one the window is set to, never an address the page gives. `pressed`: the person pressed a
+    /// sign-in button on that server's sign-in page (pageSignIn), so a server the account never signed in to opens too.
+    private func signInWithAccount(pressed: Bool = false) async -> Bool {
         let base = self.base
         guard hasServer, !runsHere, let host = base.host, let key = DPoPKey.shared,
               let accountServer = account.server, let token = await account.token() else { return false }
         let pkce = Pkce.make()
         let name = (base.port.map { "\(host):\($0)" } ?? host).lowercased()
         do {
-            let ticket = try await AccountClient(server: accountServer, key: key).appTicket(token, host: name, challenge: pkce.challenge)
+            let ticket = try await AccountClient(server: accountServer, key: key).appTicket(token, host: name, challenge: pkce.challenge, signIn: pressed)
             let request = try accountTicketRequest(base: base, ticket: ticket, verifier: pkce.verifier, key: key,
                                                    name: Host.current().localizedName ?? macHostName(), version: appVersion)
             let (_, response) = try await URLSession.shared.data(for: request)
@@ -565,6 +566,55 @@ final class Shell: NSObject, ObservableObject {
         } catch {
             AppLog.write("the window did not sign in through the account: \(error.localizedDescription)")
             return false
+        }
+    }
+
+    /// Whether the server in the window takes the Creator Toolset account (its descriptor, api/descriptor.ts). The
+    /// server on this Mac, a server that does not answer and an app with no account server: no.
+    private func takesAccount() async -> Bool {
+        struct Descriptor: Decodable {
+            struct Capabilities: Decodable { let account: Bool? }
+            let capabilities: Capabilities?
+        }
+        guard hasServer, !runsHere, account.server != nil else { return false }
+        let descriptor: Descriptor? = try? await client().get("/.well-known/creator-toolset/server", timeout: 5)
+        return descriptor?.capabilities?.account == true
+    }
+
+    /// The sign-in page's Sign in with Google / Apple / GitHub. On a server that takes the Creator Toolset account the
+    /// press is that account's sign-in (owner, 2026-11-26: one account, on servers too): the app signs in to the account
+    /// when it is not (its own sheet, with the provider pressed), then the window gets in with the account's ticket. One
+    /// press, one sheet, and both are signed in; already signed in to the account, no sheet at all. When that does not
+    /// get the window in (no account on that server for this person yet, or the server names another account service),
+    /// and on every other server, it is the server's own sign-in in the sheet (SiteSignIn.swift), as before.
+    private func pageSignIn(provider: String, back: String) {
+        let base = self.base
+        Task {
+            if await takesAccount() {
+                var signedIn = await account.token() != nil
+                if !signedIn {
+                    let reply: AccountReply = await withCheckedContinuation { done in account.signIn(provider) { done.resume(returning: $0) } }
+                    // the sheet was closed: the press is over. Any other no goes on to the server's own sign-in
+                    if reply["state"] == "cancelled" { return }
+                    signedIn = reply["state"] == "signedIn"
+                }
+                // another server was opened meanwhile: this press was not for it
+                guard base == self.base else { return }
+                if signedIn, await signInWithAccount(pressed: true) {
+                    if let to = URL(string: back, relativeTo: base)?.absoluteURL, isSite(to, base) { webView.load(URLRequest(url: to)) }
+                    return
+                }
+            }
+            guard base == self.base else { return }
+            siteSignIn.window = { [weak self] in self?.webView.window }
+            siteSignIn.start(provider: provider, site: base, back: back,
+                             run: { [weak self] script in self?.webView.evaluateJavaScript(script) },
+                             show: { [weak self] back, error in
+                                 guard let self, let target = URL(string: back, relativeTo: self.base)?.absoluteURL,
+                                       var parts = URLComponents(url: target, resolvingAgainstBaseURL: false) else { return }
+                                 parts.queryItems = (parts.queryItems ?? []).filter { $0.name != "error" } + [URLQueryItem(name: "error", value: error)]
+                                 if let to = parts.url, isSite(to, self.base) { self.webView.load(URLRequest(url: to)) }
+                             })
         }
     }
 
@@ -1214,17 +1264,10 @@ extension Shell: WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
         if url.isFileURL { return decisionHandler(.cancel) }
         // Embeds and players stay where the page put them.
         if action.targetFrame?.isMainFrame == false { return decisionHandler(.allow) }
-        // the login screen's Sign in with Google / Apple / GitHub: in the system's sheet, ending in this window (SiteSignIn.swift)
+        // the login screen's Sign in with Google / Apple / GitHub: through the Creator Toolset account where the server
+        // takes it, else the server's own sign-in in the system's sheet; both end in this window (pageSignIn)
         if let start = siteSignInStart(url, site: base) {
-            siteSignIn.window = { [weak self] in self?.webView.window }
-            siteSignIn.start(provider: start.provider, site: base, back: start.back,
-                             run: { [weak self] script in self?.webView.evaluateJavaScript(script) },
-                             show: { [weak self] back, error in
-                                 guard let self, let target = URL(string: back, relativeTo: self.base)?.absoluteURL,
-                                       var parts = URLComponents(url: target, resolvingAgainstBaseURL: false) else { return }
-                                 parts.queryItems = (parts.queryItems ?? []).filter { $0.name != "error" } + [URLQueryItem(name: "error", value: error)]
-                                 if let to = parts.url, isSite(to, self.base) { self.webView.load(URLRequest(url: to)) }
-                             })
+            pageSignIn(provider: start.provider, back: start.back)
             return decisionHandler(.cancel)
         }
         let inside = ["about", "blob", "data", "javascript"].contains(url.scheme ?? "") || isSite(url, base)

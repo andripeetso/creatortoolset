@@ -66,14 +66,16 @@ export function AccountAvatar({ picture, initial, className, fallback }: { pictu
   return <span className={cn("flex shrink-0 items-center justify-center rounded-full bg-muted font-medium uppercase text-muted-foreground", className)}>{initial}</span>;
 }
 
-const NO_SIGN_INS = Object.fromEntries(PROVIDERS.map((p) => [p, false])) as Record<Provider, boolean>;
+/** `account`: the server takes the Creator Toolset account itself (an app signed in to it gets in with no second sign-in). */
+type SignInApps = Record<Provider, boolean> & { account?: boolean };
+const NO_SIGN_INS = Object.fromEntries(PROVIDERS.map((p) => [p, false])) as SignInApps;
 /**
  * The sign-ins this server has switched on (Account links them, Team picks from them): the saved copy at once. A server
  * that does not answer has none.
  */
-export function useSignInApps(): Record<Provider, boolean> | null {
-  const { data, error } = useCachedLoad<Record<Provider, boolean>>("/api/account/providers", () =>
-    fetch("/api/account/providers").then((r) => (r.ok ? (r.json() as Promise<Record<Provider, boolean>>) : NO_SIGN_INS)),
+export function useSignInApps(): SignInApps | null {
+  const { data, error } = useCachedLoad<SignInApps>("/api/account/providers", () =>
+    fetch("/api/account/providers").then((r) => (r.ok ? (r.json() as Promise<SignInApps>) : NO_SIGN_INS)),
   );
   return data ?? (error ? NO_SIGN_INS : null);
 }
@@ -140,6 +142,17 @@ export function AccountSection() {
     setAccount((a) => ({ ...a, name }));
     useAuth.getState().setAuth(required, { ...me, name: name || me.username });
   };
+  const signins = account.signins.filter((x) => linkable.includes(x.provider));
+  const unlink = async (p: Provider) => {
+    const r = await fetch(`/api/auth/identity/${p}`, { method: "DELETE" });
+    const d = (await r.json().catch(() => ({}))) as { error?: string };
+    if (!r.ok) throw failure(r, d);
+    await load();
+  };
+  // One account (owner, 2026-11-26): in the Mac app, a server that takes the Creator Toolset account shows that account
+  // and no list of its own, so the same Google is never two things on one page. The account's row carries this
+  // server's sign-ins too: Disconnect drops one in both places, Sign out ends both.
+  const one = hasAccountBridge() && !!providers.account;
 
   return (
     <>
@@ -153,17 +166,8 @@ export function AccountSection() {
         </Card>
       </Section>
 
-      <SignIns
-        signins={account.signins.filter((x) => linkable.includes(x.provider))}
-        open={linkable.filter((p) => !account.signins.some((x) => x.provider === p))}
-        unlink={async (p) => {
-          const r = await fetch(`/api/auth/identity/${p}`, { method: "DELETE" });
-          const d = (await r.json().catch(() => ({}))) as { error?: string };
-          if (!r.ok) throw failure(r, d);
-          await load();
-        }}
-      />
-      {hasAccountBridge() && <MacAppAccount />}
+      {!one && <SignIns signins={signins} open={linkable.filter((p) => !account.signins.some((x) => x.provider === p))} unlink={unlink} />}
+      {hasAccountBridge() && <MacAppAccount here={one ? { linked: signins.map((s) => s.provider), unlink, signOut: logout } : undefined} />}
       {own && (
         <Section title="Session">
           <Card>
@@ -182,8 +186,8 @@ const isProvider = (p: string | undefined): p is Provider => !!p && (PROVIDERS a
  * Disconnect, then a row with Add for each one still open. The server lists a provider only where it runs sign-ins (GET
  * /api/account/providers: none off a hosted server), and only a listed provider's sign-in has a row, so Disconnect is
  * never offered where the server's route refuses it (api/auth.ts DELETE /identity/:provider). Nothing there and nothing
- * to add means no section at all. The Mac app's own account is never listed here: it is not a sign-in to this server
- * (MacAppAccount below).
+ * to add means no section at all. In the Mac app, on a server that takes the Creator Toolset account, this list is not
+ * drawn: the account's own row covers it (MacAppAccount below, `here`).
  */
 function SignIns({ signins, open, unlink }: { signins: SignIn[]; open: Provider[]; unlink: (p: Provider) => Promise<void> }) {
   if (!signins.length && !open.length) return null;
@@ -227,7 +231,7 @@ function SignIns({ signins, open, unlink }: { signins: SignIn[]; open: Provider[
 }
 
 /** What the Mac app's account row's menu offers: one more sign-in for the account, dropping one it has, and signing the app out. */
-export function macAccountItems(o: { linked: Provider[]; open: Provider[]; link: (p: Provider) => void; unlink: (p: Provider) => void; signOut: () => void }): RowMenuItem[] {
+export function macAccountItems(o: { linked: Provider[]; open: Provider[]; link: (p: Provider) => void; unlink: (p: Provider) => void | Promise<void>; signOut: () => void | Promise<void> }): RowMenuItem[] {
   return [
     ...o.open.map((p) => ({ label: `Add ${PROVIDER_NAME[p]}`, onSelect: async () => o.link(p) })),
     { label: "Sign out", onSelect: async () => o.signOut() },
@@ -236,14 +240,27 @@ export function macAccountItems(o: { linked: Provider[]; open: Provider[]; link:
 }
 
 /**
- * Creator Toolset account, in the Mac app only: the account the app itself is signed in to, which is the app's and not a
- * sign-in to the server in the window. One row whatever its state, so a provider this server also signs in with is
- * never listed twice: signed out, "Not signed in" and a button for each sign-in the app offers; signed in, who it is
- * (their name over their address) and the ways in, with
- * the rest (one more sign-in, Disconnect, Sign out) in its menu. Nothing to show (no account server, none offered) means
- * no section.
+ * The account row's ways in, and the ones Disconnect is offered for: `first` is the sign-in the account was made with
+ * (it stays, as on the account server), `linked` the ones added to the account since, `here` the ones the server in
+ * the window has for the person (one that is only there can go).
  */
-function MacAppAccount() {
+export function accountWays(first: Provider | undefined, linked: Provider[], here: Provider[] = []): { ways: Provider[]; droppable: Provider[] } {
+  const ways = [...new Set([first, ...linked, ...here].filter((p): p is Provider => !!p))];
+  return { ways, droppable: ways.filter((p) => linked.includes(p) || (p !== first && here.includes(p))) };
+}
+
+/**
+ * Creator Toolset account, in the Mac app only: the account the app itself is signed in to. One row whatever its state:
+ * signed out, "Not signed in" and a button for each sign-in the app offers; signed in, who it is (their name over their
+ * address) and the ways in, with the rest (one more sign-in, Disconnect, Sign out) in its menu. Nothing to show (no
+ * account server, none offered) means no section.
+ *
+ * `here`: the server in the window takes this account, so this row is its only account section. The ways in then
+ * count the sign-ins that server has for the person too; Disconnect drops one from the server first (its refusal
+ * stops there) and then from the account, and Sign out signs the app out and then ends the window's sign-in, in that
+ * order, so the sign-in page that follows does not sign the window straight back in through the account.
+ */
+function MacAppAccount({ here }: { here?: { linked: Provider[]; unlink: (p: Provider) => Promise<void>; signOut: () => Promise<void> } }) {
   const mac = useMacAccount({ first: "offered" });
   const macIn = mac.account.state === "signedIn" ? mac.account : null;
   const linked = linkedOf(mac.account).map((l) => l.provider);
@@ -256,7 +273,15 @@ function MacAppAccount() {
   }, [failed]);
   if (!macIn && !mac.providers.length) return null;
   const first = macIn && isProvider(macIn.provider) ? macIn.provider : undefined;
-  const ways = [...new Set([first, ...linked].filter((p): p is Provider => !!p))];
+  const { ways, droppable } = accountWays(first, linked, here?.linked);
+  const unlink = async (p: Provider) => {
+    if (here?.linked.includes(p)) await here.unlink(p);
+    if (linked.includes(p)) await mac.unlink(p);
+  };
+  const signOut = async () => {
+    await mac.signOut();
+    await here?.signOut();
+  };
   return (
     <Section id="mac-account" title="Creator Toolset account">
       <Card>
@@ -269,7 +294,7 @@ function MacAppAccount() {
             macIn ? (
               <RowMenu
                 label="Creator Toolset account actions"
-                items={macAccountItems({ linked, open: mac.providers.filter((p) => !ways.includes(p)), link: mac.link, unlink: mac.unlink, signOut: mac.signOut })}
+                items={macAccountItems({ linked: droppable, open: mac.providers.filter((p) => !ways.includes(p)), link: mac.link, unlink, signOut })}
               />
             ) : (
               <span className="flex items-center gap-1.5">

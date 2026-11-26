@@ -207,8 +207,15 @@ export const signInStartApp = new Hono<{ Variables: AuthVars }>();
 signInStartApp.get("/providers", (c) => {
   const origin = originOf(c);
   const on = (kind: Kind) => hasTeam() && !!signinVia(origin, kind);
-  // `password`: whether the login screen offers the password form at all (passwordsOff)
-  return c.json({ apple: on("apple"), google: on("google"), github: on("github"), ...(c.req.query("login") === "1" ? { password: !passwordsOff() } : {}) });
+  // `password`: whether the login screen offers the password form at all (passwordsOff). `account`: this server takes
+  // the Creator Toolset account (accountTicketHost), so the Mac app shows that account as the one sign-in here
+  return c.json({
+    apple: on("apple"),
+    google: on("google"),
+    github: on("github"),
+    ...(accountTicketHost() ? { account: true } : {}),
+    ...(c.req.query("login") === "1" ? { password: !passwordsOff() } : {}),
+  });
 });
 
 signInStartApp.get("/login/:kind", (c, next) => {

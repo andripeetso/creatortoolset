@@ -68,6 +68,10 @@ describe("with a service named in the server's .env", () => {
     process.env.ACCOUNT_SIGNIN_SERVICE = SERVICE;
     const asked = service({}, () => "");
     expect(await providers()).toEqual({ apple: true, google: true, github: true });
+    // with its own address set it takes the Creator Toolset account too, and says so (the Mac app's one account section)
+    process.env.PUBLIC_ORIGIN = "https://ct.test.example";
+    expect(await providers()).toEqual({ apple: true, google: true, github: true, account: true });
+    delete process.env.PUBLIC_ORIGIN;
     const to = await start("google", "site");
     expect(`${to.origin}${to.pathname}`).toBe(`${SERVICE}/api/account-signin/start/google`);
     expect(to.searchParams.get("return")).toBe("http://localhost/api/auth/service/callback");

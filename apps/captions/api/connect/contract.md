@@ -181,6 +181,9 @@ account at that service gets a session there without a sign-in sheet:
    the server's host (one the account signed in to through the service, and one the service serves) and the
    base64url SHA-256 of a verifier the phone keeps. The ticket is bound to the token's key (a `jkt` in the body is
    ignored). → `{ ticket, expiresAt }`: one use, 5 minutes; at most 5 unspent per account (its oldest drops).
+   `signIn: true` in the body says the person pressed a sign-in button on that server's own sign-in page in the app.
+   That is a sign-in there, as the same button in a browser is: the ticket is given for any server the service
+   serves, and the account remembers the server when the ticket is collected. An app trying by itself never sends it.
 2. Phone → the server `POST /oauth/token` as above with
    `subject_token_type=urn:creatortoolset:params:oauth:token-type:account-ticket`, `subject_token=<ticket>`,
    `code_verifier=<verifier>` and a DPoP proof (required). At most 10 a minute per address that get as far as the
@@ -201,7 +204,9 @@ whole app is that window: after step 1, Mac app → the server `POST /api/auth/a
 no `ath`). The server redeems the ticket as in step 3 and answers 200 `{ ok: true }` with the sign-in cookie (a
 `browser-cookie` session, `deviceType: "desktop"`); the app puts it in its window. 404 where no service is named; 400
 for anything that does not check out (no cookie); 429 past 10 a minute per address. The web app's sign-in page asks the
-Mac app for this before it shows (`src/lib/mac-window-sign-in.ts`).
+Mac app for this before it shows (`src/lib/mac-window-sign-in.ts`). A press on that page's Google, Apple or GitHub
+button goes the same way (`apps/mac` `Shell.swift` `pageSignIn`): the app signs in to its account first when it is
+not, asks the ticket with `signIn: true`, and only when that does not get the window in runs the server's own sign-in.
 
 ### Using a session on `/api/*`
 

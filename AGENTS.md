@@ -112,6 +112,10 @@ from a cookie, where it would count as the account itself.
 On This Mac the Mac app makes the owner's account and its password itself ("admin", shown to nobody): a person's name on
 screen comes from `shownName` (`api/users.ts`; `me.name` in the pages), never the username, and a sign-in name, a
 password, its code and Sign out are shown only where `signsIn` (`src/lib/auth.ts`) says the person has their own.
+One account in the Mac app (owner, 2026-11-26): the Creator Toolset account is the sign-in, on servers too. A server
+that takes it (`accountTicketHost`, `account` in `GET /api/account/providers`) shows that account as its only account
+section in Settings → Account, and its sign-in page's Google, Apple and GitHub buttons sign in through it
+(`Shell.swift` `pageSignIn`). Never draw a server's own Sign-ins list beside it there.
 
 **No secrets in code, docs or fixtures.** Keys, tokens, cookies and passwords come from environment variables or
 per-user files written with mode 0600. Read them with `process.env` at the point of use (paid service keys only

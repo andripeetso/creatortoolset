@@ -9,7 +9,7 @@ import { useAuth, type Me } from "@/lib/auth";
 // who signs in to a server with a password of their own.
 
 vi.mock("sonner", () => ({ toast: Object.assign(vi.fn(), { success: vi.fn(), error: vi.fn() }) }));
-const { AccountSection } = await import("./AccountSection");
+const { AccountSection, accountWays } = await import("./AccountSection");
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -91,4 +91,29 @@ it("someone with a password of their own on a server keeps the sign-in name, the
   for (const row of ["Sign-in name", "Password", "Sign-in code", "Sign-ins", "Session", "Sign out"]) expect(text()).toContain(row);
   // in a browser there is no Mac app, so no account of its own
   expect(text()).not.toContain("Creator Toolset account");
+});
+
+it("in the Mac app, a server that takes the Creator Toolset account shows that account and no Sign-ins list of its own", async () => {
+  useAuth.setState({ required: true, kind: "server", me: me({ username: "sam", name: "Sam", noPassword: true }) });
+  account = { username: "sam", name: "Sam", login: "sam", identities: ["google", "apple"], signins: [{ provider: "google", email: "sam@tinyacrobatics.com", name: "Sam", picture: null }, { provider: "apple", email: "sam@tinyacrobatics.com", name: "", picture: null }], picture: null };
+  providers = { apple: true, google: true, github: true, account: true };
+  macApp({ state: "signedIn", name: "Sam", email: "sam@tinyacrobatics.com", provider: "google", logins: "", providers: "google,apple,github" });
+  await show();
+  expect(text()).toContain("Creator Toolset account");
+  expect(text()).not.toContain("Sign-ins");
+  // the account was made with Google; Apple is one this server has for the person: both are its ways in
+  expect(text()).toContain("Google · Apple");
+  // the server's own sign-in can go from here, the one the account was made with can not
+  expect(accountWays("google", [], ["google", "apple"])).toEqual({ ways: ["google", "apple"], droppable: ["apple"] });
+  expect(accountWays("google", ["github"], ["google"])).toEqual({ ways: ["google", "github"], droppable: ["github"] });
+});
+
+it("a server with sign-ins of its own (no account service) keeps its Sign-ins list beside the Mac app's account", async () => {
+  useAuth.setState({ required: true, kind: "server", me: me({ username: "sam", name: "Sam" }) });
+  account = { username: "sam", name: "Sam", login: "sam", identities: ["google"], signins: [{ provider: "google", email: "sam@tinyacrobatics.com", name: "Sam", picture: null }], picture: null };
+  providers = { apple: false, google: true, github: false };
+  macApp({ state: "signedOut", providers: "google,apple,github" });
+  await show();
+  expect(text()).toContain("Sign-ins");
+  expect(text()).toContain("Creator Toolset account");
 });

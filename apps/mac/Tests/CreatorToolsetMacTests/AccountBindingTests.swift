@@ -96,6 +96,13 @@ final class AccountBindingTests: XCTestCase {
         XCTAssertEqual(StubServer.seen.last!.value(forHTTPHeaderField: "Authorization"), "DPoP \(token)")
     }
 
+    /// A press on a server's own sign-in button says so in the ticket's request; the app trying by itself never does,
+    /// so the account server keeps refusing a server the account never signed in to.
+    func testOnlyAPressedSignInAsksATicketAsASignIn() {
+        XCTAssertNil(appTicketBody(host: "studio.example.com", challenge: "c", signIn: false)["signIn"])
+        XCTAssertEqual(appTicketBody(host: "studio.example.com", challenge: "c", signIn: true)["signIn"] as? Bool, true)
+    }
+
     /// A server the account signed in to: the ticket is asked for with this Mac's bound token and proof, and swapped at
     /// the server with the verifier and a proof of the same key that carries no token (the server never sees it).
     func testTheWindowSignsInWithAnAccountTicketBoundToThisMac() async throws {

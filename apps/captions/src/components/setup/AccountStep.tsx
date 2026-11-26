@@ -129,9 +129,10 @@ export function useMacAccount({ on = true, first = "status" }: { on?: boolean; f
     setBusy(provider);
     void ask(provider).finally(() => setBusy(null));
   };
+  /** Resolves once the app has signed out, so what follows (ending this server's sign-in too) never races it. */
   const signOut = () => {
     setBusy("signout");
-    void ask("signout").finally(() => setBusy(null));
+    return ask("signout").finally(() => setBusy(null));
   };
   // a link or unlink that didn't go through leaves the account as it was and says why once (a closed sheet says nothing)
   const [problem, setProblem] = useState<string | null>(null);

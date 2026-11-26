@@ -251,13 +251,14 @@ struct AccountClient {
 
     /// POST /api/account-signin/app-ticket with the token: a one-time ticket for `host`, a server the account signed in
     /// to through this account server, bound to this Mac's key and to `challenge`. The account server answers only a token
-    /// bound to this key at its sign-in, and refuses a server the account never signed in to.
-    func appTicket(_ token: String, host: String, challenge: String) async throws -> String {
+    /// bound to this key at its sign-in, and refuses a server the account never signed in to, unless `signIn`: the
+    /// person pressed a sign-in button on that server's own sign-in page, which is a sign-in there.
+    func appTicket(_ token: String, host: String, challenge: String, signIn: Bool = false) async throws -> String {
         var request = URLRequest(url: URL(string: "/api/account-signin/app-ticket", relativeTo: server)!)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         try authorize(&request, token)
-        request.httpBody = try JSONSerialization.data(withJSONObject: ["host": host, "challenge": challenge])
+        request.httpBody = try JSONSerialization.data(withJSONObject: appTicketBody(host: host, challenge: challenge, signIn: signIn))
         struct Reply: Decodable { let ticket: String }
         let reply: Reply = try await send(request)
         return reply.ticket
@@ -324,6 +325,14 @@ func accountTicketRequest(base: URL, ticket: String, verifier: String, key: DPoP
     let client = ["label": name, "os": "macOS", "appVersion": version]
     request.httpBody = try JSONSerialization.data(withJSONObject: ["ticket": ticket, "verifier": verifier, "client": client])
     return request
+}
+
+/// What the app asks a ticket with. `signIn` is sent only for a press on the server's own sign-in button, never when
+/// the app tries by itself as a window opens: the account server takes it as the person signing in to that server.
+func appTicketBody(host: String, challenge: String, signIn: Bool) -> [String: Any] {
+    var body: [String: Any] = ["host": host, "challenge": challenge]
+    if signIn { body["signIn"] = true }
+    return body
 }
 
 /// The page's account message: "status" or "offered" (the same question; setup's account screen and Settings ask
