@@ -147,12 +147,10 @@ describe("GitHub sign-in (hosted mode, GitHub's endpoints faked)", () => {
     for (const bad of ["https://evil.example/", "//evil.example/", "/\\evil.example", "/api/auth/logout", "admin"]) expect(await via(bad), bad).toBe("/");
   });
 
-  it("shows the login screen only the sign-ins an account here has linked", async () => {
-    // cy has GitHub linked (the test above); with no account on GitHub, the button would only ever fail
-    expect(await (await app.request("/api/account/providers?login=1")).json()).toMatchObject({ apple: false, google: false, github: true });
+  it("shows the login screen every sign-in the server offers, linked to an account here or not", async () => {
     const { unlinkIdentity } = await import("./users");
     unlinkIdentity(findUser("cy")!, "github");
-    expect(await (await app.request("/api/account/providers?login=1")).json()).toMatchObject({ apple: false, google: false, github: false });
+    expect(await (await app.request("/api/account/providers?login=1")).json()).toMatchObject({ apple: false, google: false, github: true });
     // Settings (linking another) still sees every provider with keys
     expect(await (await app.request("/api/account/providers")).json()).toEqual({ apple: false, google: false, github: true });
     linkIdentity(findUser("cy")!, { provider: "github", sub: "4242", email: "" });

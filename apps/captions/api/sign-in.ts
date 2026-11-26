@@ -6,7 +6,7 @@ import { writeFileSync, readFileSync, renameSync } from "node:fs";
 import path from "node:path";
 import { env, hasTeam } from "./lib/env";
 import { escHtml, plainPage } from "./lib/plain-page";
-import { SIGNIN_NAME, bumpUsage, createUser, findByIdentity, findByLogin, findUser, isSignInProvider, linkIdentity, listUsers, refreshPicture, type SignInProvider, type UserRecord } from "./users";
+import { SIGNIN_NAME, bumpUsage, createUser, findByIdentity, findByLogin, findUser, isSignInProvider, linkIdentity, refreshPicture, type SignInProvider, type UserRecord } from "./users";
 
 /**
  * Sign in with Apple, Google and GitHub to a site account, and linking one to an account (Settings → Account). A hosted
@@ -200,13 +200,13 @@ const sweep = () => {
 export const signInStartApp = new Hono<{ Variables: AuthVars }>();
 
 /**
- * Which sign-in buttons show: the providers this server has keys for (none off hosted). `?login=1` (the login screen):
- * only the ones an account here has linked, since on a server that takes people by invitation any other can only fail.
+ * Which sign-in buttons show: the providers this server offers (none off hosted), on the login screen too (owner,
+ * 2026-11-26: every sign-in the server has, the same list everywhere). One no account here has linked yet says how to
+ * add it (finish). `?login=1` adds whether the login screen offers the password form.
  */
 signInStartApp.get("/providers", (c) => {
   const origin = originOf(c);
-  const linked = (kind: Kind) => c.req.query("login") !== "1" || process.env.SIGN_UPS === "open" || listUsers().some((u) => u.identities?.some((i) => i.provider === kind));
-  const on = (kind: Kind) => hasTeam() && !!signinVia(origin, kind) && linked(kind);
+  const on = (kind: Kind) => hasTeam() && !!signinVia(origin, kind);
   // `password`: whether the login screen offers the password form at all (passwordsOff)
   return c.json({ apple: on("apple"), google: on("google"), github: on("github"), ...(c.req.query("login") === "1" ? { password: !passwordsOff() } : {}) });
 });
@@ -452,7 +452,7 @@ function finish(c: Context, mode: Mode, who: Who, withCookie: boolean) {
   }
   const known = findByIdentity(kind, who.sub);
   // closed unless the server's owner opened it: nobody gets an account here just by signing in
-  if (!known && process.env.SIGN_UPS !== "open") return fail("There is no account here for that sign-in. This server takes new people by invitation");
+  if (!known && process.env.SIGN_UPS !== "open") return fail(`There is no account here for that sign-in. Sign in another way, then add ${SIGNIN_NAME[kind]} in Settings → Account`);
   if (known) refreshPicture(known, who);
   const user = known ?? newAccountFor(who);
   // an app started this sign-in: no cookie for the sign-in sheet; the app swaps this code for its own session
