@@ -85,6 +85,17 @@ describe("a graphics-card run that goes quiet", () => {
     expect(settled).toHaveBeenCalledWith("words", 1);
   });
 
+  it("a worker the caller keeps outlives a finished run (its model stays loaded), and is ended on cancel", async () => {
+    vi.stubGlobal("Worker", FakeWorker);
+    const kept = new FakeWorker();
+    const first = transcribeAudio(new Float32Array(16), FIRST_JOB_MODEL, null, "wasm", {}, kept as unknown as Worker);
+    kept.says({ type: "done", words: [] });
+    await first.promise;
+    expect(kept.terminate).not.toHaveBeenCalled();
+    transcribeAudio(new Float32Array(16), FIRST_JOB_MODEL, null, "wasm", {}, kept as unknown as Worker).cancel();
+    expect(kept.terminate).toHaveBeenCalled();
+  });
+
   it("never stops a run on the processor, which has nothing to fall back to", async () => {
     const { worker, settled } = run("wasm");
     worker.says({ type: "transcribe-start" });

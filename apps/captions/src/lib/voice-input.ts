@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { SPEECH_CODE, type SpeechReason, type VoiceView } from "../../contracts/voice";
-import { CLOUD_MODEL_ID, MODELS, detectDevice, storedEngine, transcribeAudio } from "./transcribe";
+import { CLOUD_MODEL_ID, MODELS, detectDevice, newTranscribeWorker, storedEngine, transcribeAudio } from "./transcribe";
 import { interimWords } from "./voice-interim";
 
 /**
@@ -106,12 +106,17 @@ async function liveWords(recording: Blob, signal: AbortSignal): Promise<string |
 }
 
 /** The words so far from the browser's model, run on the audio so far; a new pass stops the one before it. */
-async function browserLiveWords(recording: Blob, signal: AbortSignal): Promise<string | null> {
+/** `held`: one worker for the whole recording, so the model loads once, not on every pass; a cancelled pass ends it. */
+async function browserLiveWords(recording: Blob, signal: AbortSignal, held: { worker?: Worker }): Promise<string | null> {
   const pcm = await toPcm16k(recording);
   const device = await detectDevice();
   if (signal.aborted) return null;
-  const job = transcribeAudio(pcm, browserModel(), null, device, {});
-  signal.addEventListener("abort", () => job.cancel(), { once: true });
+  const worker = (held.worker ??= newTranscribeWorker());
+  const job = transcribeAudio(pcm, browserModel(), null, device, {}, worker);
+  signal.addEventListener("abort", () => {
+    job.cancel();
+    if (held.worker === worker) held.worker = undefined;
+  }, { once: true });
   return (await job.promise)
     .map((w) => w.text.trim())
     .filter(Boolean)
@@ -219,14 +224,17 @@ export function useVoiceInput(onText: (text: string) => void) {
     const limit = setTimeout(() => recorder.state === "recording" && recorder.stop(), MAX_S * 1000);
     // the audio so far, as one recording: the first chunk carries the container's header
     const soFar = () => new Blob(chunks, { type: recorder.mimeType });
+    const held: { worker?: Worker } = {};
     const live =
       route.via === "browser"
-        ? interimWords((sig) => browserLiveWords(soFar(), sig), setInterim, INTERIM_EVERY_MS)
+        ? interimWords((sig) => browserLiveWords(soFar(), sig, held), setInterim, INTERIM_EVERY_MS)
         : route.live
           ? interimWords((sig) => liveWords(soFar(), sig), setInterim, INTERIM_EVERY_MS)
           : null;
     const halt = () => {
       live?.stop();
+      held.worker?.terminate();
+      held.worker = undefined;
       setInterim("");
     };
     control.current = {

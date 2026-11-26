@@ -79,11 +79,23 @@ async function createTranscriber(model: string, device: "webgpu" | "wasm") {
   throw lastErr;
 }
 
+// one model kept per worker: a worker the page keeps (the mic's words while talking) loads it once, not per message
+let kept: { key: string; t: ReturnType<typeof createTranscriber> } | null = null;
+function transcriberFor(model: string, device: "webgpu" | "wasm") {
+  const key = `${model}|${device}`;
+  if (kept?.key !== key) {
+    const t = createTranscriber(model, device);
+    kept = { key, t };
+    t.catch(() => kept?.t === t && (kept = null));
+  }
+  return kept.t;
+}
+
 self.onmessage = async (ev: MessageEvent<InMsg>) => {
   const { pcm, model, language, device } = ev.data;
   try {
     post({ type: "load-progress", progress: 0 });
-    const transcriber = await createTranscriber(model, device);
+    const transcriber = await transcriberFor(model, device);
 
     post({ type: "transcribe-start" });
     // every word it writes is a sign of life: the page gives up on a graphics run that goes quiet (lib/transcribe.ts)

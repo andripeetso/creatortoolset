@@ -199,17 +199,20 @@ export interface TranscribeCallbacks {
  */
 export const STALL_MS = 60_000;
 
+export const newTranscribeWorker = () =>
+  new Worker(new URL("../workers/transcribe.worker.ts", import.meta.url), { type: "module" });
+
 export function transcribeAudio(
   pcm: Float32Array,
   model: string,
   language: string | null,
   device: "webgpu" | "wasm",
   cb: TranscribeCallbacks,
+  /** A worker the caller keeps for several runs (it keeps its model loaded); the caller ends it. Cancel still ends it. */
+  shared?: Worker,
 ): { promise: Promise<Word[]>; cancel: () => void } {
-  const worker = new Worker(
-    new URL("../workers/transcribe.worker.ts", import.meta.url),
-    { type: "module" },
-  );
+  const worker = shared ?? newTranscribeWorker();
+  const done = () => (shared ? (worker.onmessage = worker.onerror = null) : worker.terminate());
 
   let quiet: ReturnType<typeof setTimeout> | undefined;
   const promise = new Promise<Word[]>((resolve, reject) => {
@@ -228,7 +231,7 @@ export function transcribeAudio(
       } else if (m.type === "transcribe-start") {
         cb.onTranscribeStart?.();
       } else if (m.type === "done") {
-        worker.terminate();
+        done();
         const words: Word[] = m.words.map(
           (w: { text: string; start: number; end: number }, i: number) => ({
             id: i,
@@ -240,12 +243,12 @@ export function transcribeAudio(
         );
         resolve(words);
       } else if (m.type === "error") {
-        worker.terminate();
+        done();
         reject(new Error(m.message));
       }
     };
     worker.onerror = (e) => {
-      worker.terminate();
+      done();
       reject(new Error(e.message || "Could not transcribe on this computer"));
     };
   });
