@@ -75,15 +75,15 @@ describe("library transcripts with words", () => {
     expect(segmentsOf(db, "ver_1")).toEqual([{ start: 0.1, end: 0.8, text: "So um so" }]);
   });
 
-  it("This Mac's own model comes before a key; with neither, the job waits for a key", () => {
+  it("a key goes first; with none, only a server on its owner's computer transcribes by itself", () => {
     process.env.CT_LOCAL = "1";
-    expect(transcribeRoute("local")).toEqual({ provider: "device" });
-    delete process.env.CT_LOCAL;
     expect(transcribeRoute("local")).toEqual({ provider: "deepgram", key: "dg-test" });
     delete process.env.DEEPGRAM_API_KEY;
+    expect(transcribeRoute("local")).toEqual({ provider: "device" });
     process.env.CT_MODE = "hosted";
     expect(() => transcribeRoute("local")).toThrow(NeedsKey);
     delete process.env.CT_MODE;
+    delete process.env.CT_LOCAL;
     expect(() => transcribeRoute("local")).toThrow(NeedsKey);
   });
 
@@ -105,11 +105,11 @@ describe("library transcripts with words", () => {
     expect(db.prepare("SELECT provider, language FROM transcripts WHERE version_id = 'ver_1'").get()).toEqual({ provider: "device", language: "et" });
   });
 
-  it("with a key too, This Mac's model writes it and the key is not spent", async () => {
+  it("with a key, the on-device model is never reached", async () => {
     process.env.CT_LOCAL = "1";
     await transcribeVersion(db, "ver_1", wav, "local", dir);
-    expect(heard).toEqual(["ver_1"]);
-    expect(urls).toEqual([]);
+    expect(heard).toEqual([]);
+    expect(urls).toHaveLength(1);
   });
 
   it("a transcript saved without words reads back as null words", () => {
