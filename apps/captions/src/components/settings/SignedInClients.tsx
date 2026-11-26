@@ -43,7 +43,6 @@ export function ClientRow({ session, now, mine, onRevoke }: { session: ClientSes
       title={
         <span className="flex items-center gap-1.5">
           <span className="truncate">{client.label || session.label || client.model || said?.name || client.os || session.subject || "Device"}</span>
-          {session.current && <span className="shrink-0 rounded-md border border-border/50 bg-muted/50 px-1 py-0.5 text-[10px] font-normal text-muted-foreground">This device</span>}
         </span>
       }
       subtitle={about || undefined}
@@ -60,9 +59,10 @@ export function ClientRow({ session, now, mine, onRevoke }: { session: ClientSes
 }
 
 /**
- * Settings → Computers → Signed-in devices: the live pairing links and every sign-in to this server (each browser, the
- * Mac app's window, each phone and iPad, however it signed in), live from the server's access events. Create link makes
- * a one-time link; Revoke others signs out every other sign-in of this account (never the team's).
+ * Settings → Computers → Phones and browsers: the live pairing links and every other sign-in to this server (each
+ * browser, another Mac app's window, each phone and iPad, however it signed in), live from the server's access events.
+ * The sign-in the page is open in is not listed: Sign out ends it. Create link makes a one-time link; Revoke others
+ * signs out every other sign-in of this account (never the team's).
  * `create` opens Create link (the page's `?phone=1`).
  */
 export function PhonesSection({ create, onCreateChange }: { create: boolean; onCreateChange: (open: boolean) => void }) {
@@ -73,11 +73,11 @@ export function PhonesSection({ create, onCreateChange }: { create: boolean; onC
   const [newest, setNewest] = useState<string | null>(null);
   const [revokingOthers, setRevokingOthers] = useState(false);
   const links = (view?.pairingLinks ?? []).filter((l) => !Number.isNaN(ms(l.expiresAt)));
-  const sessions = view?.clientSessions ?? [];
-  const now = useNow(links.length > 0 || sessions.some((s) => s.connected || s.current));
+  const sessions = (view?.clientSessions ?? []).filter((s) => !s.current);
+  const now = useNow(links.length > 0 || sessions.some((s) => s.connected));
   const live = links.filter((l) => ms(l.expiresAt) > now);
   // Revoke others is this account's other sign-ins: an admin's list also holds the team's, which one press never ends
-  const other = (s: ClientSession) => !s.current && (!mine || s.subject === mine);
+  const other = (s: ClientSession) => !mine || s.subject === mine;
   const others = sessions.some(other);
 
   const created = (link: CreatedLink) => {
@@ -118,14 +118,14 @@ export function PhonesSection({ create, onCreateChange }: { create: boolean; onC
   );
 
   return (
-    <Section id="phones" title="Signed-in devices" action={action}>
+    <Section id="phones" title="Phones and browsers" action={action}>
       <Card>
         {!view && error ? (
-          <ErrorRow title="Could not load signed-in devices" detail={error} retry={retry} />
+          <ErrorRow title="Could not load phones and browsers" detail={error} retry={retry} />
         ) : !view ? (
           <LoadingRow />
         ) : live.length === 0 && sessions.length === 0 ? (
-          <EmptyRow title="No signed-in devices" description="A phone or iPad signs in here with a link from Create link." />
+          <EmptyRow title="No phones or browsers" description="A phone or iPad signs in here with a link from Create link." />
         ) : null}
         {live.map((l) => (
           <PairingLinkCard key={l.id} link={l} created={made.get(l.id)} now={now} startOpen={l.id === newest} onRevoke={revokeLink} />

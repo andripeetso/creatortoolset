@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Switch } from "@/components/ui/switch";
 import { getEndpoints, getPhoneNotifications, hostOf, setPhoneNotifications, type Endpoint, type PhoneNotifications } from "@/lib/access";
 import { setNetworkAccess, setReachFromAnywhere } from "@/lib/thisMac";
-import { Card, Row, Section, Status, markSave } from "./ui";
+import { Row, Status, markSave } from "./ui";
 import type { ThisMacState } from "./ThisMacSection";
 
 /** Reach from anywhere's line for each state the Mac app reports. */
@@ -79,7 +79,7 @@ async function untilAccess(on: boolean): Promise<Endpoint[] | null> {
 }
 
 /**
- * This Mac's connections, in its Mac app: Network access (other devices on the network reach it), the addresses it is
+ * This Mac's connections, rows of the This Mac section (ComputersSection) in its Mac app: Network access (other devices on the network reach it), the addresses it is
  * reachable at, and Reach from anywhere. Drawn only for the server on this Mac (ComputersSection): another server's
  * addresses are not this computer's, and the switch would change the wrong one.
  */
@@ -116,23 +116,21 @@ export function ConnectionsCard({ mac }: { mac: ThisMacState | null }) {
         ? `Reachable on your network at ${hostOf(lan.httpBaseUrl)}.`
         : "Only this Mac can connect.";
   return (
-    <Section id="connections" title="This Mac">
-      <Card>
-        <Row
-          id="network-access"
-          title="Network access"
-          description={description}
-          status={problem ? <Status tone="broken">{problem}</Status> : undefined}
-          control={<Switch checked={!!lan} disabled={busy || !endpoints} aria-label="Network access" onCheckedChange={(on) => void turn(on)} />}
-        />
-        {(endpoints ?? [])
-          .filter((e) => e !== lan)
-          .map((e) => (
-            <Row key={e.httpBaseUrl} title={e.kind === "tailnet" ? "Tailnet" : hostOf(e.httpBaseUrl)} description={`Reachable at ${e.httpBaseUrl}`} />
-          ))}
-        <ReachFromAnywhereRow mac={mac} />
-        <PhoneNotificationsRow />
-      </Card>
-    </Section>
+    <>
+      <Row
+        id="network-access"
+        title="Network access"
+        description={description}
+        status={problem ? <Status tone="broken">{problem}</Status> : undefined}
+        control={<Switch checked={!!lan} disabled={busy || !endpoints} aria-label="Network access" onCheckedChange={(on) => void turn(on)} />}
+      />
+      {(endpoints ?? [])
+        .filter((e) => e !== lan)
+        .map((e) => (
+          <Row key={e.httpBaseUrl} title={e.kind === "tailnet" ? "Tailnet" : hostOf(e.httpBaseUrl)} description={`Reachable at ${e.httpBaseUrl}`} />
+        ))}
+      <ReachFromAnywhereRow mac={mac} />
+      <PhoneNotificationsRow />
+    </>
   );
 }

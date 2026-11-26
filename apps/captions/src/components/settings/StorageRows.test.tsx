@@ -248,7 +248,7 @@ describe("Folder access (the Mac app's read list)", () => {
 
   it("lists each folder this Mac reads, each with its menu; a drop's is copied on import with Allow", () => {
     const html = draw(["/Volumes/NAS/FOOTAGE", "/Users/tiny/Downloads"], ["/Volumes/NAS/FOOTAGE"]);
-    expect(html).toContain(">This Mac<");
+    expect(html).toContain(">Folder access<");
     expect(html).toContain('aria-label="Actions for FOOTAGE"');
     expect(html).toContain('aria-label="Actions for Downloads"');
     expect(html.match(/Copied on import/g)).toHaveLength(1);

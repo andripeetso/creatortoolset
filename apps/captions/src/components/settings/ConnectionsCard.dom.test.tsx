@@ -87,7 +87,6 @@ it("in the Mac app with Network access on: the addresses it is reachable at, and
   (window as { webkit?: unknown }).webkit = { messageHandlers: { thisMac: { postMessage } } };
   act(() => root.render(<ConnectionsCard mac={mac({})} />));
   await flush();
-  expect(text()).toContain("This Mac");
   expect(text()).toContain("Reachable on your network at tiny-mac.local:3773.");
   expect(text()).toContain("Reachable at http://tiny-mac.vpn.example:3773");
   act(() => document.querySelector<HTMLButtonElement>('[aria-label="Network access"]')!.click());

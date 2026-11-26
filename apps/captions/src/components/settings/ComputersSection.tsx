@@ -1,5 +1,5 @@
 import { SettingsDialog, SettingsDialogContent } from "./kit-dialog";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 import { Laptop, Monitor, Plus } from "lucide-react";
 import { useAuth } from "@/lib/auth";
@@ -28,7 +28,7 @@ import type { LibrarySummary } from "@contracts/library";
 
 const STORAGE_ALL = "/api/devices/storage?all=1";
 const DEVICES = "/api/devices";
-import { LoadBalancing } from "./ServerWorkSection";
+import { useLoadBalancing } from "./ServerWorkSection";
 
 /** The Mac's hardware, as the subtitle's tail for an admin: "Apple M2 Max · 12 cores · 32 GB". */
 const hardware = (d: Listed): string | null => {
@@ -38,11 +38,11 @@ const hardware = (d: Listed): string | null => {
 };
 
 /**
- * Settings → Computers: the computers that run this account's AI, and the phones that use the app. One row per Mac (a Mac
- * that registered twice is listed once), the `…` menu to rename or remove it, and in the Mac app this Mac's own switch. The
- * plug-ins' "computers" cards sit under the list, without a heading (the AI Editor's folded Load balancing). The ones
- * offline a day or more with no AI on them are a section of their own, open. Under them this computer's connections and
- * the Signed-in devices section (pairing links, and every sign-in to this server). `?add=1` opens the add-computer dialog, `?phone=1` Create link
+ * Settings → Computers, three sections and each thing once. Computers: one row per computer (a Mac that registered twice
+ * is listed once) with its load preference and its `…` menu, then the Load balancing switch; the plug-ins' "computers"
+ * cards sit under it without a heading. This Mac (Mac app only): its own switches, its connections (the server on this
+ * Mac only) and the folders it reads. Phones and browsers: pairing links and the other sign-ins. The computers offline a
+ * day or more with no AI on them are a section of their own. `?add=1` opens the add-computer dialog, `?phone=1` Create link
  * (other pages link there).
  */
 export function ComputersSection() {
@@ -80,9 +80,18 @@ export function ComputersSection() {
       </Button>
     </span>
   );
+  const balancing = useLoadBalancing();
   const phones = (
     <>
-      {thisMac && inMac && <ConnectionsCard mac={bridge} />}
+      {inMac && (
+        <Section id="connections" title="This Mac">
+          <Card>
+            <ThisMacSwitch bridge={bridge} />
+            {thisMac && <ConnectionsCard mac={bridge} />}
+          </Card>
+          <AllowedFolders />
+        </Section>
+      )}
       <PhonesSection create={phoning} onCreateChange={setPhoning} />
     </>
   );
@@ -119,30 +128,29 @@ export function ComputersSection() {
   const groups = groupComputers(computers, me.username, names, (id) => withAi.has(id));
   const listed = groups.filter((g) => !g.old);
   const old = groups.filter((g) => g.old);
-  // the Mac app's Mac when it is not on the list yet: its switch adds it
-  const unlisted = inMac && !groups.some((g) => g.mine);
 
   return (
     <>
       <Section id="computers" title="Computers" action={addButton}>
         <Card>
-          {listed.length === 0 && !unlisted && <EmptyRow title="No computers" />}
+          {listed.length === 0 && <EmptyRow title="No computers" />}
           {listed.map((g) => (
-            <ComputerRow key={g.primary.id} group={g} admin={me.role === "admin"} bridge={g.mine ? bridge : null} onChanged={load} />
+            <ComputerRow
+              key={g.primary.id}
+              group={g}
+              admin={me.role === "admin"}
+              bridge={g.mine ? bridge : null}
+              preference={balancing.preference(g.records.filter((r) => r.owner === me.username && r.work).map((r) => r.id), g.primary.name)}
+              onChanged={load}
+            />
           ))}
-          {unlisted && <ThisMacSwitch bridge={bridge} />}
+          {balancing.rows}
         </Card>
-        <div className="pt-5 empty:hidden">
-          <LoadBalancing computers={computers.filter((d) => d.owner === me.username)} />
-        </div>
-        {/* the plug-ins' cards sit under the list, with no heading of their own (the AI Editor's Load balancing) */}
+        {/* the plug-ins' cards sit under the list, with no heading of their own */}
         {devicesSectionsFor(me, webPlugins, "computers").map((s) => (
           <div key={s.id} className="pt-5 empty:hidden">{s.body}</div>
         ))}
       </Section>
-
-      {/* what this Mac may read: one computer's own list, so it sits with the computers, not in the sidebar */}
-      {inMac && <AllowedFolders />}
 
       {phones}
 
@@ -161,8 +169,8 @@ export function ComputersSection() {
   );
 }
 
-function ComputerRow({ group, admin, bridge, onChanged }: {
-  group: ComputerGroup; admin: boolean; bridge: ThisMacState | null; onChanged: () => void;
+function ComputerRow({ group, admin, bridge, preference, onChanged }: {
+  group: ComputerGroup; admin: boolean; bridge: ThisMacState | null; preference: ReactNode; onChanged: () => void;
 }) {
   const { primary, records, mine } = group;
   const Icon = primary.report?.machine?.os === "mac" || !primary.report?.machine ? Laptop : Monitor;
@@ -231,35 +239,36 @@ function ComputerRow({ group, admin, bridge, onChanged }: {
         title={title}
         subtitle={subtitle}
         actions={
-          <RowMenu
-            label={`${primary.name} actions`}
-            items={[
-              { label: "Set up", onSelect: () => setSetUp(true) },
-              { label: "Rename", onSelect: rename },
-              {
-                label: "Remove",
-                destructive: true,
-                confirm: {
-                  title: `Remove ${primary.name}?`,
-                  body: "The AI providers on it are removed too.",
-                  ok: "Remove",
+          <span className="flex items-center gap-2">
+            {preference}
+            <RowMenu
+              label={`${primary.name} actions`}
+              items={[
+                { label: "Set up", onSelect: () => setSetUp(true) },
+                { label: "Rename", onSelect: rename },
+                {
+                  label: "Remove",
+                  destructive: true,
+                  confirm: {
+                    title: `Remove ${primary.name}?`,
+                    body: "The AI providers on it are removed too.",
+                    ok: "Remove",
+                  },
+                  onSelect: remove,
                 },
-                onSelect: remove,
-              },
-            ]}
-          />
+              ]}
+            />
+          </span>
         }
       />
-      {mine && <ThisMacSwitch bridge={bridge} />}
       {setUp && <HelperDialog device={primary.id} name={primary.name} onClose={() => setSetUp(false)} />}
     </>
   );
 }
 
 /**
- * This Mac's own switches: Take work from this server adds this Mac to the account, and then it takes this server's jobs; Shared
- * drives. Under this Mac's row once it is on the list; before that they are its only rows (a row that could only name
- * this Mac has no action).
+ * This Mac's own switches, the first rows of the This Mac section: Take work from this server adds this Mac to the
+ * account, and then it takes this server's jobs; Shared drives.
  */
 function ThisMacSwitch({ bridge }: { bridge: ThisMacState | null }) {
   return (

@@ -31,8 +31,6 @@ const ALLOWED: Record<string, string[]> = {
   Folders: ["plugins/baby-acrobatics/web/EditorStorage.tsx", "src/components/settings/FoldersSection.tsx", "src/pages/library/MemberSettings.tsx"],
   // the Video Cleaner's own page, and a workspace's page
   Access: ["plugins/video-cleaner/web/CleanerAccess.tsx", "src/components/settings/WorkspaceSection.tsx"],
-  // the studio plug-in's Computers entry: Settings → Computers draws no title for it, its rows sit under the app's card
-  "Load balancing": ["plugins/baby-acrobatics/web.tsx", "src/components/settings/ServerWorkSection.tsx"],
   // a workspace's page, and the hosted admin board
   Accounts: ["plugins/hosted/web/AdminBoard.tsx", "src/components/settings/WorkspaceSection.tsx"],
   // Settings → Workspace: the form's section, or (no workspace yet) the empty one in its place, never both

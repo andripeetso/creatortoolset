@@ -4,7 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { AccessView, ClientSession, CreatedLink } from "@/lib/access";
 
-// Settings → Computers → Signed-in devices: pairing links (create, copy, expire, revoke) and the signed-in devices, live from the
+// Settings → Computers → Phones and browsers: pairing links (create, copy, expire, revoke) and the signed-in devices, live from the
 // server's access events.
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -135,13 +135,12 @@ async function show(startCreate = false) {
   await flush();
 }
 
-it("lists the signed-in devices: name, os and app version, how they are connected, This device without Revoke", async () => {
+it("lists the other sign-ins: name, os and app version, how they are connected; the one the page is open in is not listed", async () => {
   await show();
   expect(text()).toContain("Tiny iPhone");
   expect(text()).toContain("iOS 26 · 1.4.0");
   expect(text()).toContain("Connected for 3 min");
-  expect(text()).toContain("This device");
-  // this device is the one row without a Revoke of its own
+  expect(text()).not.toContain("Safari");
   expect(document.querySelectorAll("button").length).toBe(3); // Revoke others, Create link, the phone's Revoke
   expect(button("Revoke others").disabled).toBe(false);
 });
@@ -264,5 +263,4 @@ it("revokes a link, one device, and every other device", async () => {
   await flush();
   expect(calls.at(-1)).toEqual({ method: "POST", url: "/api/auth/clients/revoke-others", body: {} });
   expect(text()).not.toContain("Living room iPad");
-  expect(text()).toContain("This device");
 });

@@ -213,7 +213,7 @@ const everyWorkspace = (f: StorageFolder) => f.workspace === EVERY_WORKSPACE || 
 /**
  * The page's folders. One workspace: its lists in one card, Exports and Projects only the folder it uses (its own before
  * the one for every workspace, exportsOf). All workspaces: a card per workspace, then the folders for every workspace.
- * What this Mac may read is Settings → Computers, Folder access (FolderAccessSection), the same in every workspace.
+ * What this Mac may read is Settings → Computers, This Mac, Folder access (AllowedFolders), the same in every workspace.
  */
 export function Storage({ devices, storage, onChanged, w }: { devices: Computer[]; storage: StorageView | null; onChanged: () => void; w?: SettingsWorkspace }) {
   if (!storage) return null;
@@ -265,7 +265,7 @@ export function Storage({ devices, storage, onChanged, w }: { devices: Computer[
 type ReadList = { folders: string[]; reads: string[] };
 
 /**
- * Settings → You → Computers, Folder access (Mac app): the folders this Mac reads media from, the same in every workspace
+ * Settings → You → Computers, This Mac, Folder access (Mac app): the folders this Mac reads media from, the same in every workspace
  * and tool, from its open panel (Allow folder), a drop or a pick (apps/mac MediaFiles.readList). Files in an allowed one are added where they are; a
  * drop's or a pick's are copied on import (Import.tsx readFoldersHere), and Allow makes one allowed. Remove takes the
  * folder off this Mac's list. The page never grants a folder itself: Add folder and Allow open the Mac's own panel. No
@@ -290,12 +290,13 @@ export function AllowedFolders() {
       setBusy(false);
     }
   };
+  // its own card in the This Mac section: the list is long
   return (
-    <Section title="Folder access">
+    <div className="pt-5">
       <Card>
         <AllowedRows list={list} busy={busy} onAsk={ask} onRemove={async (f) => setList((await macReadFolders(f)) ?? list)} />
       </Card>
-    </Section>
+    </div>
   );
 }
 
@@ -311,7 +312,7 @@ export function AllowedRows({ list, busy, onAsk, onRemove }: {
     <>
       <Row
         id="folder-access"
-        title="This Mac"
+        title="Folder access"
         description="Folders this Mac reads media from, never changing or deleting their files."
         control={
           <Button size="sm" variant="outline" disabled={busy} onClick={onAsk("/Volumes")}>
