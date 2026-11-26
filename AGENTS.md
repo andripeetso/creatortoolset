@@ -104,6 +104,11 @@ API-key path at all.
 That is for one person's own machine only. Production refuses to start without `APP_SECRET`; the owner account is
 made from it on first start (`api/users.ts`). Someone with no session on a share link is `VISITOR` (every app off);
 keep access checks where the routes are mounted (`api/boot.ts`), not inside each handler.
+Every way in ends in a session of its own (`api/lib/clients.ts`): a sign-in's cookie is the token of one, as a paired
+phone's token is, so each is listed in Settings → Computers and revoked by itself. A sign-in route sets its cookie with
+`setLoginCookie`, never a value of its own (`sign-in-answers.test.ts` fails a route whose cookie has no session); a call
+the server makes as an account to a service that asks back who it is uses `ownLogin`. A device's token is never read
+from a cookie, where it would count as the account itself.
 
 **No secrets in code, docs or fixtures.** Keys, tokens, cookies and passwords come from environment variables or
 per-user files written with mode 0600. Read them with `process.env` at the point of use (paid service keys only

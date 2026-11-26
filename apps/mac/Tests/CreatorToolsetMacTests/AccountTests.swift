@@ -213,6 +213,8 @@ final class AccountTests: XCTestCase {
         XCTAssertEqual(accountAsk("status", mainFrame: true), "status")
         XCTAssertEqual(accountAsk("signout", mainFrame: true), "signout")
         XCTAssertEqual(accountAsk("offered", mainFrame: true), "offered")
+        XCTAssertEqual(accountAsk("window", mainFrame: true), "window")
+        XCTAssertNil(accountAsk("window", mainFrame: false))
         XCTAssertNil(accountAsk("signout", mainFrame: false))
         XCTAssertEqual(accountAsk("google", mainFrame: true), "google")
         XCTAssertEqual(accountAsk("github", mainFrame: true), "github")

@@ -455,12 +455,6 @@ export const isAiAppKey = (key: string): boolean => {
 /** The AI apps' keys as the page lists them: never the hash. */
 export const aiKeysOf = (user: UserRecord) => (user.aiKeys ?? []).map(({ hash: _hash, ...k }) => k);
 
-/** Signs out every browser of the account (its cookies are signed over the stamp): no copy of a cookie works after it. */
-export function signOutEverywhere(user: UserRecord): void {
-  user.session = randomBytes(16).toString("hex");
-  persist();
-}
-
 /** Turns a key off; making a new one is the only way back. */
 export function dropApiKey(user: UserRecord, level: KeyLevel): void {
   if (level === "full") delete user.fullKeyHash;

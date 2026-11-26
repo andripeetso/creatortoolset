@@ -138,6 +138,20 @@ export function connectionLine(s: ClientSession, now: number): string {
 
 export const accessName = (scopes: AccessScope[]) => (scopes.includes("write") ? "Standard" : "Read only");
 
+/**
+ * What a sign-in's browser or app says of itself (its User-Agent), for the list to show: its name, its system and
+ * whether it is a phone, a tablet or a computer. The server keeps the text and never acts on it.
+ */
+export function fromUserAgent(ua: string | undefined): { name: string; os?: string; kind: "mobile" | "tablet" | "desktop" } | null {
+  if (!ua) return null;
+  const kind = /iPad/.test(ua) ? "tablet" : /iPhone|iPod|Mobile/.test(ua) ? "mobile" : /Android/.test(ua) ? "tablet" : "desktop";
+  const os = /iPhone|iPod/.test(ua) ? "iOS" : /iPad/.test(ua) ? "iPadOS" : /Android/.test(ua) ? "Android" : /Macintosh|Mac OS X/.test(ua) ? "macOS" : /Windows/.test(ua) ? "Windows" : /CrOS/.test(ua) ? "ChromeOS" : /Linux/.test(ua) ? "Linux" : undefined;
+  // Chrome and Edge also say Safari, and Edge and Opera also say Chrome: the most specific name first. A web view says
+  // AppleWebKit with no browser's own name (the app's window), and the app's own requests say CFNetwork
+  const name = /Edg\//.test(ua) ? "Edge" : /OPR\//.test(ua) ? "Opera" : /Firefox\//.test(ua) ? "Firefox" : /Chrome\//.test(ua) ? "Chrome" : /Version\/[\d.]+.*Safari\//.test(ua) ? "Safari" : /AppleWebKit|CFNetwork|Creator(?:%20| )?Toolset/.test(ua) ? "Creator Toolset" : "Browser";
+  return { name, ...(os ? { os } : {}), kind };
+}
+
 export function hostOf(url: string): string {
   try {
     return new URL(url).host;

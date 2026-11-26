@@ -4,6 +4,7 @@ import { Lock, UserRound } from "lucide-react";
 import { ToolsetLogo } from "@/components/HomeLink";
 import { hasTeam, returnTo, useAuth, type Me, type ServerKind } from "@/lib/auth";
 import { useWorkspace } from "@/lib/workspace";
+import { macSignsWindowIn } from "@/lib/mac-window-sign-in";
 import { JoinPage } from "@/pages/JoinPage";
 import { joinToken } from "@/lib/workspaces";
 import { siteFrameFor } from "@/lib/plugin";
@@ -148,7 +149,12 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     fetch("/api/auth/check")
       .then((r) => r.json())
-      .then((d: { required: boolean; authed: boolean; user: Me | null; kind?: ServerKind; viewedBy?: string | null; mustLink?: ("apple" | "google")[] | null }) => {
+      .then(async (d: { required: boolean; authed: boolean; user: Me | null; kind?: ServerKind; viewedBy?: string | null; mustLink?: ("apple" | "google")[] | null }) => {
+        // the Mac app signs its window in through its own account where the server takes that: no sign-in page then
+        if (d.required && !d.authed && !publicShare && (await macSignsWindowIn())) {
+          window.location.reload();
+          return;
+        }
         // Signed in with an account and sent here to sign in (?next=): go back.
         const back = returnTo(window.location.search, window.location.origin);
         if (back && d.authed) {

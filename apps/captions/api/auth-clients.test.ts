@@ -92,10 +92,14 @@ const endsSoon = (reader: ReadableStreamDefaultReader<Uint8Array>) =>
     new Promise<string>((ok) => setTimeout(() => ok("still open"), 3000)),
   ]);
 
-beforeAll(async () => {
+/** A browser's sign-in: its cookie. */
+const signIn = async () => {
   const r = await call("POST", "/api/auth/login", { body: { username: "admin", password: process.env.APP_SECRET } });
   expect(r.status).toBe(200);
-  cookie = (r.headers.get("set-cookie") ?? "").split(";")[0]!;
+  return (r.headers.get("set-cookie") ?? "").split(";")[0]!;
+};
+beforeAll(async () => {
+  cookie = await signIn();
 });
 
 describe("pairing links", () => {
@@ -273,6 +277,69 @@ describe("a session on /api", () => {
     expect(await r.json()).toMatchObject({ ok: true });
     expect((await call("GET", "/api/auth/session", { address: PHONE, token: a.access_token })).status).toBe(200);
     expect((await call("GET", "/api/auth/session", { address: PHONE, token: b.access_token })).status).toBe(401);
+    // a browser's sign-in is one of the others
+    expect((await call("GET", "/api/auth/access", { cookie })).status).toBe(401);
+    cookie = await signIn();
+  });
+});
+
+describe("a sign-in is a session like a paired device's", () => {
+  type Listed = { clientSessions: Array<{ sessionId: string; method: string; current: boolean }> };
+  const listed = async (as: string) => ((await (await call("GET", "/api/auth/access", { cookie: as })).json()) as Listed).clientSessions;
+
+  it("is listed, with the browser that asks marked as this one", async () => {
+    const other = await signIn();
+    const rows = (await listed(cookie)).filter((s) => s.method === "browser-cookie");
+    expect(rows.filter((s) => s.current)).toHaveLength(1);
+    expect(rows.filter((s) => !s.current).length).toBeGreaterThanOrEqual(1);
+    expect((await listed(other)).filter((s) => s.current)).toHaveLength(1);
+  });
+
+  it("is revoked by itself: its cookie opens nothing, the others stay", async () => {
+    const other = await signIn();
+    const its = (await listed(other)).find((s) => s.current)!;
+    const r = await call("POST", "/api/auth/clients/revoke", { cookie, body: { sessionId: its.sessionId } });
+    expect(r.status).toBe(200);
+    expect((await call("GET", "/api/auth/access", { cookie: other })).status).toBe(401);
+    expect(((await (await call("GET", "/api/auth/check", { cookie: other })).json()) as { authed: boolean }).authed).toBe(false);
+    expect((await call("GET", "/api/auth/access", { cookie })).status).toBe(200);
+  });
+
+  it("signing out ends that browser's sign-in only", async () => {
+    const other = await signIn();
+    expect((await call("POST", "/api/auth/logout", { cookie: other })).status).toBe(200);
+    expect((await call("GET", "/api/auth/access", { cookie: other })).status).toBe(401);
+    expect((await call("GET", "/api/auth/access", { cookie })).status).toBe(200);
+  });
+
+  it("signing in again in one browser replaces its sign-in, never adds a second row", async () => {
+    const first = await signIn();
+    const before = (await listed(cookie)).length;
+    const r = await call("POST", "/api/auth/login", { cookie: first, body: { username: "admin", password: process.env.APP_SECRET } });
+    expect(r.status).toBe(200);
+    expect((await listed(cookie)).length).toBe(before);
+    expect((await call("GET", "/api/auth/access", { cookie: first })).status).toBe(401);
+  });
+
+  it("a paired device's token in the cookie is no sign-in, and a sign-in's token is no device's", async () => {
+    // read-only device: in the cookie it would be the whole account
+    const link = await newLink({ scopes: ["read"] });
+    const t = (await (await exchange(link.credential)).json()) as { access_token: string };
+    expect((await call("GET", "/api/auth/access", { cookie: `cap_auth=${t.access_token}` })).status).toBe(401);
+    expect(((await (await call("GET", "/api/auth/check", { cookie: `cap_auth=${t.access_token}` })).json()) as { authed: boolean }).authed).toBe(false);
+    const r = await call("GET", "/api/auth/session", { token: cookie.slice("cap_auth=".length) });
+    expect(r.status).toBe(401);
+    expect(await r.json()).toMatchObject({ code: "INVALID_TOKEN" });
+  });
+
+  it("the server's own login for a call as an account works and is never listed", async () => {
+    const { ownLogin } = await import("./auth");
+    const { findUser } = await import("./users");
+    const before = (await listed(cookie)).length;
+    const token = ownLogin(findUser("admin")!);
+    expect(ownLogin(findUser("admin")!)).toBe(token); // kept while it lasts
+    expect(((await (await call("GET", "/api/auth/check", { cookie: `cap_auth=${token}` })).json()) as { authed: boolean }).authed).toBe(true);
+    expect((await listed(cookie)).length).toBe(before);
   });
 });
 

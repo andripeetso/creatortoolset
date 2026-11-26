@@ -214,13 +214,13 @@ describe("sign-out, and the writes a page on another site can't make", () => {
   const authed = async (cookie: string) => ((await (await from("127.0.0.1", "/api/auth/check", { headers: { cookie } })).json()) as { authed: boolean }).authed;
   const evil = "https://evil.example";
 
-  it("signing out ends every copy of the account's cookie, not only this browser's", async () => {
+  it("signing out ends that sign-in, so a copy of its cookie opens nothing; another browser's stays", async () => {
     const here = cookieOf(await login("127.0.0.1", "tinyacrobatics1"));
     const there = cookieOf(await login("127.0.0.1", "tinyacrobatics1"));
-    expect(await authed(there)).toBe(true);
+    expect(here).not.toBe(there);
     expect((await post("127.0.0.1", "/api/auth/logout", {}, here)).status).toBe(200);
     expect(await authed(here)).toBe(false);
-    expect(await authed(there)).toBe(false);
+    expect(await authed(there)).toBe(true);
   });
 
   it("refuses a page on another site, with its form or its JSON, the password, keys and sign-in-link changes and the unlink", async () => {

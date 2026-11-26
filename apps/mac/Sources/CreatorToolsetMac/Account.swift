@@ -249,6 +249,20 @@ struct AccountClient {
         return (reply.token, reply.expiresIn)
     }
 
+    /// POST /api/account-signin/app-ticket with the token: a one-time ticket for `host`, a server the account signed in
+    /// to through this account server, bound to this Mac's key and to `challenge`. The account server answers only a token
+    /// bound to this key at its sign-in, and refuses a server the account never signed in to.
+    func appTicket(_ token: String, host: String, challenge: String) async throws -> String {
+        var request = URLRequest(url: URL(string: "/api/account-signin/app-ticket", relativeTo: server)!)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        try authorize(&request, token)
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["host": host, "challenge": challenge])
+        struct Reply: Decodable { let ticket: String }
+        let reply: Reply = try await send(request)
+        return reply.ticket
+    }
+
     /// POST a pack to the community catalog on this account server, as the account the token signs in as (`body` is
     /// {pack, rights}). It waits there for an admin's review. 401 = signed out; any other no is the catalog's own words.
     func submit(_ body: Data, token: String) async throws {
@@ -297,15 +311,31 @@ private final class NoRedirects: NSObject, URLSessionTaskDelegate {
                     newRequest request: URLRequest) async -> URLRequest? { nil }
 }
 
+/// The window's own sign-in through the account, as a server takes it (POST /api/auth/account-ticket, api/auth-clients.ts):
+/// the account's ticket for that server and its verifier as JSON, what this Mac is called for the server's list, and this
+/// key's proof for the request. The answer's cookie is the window's: this app's own cookie jar never keeps it.
+func accountTicketRequest(base: URL, ticket: String, verifier: String, key: DPoPKey, name: String, version: String) throws -> URLRequest {
+    let url = URL(string: "/api/auth/account-ticket", relativeTo: base)!.absoluteURL
+    var request = URLRequest(url: url)
+    request.httpMethod = "POST"
+    request.httpShouldHandleCookies = false
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    request.setValue(try DPoP.proof(method: "POST", url: url, key: key), forHTTPHeaderField: "DPoP")
+    let client = ["label": name, "os": "macOS", "appVersion": version]
+    request.httpBody = try JSONSerialization.data(withJSONObject: ["ticket": ticket, "verifier": verifier, "client": client])
+    return request
+}
+
 /// The page's account message: "status" or "offered" (the same question; setup's account screen and Settings ask
 /// "offered", which an app from before 2026-11-10 answers "off" without asking its server which sign-ins exist),
 /// "signout", "apple", "google" or "github", "link:<provider>" (add that sign-in to the account) or "unlink:<provider>",
+/// "window" (the sign-in page of a server: sign this window in through the account, Shell.signInWithAccount),
 /// and only from the window's own page, never from a frame inside it (an embed would read the name and email, open a
 /// sign-in or sign the person out).
 func accountAsk(_ body: Any, mainFrame: Bool) -> String? {
     guard mainFrame, let ask = body as? String else { return nil }
     let provider = ask.hasPrefix("link:") ? String(ask.dropFirst(5)) : ask.hasPrefix("unlink:") ? String(ask.dropFirst(7)) : ask
-    guard ["status", "offered", "signout"].contains(ask) || accountProviders.contains(provider) else { return nil }
+    guard ["status", "offered", "signout", "window"].contains(ask) || accountProviders.contains(provider) else { return nil }
     return ask
 }
 

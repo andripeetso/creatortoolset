@@ -16,6 +16,7 @@ const FIXTURE = path.join(import.meta.dirname, "__fixtures__", "sign-in-answers.
 const { createUser } = await import("./users");
 const { mintAppCode } = await import("./auth");
 const { findUser } = await import("./users");
+const { listedSession, resolveToken } = await import("./lib/clients");
 const app = (await import("./boot")).default;
 
 createUser("tina", "tina-password-1", { role: "user" });
@@ -41,8 +42,12 @@ const cookieOf = (res: Response) => (res.headers.get("set-cookie") ?? "").split(
 async function seen(res: Response, app = false) {
   const set = res.headers.get("set-cookie");
   if (set && !/^cap_auth=(;|$)/.test(set)) {
-    // a real cookie: it has the shape and it signs in
-    expect(set).toMatch(app ? /^cap_auth=[A-Za-z0-9_-]+\.[a-f0-9]{64}\.[a-f0-9]{64};/ : /^cap_auth=[A-Za-z0-9_-]+\.[a-f0-9]{64};/);
+    // a real cookie: it has the shape, it signs in, and it is a session of its own in the list (a phone's for the app's
+    // sign-in, never one for a browser's). A sign-in route that sets a cookie with no row fails here
+    expect(set).toMatch(/^cap_auth=cts_[A-Za-z0-9_-]{43};/);
+    const row = resolveToken(cookieOf(res).slice("cap_auth=".length));
+    expect(row.ok && row.row.method === "browser-cookie" && listedSession(row.row)).toBe(true);
+    expect(row.ok && row.row.client.deviceType).toBe(app ? "mobile" : "unknown");
     const check = (await (await req("GET", "/api/auth/check", { cookie: cookieOf(res) })).json()) as { authed: boolean };
     expect(check.authed).toBe(true);
   }
@@ -56,7 +61,7 @@ async function seen(res: Response, app = false) {
   return {
     status: res.status,
     body,
-    cookie: set?.replace(/^cap_auth=[A-Za-z0-9_-]+\.[a-f0-9]{64}/, "cap_auth=<signed>").replace(/^cap_auth=<signed>\.[a-f0-9]{64}/, "cap_auth=<signed>.<app>") ?? null,
+    cookie: set?.replace(/^cap_auth=cts_[A-Za-z0-9_-]{43}/, app ? "cap_auth=<signed>.<app>" : "cap_auth=<signed>") ?? null,
     location: res.headers.get("location"),
     cacheControl: res.headers.get("cache-control"),
   };
@@ -93,7 +98,6 @@ it("every sign-in route answers as it did before the sign-in code, for accounts 
   out["link, opened on a phone"] = { status: page.status, cookie: page.headers.get("set-cookie"), referrer: page.headers.get("referrer-policy") };
   out["link, pressed on a phone"] = await seen(await req("POST", minted.path, { address: "203.0.113.7", body: {} }));
   out["link, opened again"] = await seen(await req("GET", minted.path, { address: "203.0.113.7" }));
-  out["ticket, not a tunnel address"] = await seen(await req("POST", "/api/auth/ticket", { body: { ticket: "x", password: "y" } }));
   out["logout"] = await seen(await req("POST", "/api/auth/logout", { cookie: owner2 }));
 
   // a hosted server: a member's password sign-in, an app's code swap, an invite that makes an account

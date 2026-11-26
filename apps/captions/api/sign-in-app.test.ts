@@ -91,12 +91,13 @@ describe("a sign-in an app started (for=site&app=1&challenge=…)", () => {
     expect(res.headers.get("cache-control")).toBe("no-store");
     expect(findUser("cy")!.usage.logins).toBe(1);
 
-    // the cookie is the very one a browser's sign-in gets, and it is a working session
+    // the cookie is of the kind a browser's sign-in gets (a session of its own each), and it is a working session
     const browser = await github("for=site");
     expect(browser.headers.get("location")).toBe("/");
-    // the app's cookie is a browser's cookie plus the iPhone app's signed third part (auth.ts isAppSession), checked in its own test below
-    expect(res.headers.get("set-cookie")!.replace(/\.[a-f0-9]{64}(?=;)/, "")).toBe(browser.headers.get("set-cookie"));
-    expect(res.headers.get("set-cookie")).toMatch(/^cap_auth=[^;]+; HttpOnly; Path=\/; Max-Age=\d+; SameSite=Lax$/);
+    const SHAPE = /^cap_auth=cts_[A-Za-z0-9_-]{43}; HttpOnly; Path=\/; Max-Age=\d+; SameSite=Lax$/;
+    expect(res.headers.get("set-cookie")).toMatch(SHAPE);
+    expect(browser.headers.get("set-cookie")).toMatch(SHAPE);
+    expect(res.headers.get("set-cookie")).not.toBe(browser.headers.get("set-cookie"));
     const check = (await (await app.request("/api/auth/check", { headers: { cookie: cookieOf(res) } })).json()) as { authed: boolean; user: { username: string } };
     expect(check.authed).toBe(true);
     expect(check.user.username).toBe("cy");
@@ -108,16 +109,16 @@ describe("a sign-in an app started (for=site&app=1&challenge=…)", () => {
     expect(again.headers.get("set-cookie")).toBeNull();
   });
 
-  it("the app's session carries the iPhone app's marker, and a browser's login never does", async () => {
+  it("the app's sign-in is a phone's session, and a browser's never is", async () => {
     const res = await redeem(codeOf(await github(`for=site&${APP}`)));
     expect(res.status).toBe(200);
-    const appValue = res.headers.get("set-cookie")!.split(";")[0]!.slice("cap_auth=".length);
-    const browserValue = (await github("for=site")).headers.get("set-cookie")!.split(";")[0]!.slice("cap_auth=".length);
-    expect(appValue).toMatch(/^[A-Za-z0-9_-]+\.[a-f0-9]{64}\.[a-f0-9]{64}$/);
-    expect(appValue.split(".").slice(0, 2).join(".")).toBe(browserValue);
-    expect(isAppSession(`cap_auth=${appValue}`, "cy")).toBe(true);
-    expect(isAppSession(`cap_auth=${browserValue}`, "cy")).toBe(false);
-    expect(isAppSession(`cap_auth=${appValue.split(".").slice(0, 2).join(".")}.${"0".repeat(64)}`, "cy")).toBe(false);
+    const appCookie = res.headers.get("set-cookie")!.split(";")[0]!;
+    const browserCookie = (await github("for=site")).headers.get("set-cookie")!.split(";")[0]!;
+    expect(isAppSession(appCookie, "cy")).toBe(true);
+    expect(isAppSession(browserCookie, "cy")).toBe(false);
+    // another account's, and a token nobody was given
+    expect(isAppSession(appCookie, "admin")).toBe(false);
+    expect(isAppSession(`cap_auth=cts_${"0".repeat(43)}`, "cy")).toBe(false);
   });
 
   it("refuses a wrong verifier, and that try uses the code up", async () => {

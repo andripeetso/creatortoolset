@@ -80,7 +80,8 @@ async function untilAccess(on: boolean): Promise<Endpoint[] | null> {
 
 /**
  * This computer's connections: Network access (other devices on the network reach it; the switch is the Mac app's), the
- * addresses it is reachable at, and in the Mac app Reach from anywhere. Not drawn on a hosted server.
+ * addresses it is reachable at, and in the Mac app Reach from anywhere. Drawn only for the server on this computer
+ * (ComputersSection): another server's addresses are not this computer's, and the switch would change the wrong one.
  */
 export function ConnectionsCard({ inMac, mac }: { inMac: boolean; mac: ThisMacState | null }) {
   const [endpoints, setEndpoints] = useState<Endpoint[] | null>(null);

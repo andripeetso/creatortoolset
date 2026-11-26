@@ -1,7 +1,7 @@
 import XCTest
 @testable import CreatorToolset
 
-/// The sign-in code step, with no network: what each refusal of /api/auth/login, /api/auth/ticket and /api/auth/code
+/// The sign-in code step, with no network: what each refusal of /api/auth/login and /api/auth/code
 /// means to the phone. CODE_NEEDED, STEP_EXPIRED and "Wrong code" were read back from a scratch public server (the step
 /// token replaced); CODE_SETUP and the 429 come from apps/captions/api/auth.ts (`codeStep`, `locked`), which a server
 /// that is not hosted or not locked never sends.

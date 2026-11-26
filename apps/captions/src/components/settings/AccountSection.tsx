@@ -8,9 +8,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { UserRound } from "lucide-react";
 import { PROVIDER_NAME, ProviderMark, type Provider } from "@/components/ProviderMark";
-import { linkedOf, useMacAccount } from "@/components/setup/AccountStep";
+import { hasAccountBridge, linkedOf, useMacAccount } from "@/components/setup/AccountStep";
 import { SignInCodeRow } from "@/components/SignInCode";
-import { Card, EmptyRow, FormDialog, ListRow, LoadingRow, Row, RowMenu, Section } from "./ui";
+import { Card, EmptyRow, FormDialog, ListRow, LoadingRow, Row, RowMenu, Section, type RowMenuItem } from "./ui";
 
 const PROVIDERS: Provider[] = ["google", "apple", "github"];
 
@@ -159,10 +159,11 @@ export function AccountSection() {
           await load();
         }}
       />
+      {hasAccountBridge() && <MacAppAccount />}
       {required && (
         <Section title="Session">
           <Card>
-            <Row id="sign-out" title="This server" description="Signs out every browser signed in to this account." control={<Button size="sm" variant="outline" onClick={() => void logout()}>Sign out</Button>} />
+            <Row id="sign-out" title="This server" control={<Button size="sm" variant="outline" onClick={() => void logout()}>Sign out</Button>} />
           </Card>
         </Section>
       )}
@@ -173,32 +174,19 @@ export function AccountSection() {
 const isProvider = (p: string | undefined): p is Provider => !!p && (PROVIDERS as string[]).includes(p);
 
 /**
- * Sign-ins: each sign-in this account has, with the provider's mark, who it is there and its own menu, then a row with
- * Add for each one still open. On a server with sign-in set up they are the account's own sign-ins (Disconnect; Add
- * brings in another). The server lists a provider only where it runs sign-ins (GET /api/account/providers: none off a
- * hosted server), and only a listed provider's sign-in has a row, so Disconnect is never offered where the server's
- * route refuses it (api/auth.ts DELETE /identity/:provider). In the Mac app it is also the Creator Toolset account the
- * Mac app is signed in to (Sign out of the Mac app; its button signs in, only for a sign-in the Mac app offers), with
- * that account's other sign-ins (Disconnect) and Add for one more. Nothing there and nothing to add means no section
- * at all, so it is never a dead row.
+ * Sign-ins: how this account signs in to this server. Each one it has, with the provider's mark, who it is there and
+ * Disconnect, then a row with Add for each one still open. The server lists a provider only where it runs sign-ins (GET
+ * /api/account/providers: none off a hosted server), and only a listed provider's sign-in has a row, so Disconnect is
+ * never offered where the server's route refuses it (api/auth.ts DELETE /identity/:provider). Nothing there and nothing
+ * to add means no section at all. The Mac app's own account is never listed here: it is not a sign-in to this server
+ * (MacAppAccount below).
  */
 function SignIns({ signins, open, unlink }: { signins: SignIn[]; open: Provider[]; unlink: (p: Provider) => Promise<void> }) {
-  const mac = useMacAccount({ first: "offered" });
-  const macIn = mac.account.state === "signedIn" ? mac.account : null;
-  const macLinked = linkedOf(mac.account);
-  // a provider this server links is its button; the Mac app's own account sign-in only for one the server does not.
-  // Signed in to the account: the ones it has no sign-in with yet, which link to it
-  const macOpen = mac.providers.filter((p) => !open.includes(p) && !signins.some((s) => s.provider === p) && (!macIn || (p !== macIn.provider && !macLinked.some((l) => l.provider === p))));
-  // a sign-in from here that failed says so once (the sheet being closed is nothing to report)
-  const failed =
-    mac.problem ??
-    (mac.account.state === "error" ? mac.account.message || "Could not sign in. Try again." : mac.account.state === "unreachable" ? "Could not reach the account server. Try again." : null);
-  useEffect(() => {
-    if (failed) toast.error(failed);
-  }, [failed]);
-  if (!signins.length && !macIn && !open.length && !macOpen.length) return null;
-  const mark = (p: Provider | undefined) => (
-    <span className="text-foreground">{p ? <ProviderMark provider={p} className="size-4" /> : <UserRound className="size-4" />}</span>
+  if (!signins.length && !open.length) return null;
+  const mark = (p: Provider) => (
+    <span className="text-foreground">
+      <ProviderMark provider={p} className="size-4" />
+    </span>
   );
   return (
     <Section id="sign-in-with" title="Sign-ins">
@@ -217,29 +205,6 @@ function SignIns({ signins, open, unlink }: { signins: SignIn[]; open: Provider[
             }
           />
         ))}
-        {macIn && (
-          <ListRow
-            icon={mark(isProvider(macIn.provider) ? macIn.provider : undefined)}
-            title={isProvider(macIn.provider) ? PROVIDER_NAME[macIn.provider] : "Creator Toolset account"}
-            subtitle={[macIn.name, macIn.email].filter(Boolean).join(" · ") || undefined}
-            actions={<RowMenu label="Creator Toolset account actions" items={[{ label: "Sign out of the Mac app", onSelect: async () => mac.signOut() }]} />}
-          />
-        )}
-        {macIn &&
-          macLinked.map((l) => (
-            <ListRow
-              key={`linked-${l.provider}`}
-              icon={mark(l.provider)}
-              title={PROVIDER_NAME[l.provider]}
-              subtitle={l.email || undefined}
-              actions={
-                <RowMenu
-                  label={`${PROVIDER_NAME[l.provider]} actions`}
-                  items={[{ label: "Disconnect", destructive: true, confirm: { title: `Disconnect ${PROVIDER_NAME[l.provider]}?`, ok: "Disconnect" }, onSelect: () => mac.unlink(l.provider) }]}
-                />
-              }
-            />
-          ))}
         {open.map((p) => (
           <ListRow
             key={`link-${p}`}
@@ -252,19 +217,67 @@ function SignIns({ signins, open, unlink }: { signins: SignIn[]; open: Provider[
             }
           />
         ))}
-        {macOpen.map((p) => (
-          <ListRow
-            key={`mac-${p}`}
-            icon={mark(p)}
-            title={PROVIDER_NAME[p]}
-            actions={
-              // signed in to the account already: this sign-in is added to it; else it signs the Mac app in
-              <Button size="sm" variant="outline" disabled={!!mac.busy} aria-label={`${macIn ? "Add" : "Sign in with"} ${PROVIDER_NAME[p]}`} onClick={() => (macIn ? mac.link(p) : mac.signIn(p))}>
-                {mac.busy === p ? "Signing in…" : macIn ? "Add" : "Sign in"}
-              </Button>
-            }
-          />
-        ))}
+      </Card>
+    </Section>
+  );
+}
+
+/** What the Mac app's account row's menu offers: one more sign-in for the account, dropping one it has, and signing the app out. */
+export function macAccountItems(o: { linked: Provider[]; open: Provider[]; link: (p: Provider) => void; unlink: (p: Provider) => void; signOut: () => void }): RowMenuItem[] {
+  return [
+    ...o.open.map((p) => ({ label: `Add ${PROVIDER_NAME[p]}`, onSelect: async () => o.link(p) })),
+    { label: "Sign out", onSelect: async () => o.signOut() },
+    ...o.linked.map((p) => ({ label: `Disconnect ${PROVIDER_NAME[p]}`, destructive: true, confirm: { title: `Disconnect ${PROVIDER_NAME[p]}?`, ok: "Disconnect" }, onSelect: async () => o.unlink(p) })),
+  ];
+}
+
+/**
+ * Creator Toolset account, in the Mac app only: the account the app itself is signed in to, which is the app's and not a
+ * sign-in to the server in the window. One row whatever its state, so a provider this server also signs in with is
+ * never listed twice: signed out, a button for each sign-in the app offers; signed in, who it is and the ways in, with
+ * the rest (one more sign-in, Disconnect, Sign out) in its menu. Nothing to show (no account server, none offered) means
+ * no section.
+ */
+function MacAppAccount() {
+  const mac = useMacAccount({ first: "offered" });
+  const macIn = mac.account.state === "signedIn" ? mac.account : null;
+  const linked = linkedOf(mac.account).map((l) => l.provider);
+  // a sign-in from here that failed says so once (the sheet being closed is nothing to report)
+  const failed =
+    mac.problem ??
+    (mac.account.state === "error" ? mac.account.message || "Could not sign in. Try again." : mac.account.state === "unreachable" ? "Could not reach the account server. Try again." : null);
+  useEffect(() => {
+    if (failed) toast.error(failed);
+  }, [failed]);
+  if (!macIn && !mac.providers.length) return null;
+  const first = macIn && isProvider(macIn.provider) ? macIn.provider : undefined;
+  const ways = [...new Set([first, ...linked].filter((p): p is Provider => !!p))];
+  return (
+    <Section id="mac-account" title="Creator Toolset account">
+      <Card>
+        <ListRow
+          icon={<span className="text-foreground">{first ? <ProviderMark provider={first} className="size-4" /> : <UserRound className="size-4" />}</span>}
+          title="Mac app"
+          subtitle={macIn ? [macIn.name, macIn.email].filter(Boolean).join(" · ") || undefined : undefined}
+          status={macIn && ways.length > 1 ? ways.map((p) => PROVIDER_NAME[p]).join(" · ") : undefined}
+          actions={
+            macIn ? (
+              <RowMenu
+                label="Creator Toolset account actions"
+                items={macAccountItems({ linked, open: mac.providers.filter((p) => !ways.includes(p)), link: mac.link, unlink: mac.unlink, signOut: mac.signOut })}
+              />
+            ) : (
+              <span className="flex items-center gap-1.5">
+                {mac.providers.map((p) => (
+                  <Button key={p} size="sm" variant="outline" disabled={!!mac.busy} aria-label={`Sign in with ${PROVIDER_NAME[p]}`} onClick={() => mac.signIn(p)}>
+                    <ProviderMark provider={p} className="size-3.5" />
+                    {mac.busy === p ? "Signing in…" : PROVIDER_NAME[p]}
+                  </Button>
+                ))}
+              </span>
+            )
+          }
+        />
       </Card>
     </Section>
   );

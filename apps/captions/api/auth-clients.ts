@@ -1,6 +1,6 @@
 import { Hono, type Context } from "hono";
 import { streamSSE } from "hono/streaming";
-import { clientAddress, getSessionUser, sessionOf } from "./auth";
+import { clientAddress, clientSaid, cookieSession, sessionOf, setLoginCookie } from "./auth";
 import { endpoints } from "./descriptor";
 import { tunnelHostname } from "./connect/state";
 import { env, hasTeam, isCloud } from "./lib/env";
@@ -41,7 +41,7 @@ import {
   type TokenError,
 } from "./lib/clients";
 import { LOCAL_USER, findUser, type SessionUser } from "./users";
-import { accountTicketUser } from "./sign-in";
+import { accountTicketHost, accountTicketUser } from "./sign-in";
 
 /**
  * Phones and other apps signed in to this server with a client session (api/connect/contract.md): pairing links, the
@@ -52,7 +52,7 @@ import { accountTicketUser } from "./sign-in";
 
 export type Caller =
   | { kind: "token"; user: SessionUser; row: SessionRow }
-  | { kind: "cookie"; user: SessionUser }
+  | { kind: "cookie"; user: SessionUser; row?: SessionRow } // `row`: the sign-in's session; none on a server with no sign-in
   | { kind: "none" }
   | { kind: "error"; code: SessionErrorCode };
 
@@ -76,12 +76,17 @@ export function callerOf(c: Context): Caller {
     // a media ticket stands for its session on its own path (media-ticket.ts), before the cookie
     const ticket = ticketCaller(c);
     if (ticket) return ticket;
-    const user = getSessionUser(c.req.header("cookie"));
-    return user ? { kind: "cookie", user } : { kind: "none" };
+    if (!env.appSecret) return { kind: "cookie", user: LOCAL_USER };
+    const signedIn = cookieSession(c.req.header("cookie"));
+    if (!signedIn) return { kind: "none" };
+    touchSession(signedIn.row);
+    return { kind: "cookie", ...signedIn };
   }
   const r = resolveToken(t.token);
   if (!r.ok) return { kind: "error", code: r.code };
   const row = r.row;
+  // a sign-in's token is the account itself and lives in its cookie: sent as a device's, it is not one
+  if (row.method === "browser-cookie") return { kind: "error", code: "INVALID_TOKEN" };
   if (row.method === "dpop-access-token" || t.scheme === "DPoP") {
     if (row.method !== "dpop-access-token" || t.scheme !== "DPoP") return { kind: "error", code: "INVALID_DPOP" };
     const v = verifyDpop({ proof: c.req.header("dpop"), method: c.req.method, url: requestUrl(c), expectedJkt: row.jkt, accessToken: t.token });
@@ -125,7 +130,7 @@ export function scopeRefused(c: Context, need: Scope) {
   return c.json({ error, code: "SCOPE", requiredScope: need }, 403);
 }
 
-const scopesOf = (k: Caller): readonly Scope[] => (k.kind === "token" ? k.row.scopes : k.kind === "cookie" ? SCOPES : []);
+const scopesOf = (k: Caller): readonly Scope[] => (k.kind === "token" ? k.row.scopes : k.kind === "cookie" ? (k.row?.scopes ?? SCOPES) : []);
 
 /** An admin sees and revokes every account's links and sessions on its own server; anyone else only their own. */
 const mayFor = (user: SessionUser) => (subject: string) => subject === user.username || (!isCloud() && user.role === "admin");
@@ -137,7 +142,7 @@ function accessCaller(c: Context): Signed | Response {
   if (k.kind === "error") return sessionRefused(c, k.code);
   if (k.kind === "none") return c.json({ error: "Sign in first" }, 401);
   if (!scopesOf(k).includes("access")) return scopeRefused(c, "access");
-  return { user: k.user, scopes: scopesOf(k), ...(k.kind === "token" ? { sessionId: k.row.id, expiresAt: k.row.expiresAt } : {}) };
+  return { user: k.user, scopes: scopesOf(k), ...(k.row ? { sessionId: k.row.id, expiresAt: k.row.expiresAt } : {}) };
 }
 
 // ---- /api/auth/* ----------------------------------------------------------------------------------------------------
@@ -259,7 +264,7 @@ authClientsApp.get("/session", (c) => {
     authenticated: k.kind !== "none",
     scopes: [...scopesOf(k)],
     method: k.kind === "token" ? k.row.method : k.kind === "cookie" ? "browser-cookie" : null,
-    expiresAt: k.kind === "token" ? new Date(k.row.expiresAt).toISOString() : null,
+    expiresAt: k.kind !== "none" && k.row ? new Date(k.row.expiresAt).toISOString() : null,
     user: user ? { username: user.username, name: user.name ?? user.username, role: user.role } : null,
   } satisfies SessionState);
 });
@@ -299,6 +304,33 @@ export function perMinute(max: number) {
 }
 /** Account tickets tried at /oauth/token, per address. */
 export const ticketTries = perMinute(10);
+
+/**
+ * The Mac app's window, signed in through the app's own Creator Toolset account (contract.md, account tickets): the
+ * account's ticket for this server, bound to the app's DPoP key and its PKCE verifier, swapped for the window's own
+ * sign-in (the cookie, a session of its own). The sign-in is the account itself: the word of the sign-in service is
+ * what this server already takes for its Google and Apple sign-ins. The person needs an account here already
+ * (sign-in.ts accountTicketUser). The body is JSON, as /api/auth/app's: a form on another site cannot send that.
+ */
+authClientsApp.post("/account-ticket", async (c) => {
+  c.header("Cache-Control", "no-store");
+  if (!accountTicketHost()) return c.json({ error: "Not Found" }, 404);
+  const asJson = /^application\/json\b/i.test(c.req.header("content-type") ?? "");
+  const b = asJson ? ((await c.req.json().catch(() => null)) as { ticket?: unknown; verifier?: unknown; client?: unknown } | null) : null;
+  const ticket = typeof b?.ticket === "string" ? b.ticket.slice(0, 200) : "";
+  const verifier = typeof b?.verifier === "string" ? b.verifier.slice(0, 200) : "";
+  // the proof is checked before the ticket is looked at, and its jti spent only once the ticket was good (as /oauth/token)
+  const proof = verifyDpop({ proof: c.req.header("dpop"), method: "POST", url: requestUrl(c), spend: false });
+  if (!ticket || !verifier || !proof.ok) return c.json({ error: "That sign-in doesn't work here" }, 400);
+  if (!ticketTries.take(clientAddress(c))) {
+    c.header("Retry-After", "60");
+    return c.json({ error: "Too many sign-ins at once. Try again in a minute." }, 429);
+  }
+  const user = await accountTicketUser({ ticket, verifier, jkt: proof.jkt });
+  if (!user || spendJti(proof.jkt, proof.jti) !== "ok") return c.json({ error: "That sign-in doesn't work here" }, 400);
+  setLoginCookie(c, user, false, { ...clientSaid(b?.client).words, deviceType: "desktop" });
+  return c.json({ ok: true });
+});
 
 oauthTokenApp.post("/oauth/token", async (c) => {
   c.header("Cache-Control", "no-store");

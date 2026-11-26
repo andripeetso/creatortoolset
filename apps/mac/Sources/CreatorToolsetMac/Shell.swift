@@ -328,6 +328,8 @@ final class Shell: NSObject, ObservableObject {
                 Task { done(await self.account.status()) }
             } else if ask == "signout" {
                 Task { done(await self.account.signOut()) }
+            } else if ask == "window" {
+                Task { done(["state": await self.signInWithAccount() ? "signedIn" : "off"]) }
             } else if ask.hasPrefix("unlink:") {
                 Task { done(await self.account.unlink(String(ask.dropFirst(7)))) }
             } else if ask.hasPrefix("link:") {
@@ -525,6 +527,35 @@ final class Shell: NSObject, ObservableObject {
             return
         }
         AppLog.write("the window could not sign in as this Mac's owner: the sign-in page shows")
+    }
+
+    /// A Server this app's Creator Toolset account signed in to: the account's ticket for it, swapped there for the
+    /// window's own sign-in and put in the window's WebKit store, so the server's sign-in page asks for nothing
+    /// (src/components/AuthGate.tsx asks, "window"). False, and that page shows as before, when this is the server on this
+    /// Mac, the app has no account or no key, the server names no sign-in service, or the account never signed in to it.
+    /// The server is the one the window is set to, never an address the page gives.
+    private func signInWithAccount() async -> Bool {
+        let base = self.base
+        guard hasServer, !runsHere, let host = base.host, let key = DPoPKey.shared,
+              let accountServer = account.server, let token = await account.token() else { return false }
+        let pkce = Pkce.make()
+        let name = (base.port.map { "\(host):\($0)" } ?? host).lowercased()
+        do {
+            let ticket = try await AccountClient(server: accountServer, key: key).appTicket(token, host: name, challenge: pkce.challenge)
+            let request = try accountTicketRequest(base: base, ticket: ticket, verifier: pkce.verifier, key: key,
+                                                   name: Host.current().localizedName ?? macHostName(), version: appVersion)
+            let (_, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { return false }
+            let cookies = HTTPCookie.cookies(withResponseHeaderFields: (http.allHeaderFields as? [String: String]) ?? [:], for: base)
+            // another server was opened while this one answered: its sign-in is not for the window any more
+            guard base == self.base, !cookies.isEmpty else { return false }
+            let store = webView.configuration.websiteDataStore.httpCookieStore
+            for cookie in cookies { await store.setCookie(cookie) }
+            return true
+        } catch {
+            AppLog.write("the window did not sign in through the account: \(error.localizedDescription)")
+            return false
+        }
     }
 
     /// Network access: the server listens on every interface (on) or on this Mac only (off), and restarts on it. Phones

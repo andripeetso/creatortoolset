@@ -382,6 +382,8 @@ app.use("/api/*", async (c, next) => {
     if (!client.row.scopes.includes(need)) return scopeRefused(c, need);
     c.set("clientSession", client.row.id);
   }
+  // a sign-in's own session: listed as connected while its change stream is open, and a revoke ends that at once
+  if (client.kind === "cookie" && client.row) c.set("clientSession", client.row.id);
   const signedIn = client.kind === "token" || client.kind === "cookie" ? client.user :
     (FULL_KEY_NEVER.test(c.req.path)
       ? null

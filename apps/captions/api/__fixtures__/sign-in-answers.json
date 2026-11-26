@@ -180,15 +180,6 @@
     "location": null,
     "cacheControl": "no-store"
   },
-  "ticket, not a tunnel address": {
-    "status": 404,
-    "body": {
-      "error": "Not a tunnel address for this computer"
-    },
-    "cookie": null,
-    "location": null,
-    "cacheControl": null
-  },
   "logout": {
     "status": 200,
     "body": {

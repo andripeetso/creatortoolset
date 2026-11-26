@@ -58,7 +58,7 @@ export async function endpoints(port: string): Promise<ServerEndpoint[]> {
   if (isCloud() || !listensEverywhere()) return [];
   const out: ServerEndpoint[] = [];
   const lan = await routeAddress();
-  if (lan && !/^127\./.test(lan) && !TAILNET.test(lan)) out.push({ kind: "lan", httpBaseUrl: `http://${lan}:${port}` });
+  if (lan && isLan(lan)) out.push({ kind: "lan", httpBaseUrl: `http://${lan}:${port}` });
   // shortcut: any 100.64.0.0/10 address counts as the tailnet one, without asking its daemon; good enough while no
   // other overlay network is in use on these machines
   const tail = Object.values(networkInterfaces())
@@ -67,6 +67,12 @@ export async function endpoints(port: string): Promise<ServerEndpoint[]> {
   if (tail) out.push({ kind: "tailnet", httpBaseUrl: `http://${tail.address}:${port}` });
   return out;
 }
+
+/**
+ * The default route's address is a LAN one: private or link-local, never loopback, a tailnet's or a public address (a
+ * rented box's route address is the internet's, and no network of the person's reaches the server there).
+ */
+export const isLan = (address: string): boolean => allowedPeer(address) && !/^127\./.test(address) && address !== "::1" && !TAILNET.test(address);
 
 export const endpointsApp = new Hono<{ Variables: AuthVars }>();
 endpointsApp.get("/endpoints", async (c) => c.json(await endpoints(process.env.PORT || "3000")));

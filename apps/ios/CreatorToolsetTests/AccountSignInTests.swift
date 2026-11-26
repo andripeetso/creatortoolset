@@ -4,7 +4,7 @@ import XCTest
 /// Sign in with Apple or Google: everything that needs no server and no sign-in sheet. The JSON is what the servers
 /// send: the token and relay-token answers are the ones in the Mac app's tests (AccountTests.swift), the computers
 /// list and the ticket follow the connect service's code (apps/relay/src/server.ts and link.ts, status words from
-/// cloudflare.ts), and `/api/account/me`, `/api/auth/app` and `/api/auth/ticket` follow the servers' own tests.
+/// cloudflare.ts), and `/api/account/me` and `/api/auth/app` follow the servers' own tests.
 @MainActor
 final class AccountSignInTests: XCTestCase {
     private func decode<T: Decodable>(_ type: T.Type, _ json: String) throws -> T {

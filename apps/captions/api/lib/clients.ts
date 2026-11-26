@@ -13,7 +13,12 @@ export const READ_ONLY: readonly Scope[] = ["read"];
 export const STANDARD: readonly Scope[] = ["read", "write", "access"];
 
 export type DeviceType = "desktop" | "mobile" | "tablet" | "bot" | "unknown";
-export type SessionMethod = "bearer-access-token" | "dpop-access-token";
+/**
+ * How a session's token travels. `browser-cookie`: a sign-in (password, Google, Apple, GitHub, a one-time link, the
+ * iPhone app's own) keeps it in the sign-in cookie and it is the account itself; it is read from the cookie alone. The
+ * two others belong to a device paired by a link or through the account, sent in `Authorization`, never in a cookie.
+ */
+export type SessionMethod = "browser-cookie" | "bearer-access-token" | "dpop-access-token";
 
 /** GET /.well-known/creator-toolset/server */
 export interface ServerDescriptor {
@@ -119,7 +124,7 @@ export type SessionErrorCode = "INVALID_TOKEN" | "SESSION_EXPIRED" | "SESSION_RE
 export interface SessionState {
   authenticated: boolean;
   scopes: Scope[];
-  method: "browser-cookie" | SessionMethod | null;
+  method: SessionMethod | null;
   expiresAt: string | null;
   user: { username: string; name: string; role: string } | null;
 }
@@ -206,6 +211,9 @@ export const PAIRING_TTL_MS = 5 * 60_000;
 export const CONNECT_TTL_MS = 2 * 60_000;
 export const BEARER_TTL_MS = 30 * 24 * 3600_000; // fixed: never extended
 export const DPOP_TTL_MS = 3600_000;
+export const COOKIE_TTL_MS = 180 * 24 * 3600_000; // a sign-in's cookie, about 6 months: fixed, never extended
+// shortcut: every session of every account is in one JSON file, written whole on a change (a sign-in, a sign-out, the
+// minute's last-seen times); fine for one team's server, a table of its own once Cloud holds many accounts
 const TOUCH_EVERY_MS = 60_000;
 
 /** The pairing alphabet: no 0/O, 1/I/L, so a code read aloud or typed can't be mistaken. */
@@ -238,6 +246,8 @@ export interface SessionRow {
   expiresAt: number;
   lastConnectedAt: number | null;
   revokedAt: number | null;
+  /** the server's own call as this account (auth.ts ownLogin): never listed */
+  own?: true;
 }
 
 interface Store {
@@ -335,7 +345,9 @@ function change<T>(fn: (s: Store) => T, wrote: (out: T) => boolean = () => true)
     // expired links go; a session goes once it expired and nothing holds a line open on it (a revoked one stays marked
     // until then, so its token is answered "signed out on the computer", not "unknown")
     s.grants = s.grants.filter((g) => g.expiresAt > now);
-    s.sessions = s.sessions.filter((r) => r.expiresAt > now || (lines.get(r.id)?.size ?? 0) > 0);
+    // a sign-in that was signed out or replaced goes at once: its cookie reads as signed out either way, and a row a
+    // sign-in would otherwise sit here for months
+    s.sessions = s.sessions.filter((r) => (r.expiresAt > now && !(r.revokedAt && r.method === "browser-cookie")) || (lines.get(r.id)?.size ?? 0) > 0);
     const tmp = `${file()}.${process.pid}.tmp`;
     writeFileSync(tmp, JSON.stringify(s), { mode: 0o600 });
     renameSync(tmp, file());
@@ -465,7 +477,8 @@ export function revokeLink(id: string, may: (subject: string) => boolean): boole
 
 // ---- sessions -------------------------------------------------------------------------------------------------------
 
-export function issueSession(o: { subject: string; scopes: Scope[]; jkt?: string; client: ClientMetadata; now?: number }): { token: string; row: SessionRow } {
+/** `cookie`: a sign-in's own session (auth.ts setLoginCookie), kept in the sign-in cookie. `ttlMs`: a shorter life than its kind's. */
+export function issueSession(o: { subject: string; scopes: Scope[]; jkt?: string; cookie?: boolean; own?: boolean; ttlMs?: number; client: ClientMetadata; now?: number }): { token: string; row: SessionRow } {
   const now = o.now ?? Date.now();
   const token = `cts_${randomBytes(32).toString("base64url")}`;
   const row: SessionRow = {
@@ -473,13 +486,14 @@ export function issueSession(o: { subject: string; scopes: Scope[]; jkt?: string
     hash: sha(token),
     subject: o.subject,
     scopes: o.scopes,
-    method: o.jkt ? "dpop-access-token" : "bearer-access-token",
+    method: o.cookie ? "browser-cookie" : o.jkt ? "dpop-access-token" : "bearer-access-token",
     ...(o.jkt ? { jkt: o.jkt } : {}),
     client: o.client,
     issuedAt: now,
-    expiresAt: now + (o.jkt ? DPOP_TTL_MS : BEARER_TTL_MS),
+    expiresAt: now + (o.ttlMs ?? (o.cookie ? COOKIE_TTL_MS : o.jkt ? DPOP_TTL_MS : BEARER_TTL_MS)),
     lastConnectedAt: null,
     revokedAt: null,
+    ...(o.own ? { own: true as const } : {}),
   };
   change((s) => s.sessions.push(row));
   emit({ type: "clientUpserted", row });
@@ -599,8 +613,8 @@ export const sessionView = (r: SessionRow, currentId?: string): ClientSession =>
   current: r.id === currentId,
 });
 
-/** Sessions with an open line stay listed after they expire; revoked ones never are. */
-export const listedSession = (r: SessionRow, now = Date.now()) => !r.revokedAt && (r.expiresAt > now || isConnected(r.id));
+/** Sessions with an open line stay listed after they expire; revoked ones and the server's own never are. */
+export const listedSession = (r: SessionRow, now = Date.now()) => !r.revokedAt && !r.own && (r.expiresAt > now || isConnected(r.id));
 
 export function accessSnapshot(may: (subject: string) => boolean, currentId?: string, now = Date.now()): AccessSnapshot {
   const s = load();

@@ -42,12 +42,13 @@ const hardware = (d: Listed): string | null => {
  * that registered twice is listed once), the `…` menu to rename or remove it, and in the Mac app this Mac's own switch. The
  * plug-ins' "computers" cards sit under the list, without a heading (the AI Editor's folded Load balancing). The ones
  * offline a day or more with no AI on them are a section of their own, open. Under them this computer's connections and
- * the Phones section (pairing links and signed-in devices). `?add=1` opens the add-computer dialog, `?phone=1` Create link
+ * the Signed-in devices section (pairing links, and every sign-in to this server). `?add=1` opens the add-computer dialog, `?phone=1` Create link
  * (other pages link there).
  */
 export function ComputersSection() {
   const me = useAuth((s) => s.me);
-  const cloud = useAuth((s) => s.kind === "cloud");
+  // the server on this Mac, in its Mac app: its own connections card. Any other server's addresses are not this computer's
+  const thisMac = useAuth((s) => s.kind === "mac");
   const [params, setParams] = useSearchParams();
   const [adding, setAdding] = useState(false);
   const [phoning, setPhoning] = useState(false);
@@ -81,7 +82,7 @@ export function ComputersSection() {
   );
   const phones = (
     <>
-      {!cloud && <ConnectionsCard inMac={inMac} mac={bridge} />}
+      {thisMac && inMac && <ConnectionsCard inMac={inMac} mac={bridge} />}
       <PhonesSection create={phoning} onCreateChange={setPhoning} />
     </>
   );

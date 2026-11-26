@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createSocket } from "node:dgram";
 import { mkdirSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
@@ -8,7 +8,7 @@ import { env, keepsOverRestart, hasTeam, isCloud, serverKind } from "./lib/env";
 import { viewAsTarget } from "./lib/view-as";
 import { getConnInfo } from "@hono/node-server/conninfo";
 import type { Context } from "hono";
-import { sessionById } from "./lib/clients";
+import { COOKIE_TTL_MS, issueSession, resolveToken, revokeSession, sessionById, STANDARD, type ClientMetadata, type SessionRow } from "./lib/clients";
 import {
   LOCAL_USER,
   type SessionUser,
@@ -30,7 +30,6 @@ import {
   setDisplayName,
   setPassword,
   setSignInCode,
-  signOutEverywhere,
   passwordProblem,
   SIGNIN_NAME,
   isSignInProvider,
@@ -41,9 +40,7 @@ import {
 } from "./users";
 import { INVITE_TOKEN_RE, type InviteInfo } from "../contracts/workspaces";
 import { acceptInvite, inviteByToken, isTeamMember, memberIn, workspaceOf } from "./lib/workspaces";
-import { parseRelayKey } from "./connect/keys";
-import { consumeJti, connectState, tunnelHostname } from "./connect/state";
-import { TicketError, verifyTicket } from "./connect/ticket";
+import { tunnelHostname } from "./connect/state";
 import { originOf } from "./sign-in";
 import { inviteTarget } from "./lib/workshop/workspace";
 import { ticketUser } from "./media-ticket";
@@ -56,61 +53,46 @@ import { escHtml, plainPage } from "./lib/plain-page";
  * screen until it succeeds. When APP_SECRET is unset (local use),
  * everything stays open and requests run as a local admin.
  *
- * Cookie: base64url(username).hmac(username:passwordHash) — signing
- * over the password hash invalidates cookies on password reset.
+ * Cookie: the token of the sign-in's own session (lib/clients.ts, a `browser-cookie` row). Each sign-in is a row:
+ * listed in Settings → Computers, revoked by itself, and all of an account's go when its password changes.
  */
 export const authApp = new Hono();
 
 /** Hono context vars set by the auth middleware in boot.ts. */
-/** `clientSession`: the client session id when the request came with a phone's token (auth-clients.ts). */
+/** `clientSession`: the id of the request's session (lib/clients.ts): a paired device's token, or a sign-in's cookie. */
 export type AuthVars = { user: SessionUser; clientSession?: string };
 
 const COOKIE = "cap_auth";
-const MAX_AGE = 180 * 24 * 3600; // ~6 months
+const MAX_AGE = COOKIE_TTL_MS / 1000; // the cookie lasts as long as its session
 
 // One login across subdomains: COOKIE_DOMAIN (e.g. .example.com) sets the cookie on the parent domain so every
 // subdomain sees the same session. Unset = a cookie for the exact host only.
 const domainAttr = () => (env.cookieDomain ? `; Domain=${env.cookieDomain}` : "");
 
-function sign(username: string, hash: string): string {
-  return createHmac("sha256", env.appSecret)
-    .update(`${username}:${hash}`)
-    .digest("hex");
-}
-
-function cookieValue(username: string, hash: string): string {
-  return `${Buffer.from(username).toString("base64url")}.${sign(username, hash)}`;
-}
-
-/** What the cookie is signed over: the password hash, plus the session stamp once the sign-in code made one (users.ts). */
+/** What a one-time link, code or step is made over: the password hash, plus the session stamp once the sign-in code made one (users.ts). A change to either ends them. */
 const stamp = (u: UserRecord) => (u.session ? `${u.hash}:${u.session}` : u.hash);
 
-/** The iPhone app's marker: signed over the same stamp as the cookie, with its own label. */
-const appSign = (username: string, hash: string) => createHmac("sha256", env.appSecret).update(`app:${username}:${hash}`).digest("hex");
-
-const signedBy = (username: string, hash: string, hex: string) => {
-  const expected = Buffer.from(sign(username, hash), "hex");
-  const got = Buffer.from(hex, "hex");
-  return got.length === expected.length && timingSafeEqual(got, expected);
-};
+/**
+ * The sign-in the cookie carries: its session's row and the account. A browser can hold several cookies by this name
+ * (an old one for the parent domain, a newer one for this host) and sends all of them: the first that still works is
+ * the session, so an old one never hides a new sign-in. A paired device's token is never read from a cookie: in one it
+ * would count as the account itself.
+ */
+export function cookieSession(cookieHeader: string | undefined): { user: SessionUser; row: SessionRow } | null {
+  for (const m of (cookieHeader ?? "").matchAll(new RegExp(`(?:^|;\\s*)${COOKIE}=(cts_[A-Za-z0-9_-]{43})(?=\\s*(?:;|$))`, "g"))) {
+    const r = resolveToken(m[1]);
+    if (!r.ok || r.row.method !== "browser-cookie") continue;
+    const user = findUser(r.row.subject);
+    if (user) return { user: sessionOf(user), row: r.row };
+  }
+  return null;
+}
 
 export function getSessionUser(
   cookieHeader: string | undefined,
 ): SessionUser | null {
   if (!env.appSecret) return LOCAL_USER;
-  // a browser can hold several cookies by this name (an old one for the parent domain, a newer one for this host), and
-  // sends all of them: the first that is still valid is the session, so an old one never hides a new sign-in
-  for (const m of (cookieHeader ?? "").matchAll(new RegExp(`(?:^|;\\s*)${COOKIE}=([A-Za-z0-9_-]+)\\.([a-f0-9]{64})`, "g"))) {
-    let username = "";
-    try {
-      username = Buffer.from(m[1], "base64url").toString();
-    } catch {
-      continue;
-    }
-    const user = findUser(username);
-    if (user && signedBy(user.username, stamp(user), m[2])) return sessionOf(user);
-  }
-  return null;
+  return cookieSession(cookieHeader)?.user ?? null;
 }
 
 export const sessionOf = (user: UserRecord): SessionUser => ({
@@ -348,39 +330,52 @@ export const secureAttr = (c: Context) => {
   return proto.toLowerCase() === "https" ? "; Secure" : "";
 };
 
-/** The cookie value for a user's session. `app`: the iPhone app's own session (/api/auth/app) carries a third signed part a browser's login never gets. */
-export const sessionCookieFor = (username: string, app: boolean): string | null => {
+/**
+ * A new sign-in for the account, as its cookie (`cap_auth=<its session's token>`). `app`: the iPhone app's own
+ * (/api/auth/app), a phone's or a tablet's session. Any other sign-in's kind stays unknown: what a browser says of itself
+ * (its User-Agent) is kept for the list to show and never decides anything.
+ */
+export const sessionCookieFor = (username: string, app: boolean, client: Partial<ClientMetadata> = {}): string | null => {
   const user = findUser(username);
   if (!user) return null;
-  return `${COOKIE}=${cookieValue(username, stamp(user))}${app ? `.${appSign(username, stamp(user))}` : ""}`;
+  // `desktop`: only a route says it (the Mac app's sign-in through the account), never a browser
+  const deviceType = app ? (client.deviceType === "tablet" ? "tablet" : "mobile") : client.deviceType === "desktop" ? "desktop" : "unknown";
+  return `${COOKIE}=${issueSession({ subject: user.username, scopes: [...STANDARD], cookie: true, client: { ...client, deviceType } }).token}`;
 };
 
-export const setLoginCookie = (c: Context, user: UserRecord, app = false) => {
-  const secure = secureAttr(c);
-  const value = sessionCookieFor(user.username, app)!.slice(COOKIE.length + 1);
-  c.header(
-    "Set-Cookie",
-    `${COOKIE}=${value}; HttpOnly; Path=/; Max-Age=${MAX_AGE}; SameSite=Lax${secure}${domainAttr()}`,
-  );
+export const setLoginCookie = (c: Context, user: UserRecord, app = false, client: Partial<ClientMetadata> = {}) => {
+  // this browser signs in again: the sign-in it held is replaced, never left listed beside the new one
+  const held = cookieSession(c.req.header("cookie"));
+  if (held) revokeSession(held.row.id, () => true);
+  const userAgent = c.req.header("user-agent")?.slice(0, 200);
+  const value = sessionCookieFor(user.username, app, { ...client, ipAddress: clientAddress(c), ...(userAgent ? { userAgent } : {}) })!;
+  c.header("Set-Cookie", `${value}; HttpOnly; Path=/; Max-Age=${MAX_AGE}; SameSite=Lax${secureAttr(c)}${domainAttr()}`);
 };
 
-/** Whether the request's cookie is the iPhone app's own session for this user (the phone's file, never a browser's claim). */
+const OWN_LOGIN_MS = 10 * 60_000;
+const ownLogins = new Map<string, { token: string; until: number }>();
+/**
+ * The cookie's value for a call this server makes as an account to a service that asks back who it is (GET
+ * /api/auth/check): a session of its own, ten minutes, made again when it is nearly over or was revoked, never listed.
+ */
+export function ownLogin(user: UserRecord, now = Date.now()): string {
+  const kept = ownLogins.get(user.username);
+  if (kept && kept.until - now > 60_000 && resolveToken(kept.token, now).ok) return kept.token;
+  const { token, row } = issueSession({ subject: user.username, scopes: [...STANDARD], cookie: true, own: true, ttlMs: OWN_LOGIN_MS, client: { deviceType: "bot" }, now });
+  ownLogins.set(user.username, { token, until: row.expiresAt });
+  return token;
+}
+
+/** Whether the request's cookie is the iPhone app's own sign-in for this user (/api/auth/app), never a browser's. */
 export const isAppSession = (cookieHeader: string | undefined, username: string): boolean => {
-  const user = findUser(username);
-  if (!user) return false;
-  const want = Buffer.from(appSign(username, stamp(user)), "hex");
-  for (const m of (cookieHeader ?? "").matchAll(new RegExp(`(?:^|;\\s*)${COOKIE}=([A-Za-z0-9_-]+)\\.([a-f0-9]{64})\\.([a-f0-9]{64})`, "g"))) {
-    if (Buffer.from(m[1], "base64url").toString() !== username || !signedBy(username, stamp(user), m[2])) continue;
-    const got = Buffer.from(m[3], "hex");
-    if (got.length === want.length && timingSafeEqual(got, want)) return true;
-  }
-  return false;
+  const row = cookieSession(cookieHeader)?.row;
+  return row?.subject === username && (row.client.deviceType === "mobile" || row.client.deviceType === "tablet");
 };
 
 /**
- * Whether the request is the iPhone app's own: a client session whose link was made for a phone or a tablet (the
- * link's kind, auth-clients.ts), or else the app's marked cookie. A request with a client session is decided by it
- * alone, as the account gate answers it, so a Mac's, a bot's or an unknown device's token never counts, whatever cookie it sends.
+ * Whether the request is the iPhone app's own: a session whose link was made for a phone or a tablet (the link's
+ * kind, auth-clients.ts), or the app's own sign-in (/api/auth/app). The request's session decides alone, as the account
+ * gate answers it, so a Mac's, a bot's or a browser's never counts, whatever cookie it sends.
  */
 export const isPhoneSession = (c: Context<{ Variables: AuthVars }>, username: string): boolean => {
   const id = c.get("clientSession");
@@ -577,6 +572,17 @@ function signInByLink(c: Context, code: string) {
  * way is not read at all, so it is refused without touching a code.
  */
 export const APP_CHALLENGE = /^[A-Za-z0-9_-]{43}$/; // base64url of a sha256
+
+/** What an app says of its device in a sign-in's body (`client`), for the list in Settings: its name, system, model and version; a tablet when it says so. */
+export function clientSaid(raw: unknown): { words: Partial<ClientMetadata>; tablet: boolean } {
+  const said = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const words: Partial<ClientMetadata> = {};
+  for (const k of ["label", "os", "model", "appVersion"] as const) {
+    const v = said[k];
+    if (typeof v === "string" && v.trim()) words[k] = v.trim().slice(0, 80);
+  }
+  return { words, tablet: said.deviceType === "tablet" };
+}
 const APP_VERIFIER = /^[A-Za-z0-9._~-]{43,128}$/;
 const appCodes = new Map<string, { username: string; hash: string; challenge: string; expiresAt: number }>();
 
@@ -591,7 +597,7 @@ export function mintAppCode(user: UserRecord, challenge: string): string {
 authApp.post("/app", async (c) => {
   if (!hasTeam()) return c.json({ error: "Not Found" }, 404);
   const asJson = /^application\/json\b/i.test(c.req.header("content-type") ?? "");
-  const b = asJson ? ((await c.req.json().catch(() => null)) as { code?: unknown; verifier?: unknown } | null) : null;
+  const b = asJson ? ((await c.req.json().catch(() => null)) as { code?: unknown; verifier?: unknown; client?: unknown } | null) : null;
   const code = typeof b?.code === "string" ? b.code : "";
   const verifier = typeof b?.verifier === "string" ? b.verifier : "";
   const hit = appCodes.get(code);
@@ -602,53 +608,8 @@ authApp.post("/app", async (c) => {
   // one answer for a wrong, used or expired code and a wrong verifier: it says nothing about which
   if (!user || stamp(user) !== hit!.hash) return c.json({ error: "That sign-in code is used or expired" }, 400);
   bumpUsage(user.username, { logins: 1 });
-  setLoginCookie(c, user, true);
-  return c.json({ ok: true, user: withLogins(sessionOf(user)) });
-});
-
-/**
- * Ticket sign-in through this computer's tunnel (POST /api/auth/ticket, body { ticket, password }). The broker's ticket
- * proves the account and the computer; the computer's own password is still asked, once per browser. A ticket
- * works once: it is spent before the password is checked, so a wrong password needs a new ticket.
- */
-// deprecated (connect/contract.md): /api/connect/mint and /oauth/token with DPoP replace it; removed once the phone and
-// the connect service have switched
-authApp.post("/ticket", async (c) => {
-  const s = connectState();
-  if (!s || hostOf(c) !== s.hostname.toLowerCase()) {
-    return c.json({ error: "Not a tunnel address for this computer" }, 404);
-  }
-  const b = await c.req.json<{ ticket?: unknown; password?: unknown }>().catch(() => ({}) as { ticket?: unknown; password?: unknown });
-  const ticket = typeof b.ticket === "string" ? b.ticket : "";
-  const password = typeof b.password === "string" ? b.password : "";
-  const now = Math.floor(Date.now() / 1000);
-  try {
-    verifyTicket(ticket, {
-      relayPublicKey: parseRelayKey(s.relayPublicKey),
-      hostname: s.hostname,
-      computerId: s.computerId,
-      owner: s.owner,
-      now,
-      consume: (jti, exp) => consumeJti(jti, exp, now),
-    });
-  } catch (e) {
-    if (e instanceof TicketError) return c.json({ error: "This ticket doesn't work here. Ask for a new one." }, 401);
-    throw e;
-  }
-  const user = findUser(s.localUser);
-  if (!user) return c.json({ error: "This ticket doesn't work here. Ask for a new one." }, 403);
-  // the computer's password must be set first: while it is APP_SECRET, only this Mac can sign in
-  if (password === env.appSecret) return c.json({ error: NO_PASSWORD_YET }, 403);
-  const from = clientAddress(c);
-  if (waitFor(user.username, from)) return locked(c, user.username, from);
-  if (!password || !verifyPassword(user, password)) {
-    await sleep(Math.min(wrongTry(user.username, from) * 250, 2000));
-    return c.json({ error: "Wrong password" }, 401);
-  }
-  if (user.code || codeRequired()) return codeStep(c, user);
-  clearTries(user.username, from);
-  bumpUsage(user.username, { logins: 1 });
-  setLoginCookie(c, user);
+  const said = clientSaid(b?.client);
+  setLoginCookie(c, user, true, { ...said.words, ...(said.tablet ? { deviceType: "tablet" as const } : {}) });
   return c.json({ ok: true, user: withLogins(sessionOf(user)) });
 });
 
@@ -930,9 +891,9 @@ authApp.post("/api-key", async (c) => {
 });
 
 authApp.post("/logout", (c) => {
-  // a copy of the cookie (another browser, an old one) would still sign in: the account's stamp changes, so none works
-  const me = accountHere(c);
-  if (me) signOutEverywhere(me);
+  // this sign-in ends: a copy of its cookie opens nothing. The account's others are listed in Settings → Computers
+  const held = cookieSession(c.req.header("cookie"));
+  if (held) revokeSession(held.row.id, () => true);
   const secure = secureAttr(c);
   c.header(
     "Set-Cookie",

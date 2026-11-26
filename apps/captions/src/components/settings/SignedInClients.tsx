@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { Bot, Laptop, Monitor, Plus, Smartphone, Tablet } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { accessName, connectionLine, ms, revokeClient, revokeOtherClients, revokePairingLink, useAccess, type ClientSession, type CreatedLink } from "@/lib/access";
+import { useAuth } from "@/lib/auth";
+import { accessName, connectionLine, fromUserAgent, ms, revokeClient, revokeOtherClients, revokePairingLink, useAccess, type ClientSession, type CreatedLink } from "@/lib/access";
 import { Card, EmptyRow, ErrorRow, ListRow, LoadingRow, Section } from "./ui";
 import { CreateLinkDialog, PairingLinkCard } from "./PairingLinks";
 
@@ -20,12 +21,17 @@ export function useNow(on: boolean): number {
   return now;
 }
 
-/** One signed-in phone, iPad, browser or app: its kind, name, "os · app version", how it is connected, and Revoke. */
-export function ClientRow({ session, now, onRevoke }: { session: ClientSession; now: number; onRevoke: (id: string) => Promise<void> }) {
+/**
+ * One signed-in phone, iPad, browser or app: its kind, name, "os · app version", how it is connected, and Revoke. A
+ * sign-in in a browser has no kind or name of its own: they are read from what the browser says of itself. `mine`: the
+ * viewer's account; another account's row (an admin sees the team's) says whose it is.
+ */
+export function ClientRow({ session, now, mine, onRevoke }: { session: ClientSession; now: number; mine?: string; onRevoke: (id: string) => Promise<void> }) {
   const [revoking, setRevoking] = useState(false);
   const { client } = session;
-  const Icon = ICONS[client.deviceType ?? "unknown"] ?? Monitor;
-  const about = [client.os, client.appVersion, session.scopes.includes("write") ? null : accessName(session.scopes)].filter(Boolean).join(" · ");
+  const said = fromUserAgent(client.userAgent);
+  const Icon = ICONS[client.deviceType && client.deviceType !== "unknown" ? client.deviceType : (said?.kind ?? "unknown")] ?? Monitor;
+  const about = [mine && session.subject !== mine ? session.subject : null, client.os ?? said?.os, client.appVersion, session.scopes.includes("write") ? null : accessName(session.scopes)].filter(Boolean).join(" · ");
   const revoke = async () => {
     setRevoking(true);
     await onRevoke(session.sessionId).catch((e: Error) => toast.error("Could not revoke it", { description: e.message }));
@@ -36,7 +42,7 @@ export function ClientRow({ session, now, onRevoke }: { session: ClientSession; 
       icon={<Icon />}
       title={
         <span className="flex items-center gap-1.5">
-          <span className="truncate">{client.label || session.label || client.model || client.os || session.subject || "Device"}</span>
+          <span className="truncate">{client.label || session.label || client.model || said?.name || client.os || session.subject || "Device"}</span>
           {session.current && <span className="shrink-0 rounded-md border border-border/50 bg-muted/50 px-1 py-0.5 text-[10px] font-normal text-muted-foreground">This device</span>}
         </span>
       }
@@ -54,12 +60,14 @@ export function ClientRow({ session, now, onRevoke }: { session: ClientSession; 
 }
 
 /**
- * Settings → Computers → Phones: the live pairing links and every phone, iPad and browser signed in to this server, live
- * from the server's access events. Create link makes a one-time link; Revoke others signs out every one but this device.
+ * Settings → Computers → Signed-in devices: the live pairing links and every sign-in to this server (each browser, the
+ * Mac app's window, each phone and iPad, however it signed in), live from the server's access events. Create link makes
+ * a one-time link; Revoke others signs out every one but this device.
  * `create` opens Create link (the page's `?phone=1`).
  */
 export function PhonesSection({ create, onCreateChange }: { create: boolean; onCreateChange: (open: boolean) => void }) {
   const { view, error, apply, retry } = useAccess();
+  const mine = useAuth((s) => s.me?.username);
   // the codes this page made, by link id: never stored, never listed by the server
   const [made, setMade] = useState<Map<string, CreatedLink>>(() => new Map());
   const [newest, setNewest] = useState<string | null>(null);
@@ -108,7 +116,7 @@ export function PhonesSection({ create, onCreateChange }: { create: boolean; onC
   );
 
   return (
-    <Section id="phones" title="Phones" action={action}>
+    <Section id="phones" title="Signed-in devices" action={action}>
       <Card>
         {!view && error ? (
           <ErrorRow title="Could not load signed-in devices" detail={error} retry={retry} />
@@ -121,7 +129,7 @@ export function PhonesSection({ create, onCreateChange }: { create: boolean; onC
           <PairingLinkCard key={l.id} link={l} created={made.get(l.id)} now={now} startOpen={l.id === newest} onRevoke={revokeLink} />
         ))}
         {sessions.map((s) => (
-          <ClientRow key={s.sessionId} session={s} now={now} onRevoke={revokeOne} />
+          <ClientRow key={s.sessionId} session={s} now={now} mine={mine} onRevoke={revokeOne} />
         ))}
       </Card>
       <CreateLinkDialog open={create} onOpenChange={onCreateChange} onCreated={created} />

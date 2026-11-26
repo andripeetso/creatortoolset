@@ -96,6 +96,34 @@ final class AccountBindingTests: XCTestCase {
         XCTAssertEqual(StubServer.seen.last!.value(forHTTPHeaderField: "Authorization"), "DPoP \(token)")
     }
 
+    /// A server the account signed in to: the ticket is asked for with this Mac's bound token and proof, and swapped at
+    /// the server with the verifier and a proof of the same key that carries no token (the server never sees it).
+    func testTheWindowSignsInWithAnAccountTicketBoundToThisMac() async throws {
+        BoundTokens.add("cta_bound")
+        StubServer.routes["/api/account-signin/app-ticket"] = (200, #"{"ticket":"T1","expiresAt":"2026-11-25T12:00:00.000Z"}"#)
+        let pkce = Pkce(verifier: String(repeating: "v", count: 43))
+        let ticket = try await client.appTicket("cta_bound", host: "studio.example.com", challenge: pkce.challenge)
+        XCTAssertEqual(ticket, "T1")
+        let asked = StubServer.seen.last!
+        XCTAssertEqual(asked.value(forHTTPHeaderField: "Authorization"), "DPoP cta_bound")
+        XCTAssertEqual(try proofClaims(asked)["htu"] as? String, "https://accounts.example.com/api/account-signin/app-ticket")
+
+        let swap = try accountTicketRequest(base: URL(string: "https://studio.example.com")!, ticket: ticket, verifier: pkce.verifier, key: mac, name: "Tiny Mac", version: "0.30.0")
+        XCTAssertEqual(swap.url?.absoluteString, "https://studio.example.com/api/auth/account-ticket")
+        XCTAssertEqual(swap.httpMethod, "POST")
+        XCTAssertEqual(swap.value(forHTTPHeaderField: "Content-Type"), "application/json")
+        XCTAssertNil(swap.value(forHTTPHeaderField: "Authorization"))
+        XCTAssertFalse(swap.httpShouldHandleCookies)
+        let claims = try proofClaims(swap)
+        XCTAssertEqual(claims["htu"] as? String, "https://studio.example.com/api/auth/account-ticket")
+        XCTAssertEqual(claims["htm"] as? String, "POST")
+        XCTAssertNil(claims["ath"])
+        let body = try JSONSerialization.jsonObject(with: XCTUnwrap(swap.httpBody)) as! [String: Any]
+        XCTAssertEqual(body["ticket"] as? String, "T1")
+        XCTAssertEqual(body["verifier"] as? String, pkce.verifier)
+        XCTAssertEqual(body["client"] as? [String: String], ["label": "Tiny Mac", "os": "macOS", "appVersion": "0.30.0"])
+    }
+
     func testTheBrokerGetsThisMacsProofWithTheRelayToken() async throws {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [StubServer.self]

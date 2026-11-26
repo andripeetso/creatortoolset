@@ -84,7 +84,7 @@ their own. Never a credential or token.
 
 ```
 PairingLink   { id, subject, label?, scopes, createdAt, expiresAt }
-ClientSession { sessionId, subject, label?, scopes, method: "bearer-access-token" | "dpop-access-token",
+ClientSession { sessionId, subject, label?, scopes, method: "browser-cookie" | "bearer-access-token" | "dpop-access-token",
                 client: { label?, deviceType: "desktop"|"mobile"|"tablet"|"bot"|"unknown", os?, model?,
                           appVersion?, ipAddress?, userAgent? },
                 issuedAt, expiresAt, lastConnectedAt: string | null, connected: boolean, current: boolean }
@@ -195,6 +195,14 @@ The phone renews it in its last minute the same way. No service or address, no p
 host, or a browser sign-in's ticket (no `jkt`/`host`): `invalid_grant`, and with no proof or verifier the service is
 not asked.
 
+**The Mac app's window** signs in the same way, and gets the account itself rather than a device's session, since the
+whole app is that window: after step 1, Mac app → the server `POST /api/auth/account-ticket`, JSON
+`{ ticket, verifier, client?: { label, os, model, appVersion } }` with a `DPoP` proof for that request (no token, so
+no `ath`). The server redeems the ticket as in step 3 and answers 200 `{ ok: true }` with the sign-in cookie (a
+`browser-cookie` session, `deviceType: "desktop"`); the app puts it in its window. 404 where no service is named; 400
+for anything that does not check out (no cookie); 429 past 10 a minute per address. The web app's sign-in page asks the
+Mac app for this before it shows (`src/lib/mac-window-sign-in.ts`).
+
 ### Using a session on `/api/*`
 
 - Bearer: `Authorization: Bearer cts_…`.
@@ -202,6 +210,11 @@ not asked.
   or fragment (`https://` when the request came through a proxy that sets `X-Forwarded-Proto: https`), `iat` within
   ±300 s of the server's clock, a fresh `jti` (each `jti` is accepted once), and `ath` = base64url(SHA-256(token)).
 - The gate reads these **before** the cookie. A request that carries a token never falls back to the cookie.
+- The sign-in cookie is `cap_auth=cts_…`: the token of a `browser-cookie` session, made by every sign-in (password,
+  Google, Apple, GitHub, a one-time link, `/api/auth/app`, `/api/auth/account-ticket`), 180 days, never extended. It
+  has every scope and is the account itself, so it is read from the cookie alone: a device's token in a cookie signs
+  nobody in, and a sign-in's token in `Authorization` is 401 `INVALID_TOKEN`. It is listed and revoked like any session
+  (`/api/auth/access`, `/api/auth/clients/revoke`); `POST /api/auth/logout` ends the one the cookie carries.
 - 401 `{ error, code }` + `WWW-Authenticate: Bearer error="invalid_token"` (or `DPoP …`):
 
 | `code` | `error` (the words to show) |
@@ -281,13 +294,13 @@ brokerKid? }` (what the connect service's link answer carries). `computerId` mus
 
 ## Kept
 
-`/api/auth/login`, `/api/auth/app`, `/api/auth/password` and the cookie stay. Username/password sign-in keeps the
-own-computer rule (the `APP_SECRET` password signs in from this Mac only).
+`/api/auth/login`, `/api/auth/app`, `/api/auth/password` and the cookie stay; each sign-in is a session of its own
+(above). `/api/auth/app` takes `client: { label, os, model, appVersion, deviceType: "tablet" }` beside its code, for
+the list. Username/password sign-in keeps the own-computer rule (the `APP_SECRET` password signs in from this Mac only).
 
 ## Deprecated (work until the phone and connect service switch, then removed)
 
 - `POST /api/auth/link`, `GET /api/auth/link/:code`: use `/api/auth/pairing-links` + `/oauth/token`.
-- `POST /api/auth/ticket`: use `/api/connect/mint` + `/oauth/token` with DPoP.
 
 ## Network
 

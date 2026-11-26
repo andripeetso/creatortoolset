@@ -327,12 +327,12 @@ enum SignIn {
     /// A sign-in the account started on a hosted server: the one-time code its sign-in sheet ended with, swapped for
     /// the session (only with the verifier of the sign-in that made the code).
     static func app(_ origin: URL, code: String, verifier: String) async throws -> Outcome {
-        try await post(origin, "/api/auth/app", ["code": code, "verifier": verifier])
-    }
-
-    /// A computer reached through the account: the account's ticket for it, and the computer's own password.
-    static func ticket(_ origin: URL, ticket: String, password: String) async throws -> Outcome {
-        try await post(origin, "/api/auth/ticket", ["ticket": ticket, "password": password])
+        // what this phone is called in the server's list of sign-ins (api/auth.ts clientSaid): its name, system, model and
+        // the app's version, as a pairing link's session says them
+        let said = await Pairing.clientMetadata()
+        let client = ["label": said["client_label"] ?? "", "os": said["client_os"] ?? "", "model": said["client_model"] ?? "",
+                      "appVersion": said["app_version"] ?? "", "deviceType": said["client_device_type"] ?? "mobile"]
+        return try await post(origin, "/api/auth/app", ["code": code, "verifier": verifier, "client": client])
     }
 
     /// The six digits from the authenticator app, or a recovery code, after a password that asked for one. A wrong
@@ -350,7 +350,7 @@ enum SignIn {
     }
 
     /// Every sign-in route answers 200 with the cookie, or says why not in its own words.
-    private static func post(_ origin: URL, _ path: String, _ json: [String: String]) async throws -> Outcome {
+    private static func post(_ origin: URL, _ path: String, _ json: [String: Any]) async throws -> Outcome {
         var request = API(server: origin, cookie: nil).request(path, method: "POST", json: json)
         request.httpShouldHandleCookies = false
         let (data, response) = try await API.session.data(for: request)

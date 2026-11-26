@@ -1,7 +1,7 @@
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { createHash, createPublicKey, generateKeyPairSync, randomBytes, sign, verify } from "node:crypto";
+import { createHash, createPublicKey, generateKeyPairSync, randomBytes, verify } from "node:crypto";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 // A computer on the connect broker, end to end against a fake broker that speaks the broker's protocol (the device
@@ -21,12 +21,6 @@ const { computerKey } = await import("./keys");
 const ZONE = "tunnels.test.example";
 const relay = generateKeyPairSync("ed25519");
 const relayB64 = relay.publicKey.export({ type: "spki", format: "der" }).toString("base64");
-
-// The broker's ticket: Ed25519 over the base64url JSON body, the same bytes the computer verifies.
-function issue(claims: Record<string, unknown>): string {
-  const body = Buffer.from(JSON.stringify(claims)).toString("base64url");
-  return `${body}.${sign(null, Buffer.from(body), relay.privateKey).toString("base64url")}`;
-}
 
 const broker = {
   approved: false,
@@ -88,13 +82,6 @@ async function fakeBroker(req: Request): Promise<Response> {
     const hostname = `${id}.${ZONE}`;
     broker.computers.set(id, { sub, hostname });
     return json(200, { computer_id: id, hostname, tunnel_token: "tunnel-token", relay_kid: "kid-1", relay_public_key: relayB64 });
-  }
-  const t = /^\/v1\/computers\/([0-9a-f]{32})\/ticket$/.exec(u.pathname);
-  if (t && req.method === "POST") {
-    const c = broker.computers.get(t[1]!);
-    if (!c || c.sub !== sub) return json(404, { error: "not_found" });
-    const now = Math.floor(Date.now() / 1000);
-    return json(200, { ticket: issue({ sub, env: t[1], aud: c.hostname, iat: now, exp: now + 120, jti: randomBytes(12).toString("base64url") }) });
   }
   return json(404, { error: "not_found" });
 }
@@ -167,77 +154,19 @@ describe("a request that came through the tunnel is remote, even from 127.0.0.1"
   });
 });
 
-describe("a second machine signs in through the tunnel with a ticket", () => {
-  const ticketFor = async () => {
-    const id = hostname.split(".")[0];
-    const r = await fakeBroker(new Request(`https://broker.test/v1/computers/${id}/ticket`, { method: "POST", headers: { authorization: `Bearer ${broker.lastToken}` } }));
-    return ((await r.json()) as { ticket: string }).ticket;
-  };
-  const signIn = (ticket: string, password: string) =>
-    call("POST", "/api/auth/ticket", { host: hostname, headers: { "cf-connecting-ip": "203.0.113.9", "cf-ray": "8f00-SIN" }, body: { ticket, password } });
-
-  it("refuses the computer's APP_SECRET password: the password must be set first", async () => {
-    expect((await signIn(await ticketFor(), ADMIN.password)).status).toBe(403);
-  });
-
-  it("sets a password on the computer, then refuses a wrong one", async () => {
-    const changed = await call("POST", "/api/auth/password", { body: { current: ADMIN.password, password: "tinyacrobatics1" }, cookie: adminCookie });
-    expect(changed.status).toBe(200);
-    expect((await signIn(await ticketFor(), "not-the-password")).status).toBe(401);
-  });
-
-  it("signs in with a ticket and the computer's password, once per browser", async () => {
-    const res = await signIn(await ticketFor(), "tinyacrobatics1");
-    expect(res.status).toBe(200);
-    const cookie = cookieOf(res);
-    const check = (await (await call("GET", "/api/auth/check", { host: hostname, cookie })).json()) as { authed: boolean };
-    expect(check.authed).toBe(true);
-  });
-
-  it("refuses a ticket a second time", async () => {
-    const t = await ticketFor();
-    expect((await signIn(t, "tinyacrobatics1")).status).toBe(200);
-    expect((await signIn(t, "tinyacrobatics1")).status).toBe(401);
-  });
-
-  it("refuses a ticket for another account", async () => {
-    const id = hostname.split(".")[0];
-    const now = Math.floor(Date.now() / 1000);
-    const other = issue({ sub: "acct-2", env: id, aud: hostname, iat: now, exp: now + 120, jti: "other-1" });
-    expect((await signIn(other, "tinyacrobatics1")).status).toBe(401);
-  });
-
-  it("refuses an expired ticket and a ticket signed by another key", async () => {
-    const id = hostname.split(".")[0];
-    const now = Math.floor(Date.now() / 1000);
-    const old = issue({ sub: "acct-1", env: id, aud: hostname, iat: now - 300, exp: now - 180, jti: "old-1" });
-    expect((await signIn(old, "tinyacrobatics1")).status).toBe(401);
-    const forged = generateKeyPairSync("ed25519").privateKey;
-    const body = Buffer.from(JSON.stringify({ sub: "acct-1", env: id, aud: hostname, iat: now, exp: now + 120, jti: "forged-1" })).toString("base64url");
-    const bad = `${body}.${sign(null, Buffer.from(body), forged).toString("base64url")}`;
-    expect((await signIn(bad, "tinyacrobatics1")).status).toBe(401);
-  });
-
-  it("refuses a ticket sent to another name", async () => {
-    const t = await ticketFor();
-    const res = await call("POST", "/api/auth/ticket", { host: `other.${ZONE}`, body: { ticket: t, password: "tinyacrobatics1" } });
-    expect(res.status).toBe(400);
-  });
-});
-
 describe("with the sign-in code on, everything through the tunnel is asked for it", () => {
-  it("a ticket and the password give a step token, never a cookie; the code then signs in; this Mac's window is not asked", async () => {
+  it("the password gives a step token, never a cookie; the code then signs in; this Mac's window is not asked", async () => {
     vi.stubEnv("CT_LOCAL", "1");
     const { codeAt } = await import("../lib/sign-in-code");
     const { findUser, setSignInCode } = await import("../users");
+    // the computer's own password first: while it is APP_SECRET, only this Mac signs in
+    const changed = await call("POST", "/api/auth/password", { body: { current: ADMIN.password, password: "tinyacrobatics1" }, cookie: adminCookie });
+    expect(changed.status).toBe(200);
     const secret = randomBytes(20);
     setSignInCode(findUser("admin")!, { secret: secret.toString("hex"), recovery: [], lastStep: 0 }, true);
     const viaTunnel = { "cf-connecting-ip": "203.0.113.9", "cf-ray": "8f00-SIN" };
-    const id = hostname.split(".")[0];
-    const r = await fakeBroker(new Request(`https://broker.test/v1/computers/${id}/ticket`, { method: "POST", headers: { authorization: `Bearer ${broker.lastToken}` } }));
-    const { ticket } = (await r.json()) as { ticket: string };
 
-    const res = await call("POST", "/api/auth/ticket", { host: hostname, headers: viaTunnel, body: { ticket, password: "tinyacrobatics1" } });
+    const res = await call("POST", "/api/auth/login", { host: hostname, headers: viaTunnel, body: { username: "admin", password: "tinyacrobatics1" } });
     expect(res.status).toBe(401);
     expect(res.headers.get("set-cookie")).toBeNull();
     const { code, step } = (await res.json()) as { code: string; step: string };

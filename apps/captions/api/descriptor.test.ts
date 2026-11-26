@@ -7,7 +7,7 @@ process.env.DATA_DIR = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdi
 process.env.APP_SECRET = "local-sign-in-test-secret";
 
 const app = (await import("./boot")).default;
-const { allowedPeer, endpoints, listensEverywhere } = await import("./descriptor");
+const { allowedPeer, endpoints, isLan, listensEverywhere } = await import("./descriptor");
 const { computerKey } = await import("./connect/keys");
 
 afterEach(() => vi.unstubAllEnvs());
@@ -49,6 +49,14 @@ describe("endpoints", () => {
       expect(e.httpBaseUrl).toMatch(/^http:\/\/\d+\.\d+\.\d+\.\d+:43128$/);
       expect(e.httpBaseUrl).not.toMatch(/\/\/127\./);
     }
+  });
+
+  it("never calls a rented box's public address, a tailnet's or loopback a network address", () => {
+    expect(isLan("172.16.0.9")).toBe(true);
+    expect(isLan("10.0.0.5")).toBe(true);
+    expect(isLan("203.0.113.7")).toBe(false);
+    expect(isLan("100.98.0.1")).toBe(false);
+    expect(isLan("127.0.0.1")).toBe(false);
   });
 
   it("lists nothing on Cloud, where the container's addresses reach nobody", async (ctx) => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { signInNameProblem, signInReturn } from "./AccountSection";
+import { macAccountItems, signInNameProblem, signInReturn } from "./AccountSection";
 
 describe("signInNameProblem (the allowed sign-in name, shown only when broken)", () => {
   it("is quiet for an allowed name, any case, and while nothing is typed", () => {
@@ -31,5 +31,17 @@ describe("signInReturn (the toast after a sign-in link)", () => {
     expect(signInReturn("?linked=myspace")).toBeNull();
     expect(signInReturn("?tab=profile")).toBeNull();
     expect(signInReturn("")).toBeNull();
+  });
+});
+
+describe("macAccountItems (the Mac app's account is one row; the rest is in its menu)", () => {
+  it("offers one more sign-in for each still open, Sign out, and Disconnect last, asked first", () => {
+    const done: string[] = [];
+    const items = macAccountItems({ linked: ["apple"], open: ["github"], link: (p) => done.push(`link ${p}`), unlink: (p) => done.push(`unlink ${p}`), signOut: () => done.push("out") });
+    expect(items.map((i) => i.label)).toEqual(["Add GitHub", "Sign out", "Disconnect Apple"]);
+    expect(items.map((i) => !!i.destructive)).toEqual([false, false, true]);
+    expect(items[2].confirm).toEqual({ title: "Disconnect Apple?", ok: "Disconnect" });
+    for (const i of items) void i.onSelect();
+    expect(done).toEqual(["link github", "out", "unlink apple"]);
   });
 });

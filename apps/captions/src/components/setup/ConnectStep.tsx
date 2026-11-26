@@ -34,7 +34,7 @@ const HAD_CODE = "setup/phone-code";
 /** After the phone's row in the step: not drawn while that row's height is not known yet (PhoneRowView's data-unplaced). */
 const UNDER_PHONE = "peer-data-[unplaced]/phone:hidden";
 
-/** A Standard pairing link for the phone (Settings → Computers → Phones lists it too). See PhoneState for the other answers. */
+/** A Standard pairing link for the phone (Settings → Computers → Signed-in devices lists it too). See PhoneState for the other answers. */
 export async function mintPhoneLink(): Promise<PhoneState> {
   try {
     return await createPairingLink({ scopes: STANDARD });
@@ -44,7 +44,7 @@ export async function mintPhoneLink(): Promise<PhoneState> {
 }
 
 /**
- * "Add your phone": the same pairing link card as Settings → Computers → Phones, its QR code open. One link is made when
+ * "Add your phone": the same pairing link card as Settings → Computers → Signed-in devices, its QR code open. One link is made when
  * the step opens; once it runs out or is revoked, Create link makes the next.
  */
 export function PhoneRow({ wait = false }: { wait?: boolean }) {

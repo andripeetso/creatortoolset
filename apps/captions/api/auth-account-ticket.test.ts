@@ -157,6 +157,56 @@ describe("with the sign-in service named", () => {
   });
 });
 
+describe("the Mac app's window, signed in with the account's ticket (POST /api/auth/account-ticket)", () => {
+  const URL_ = "http://localhost/api/auth/account-ticket";
+  const signIn = (o: { body?: unknown; proof?: string | null; type?: string } = {}) =>
+    app.request(URL_, {
+      method: "POST",
+      headers: { "content-type": o.type ?? "application/json", ...(o.proof === null ? {} : { dpop: o.proof ?? dpop("POST", URL_) }) },
+      body: JSON.stringify(o.body ?? { ticket: "T1", verifier: VERIFIER, client: { label: "Tiny Mac", os: "macOS 26", appVersion: "0.30.0", deviceType: "mobile" } }),
+    });
+
+  it("is the account itself: a cookie of its own session, listed as a computer under the name the app gave", async () => {
+    process.env.ACCOUNT_SIGNIN_SERVICE = SERVICE;
+    service(ticketFor({ provider: "google", sub: "g-sam" }));
+    const res = await signIn();
+    expect(res.status).toBe(200);
+    const cookie = res.headers.get("set-cookie")!.split(";")[0]!;
+    expect(cookie).toMatch(/^cap_auth=cts_/);
+    const check = (await (await app.request("http://localhost/api/auth/check", { headers: { cookie } })).json()) as { authed: boolean; user: { username: string } };
+    expect(check).toMatchObject({ authed: true, user: { username: "tiny-sam" } });
+    const { clientSessions } = (await (await app.request("http://localhost/api/auth/access", { headers: { cookie } })).json()) as { clientSessions: Array<{ current: boolean; method: string; scopes: string[]; client: Record<string, string> }> };
+    const mine = clientSessions.find((x) => x.current)!;
+    // a computer whatever the app says of itself: only a phone's own sign-in is a phone's
+    expect(mine).toMatchObject({ method: "browser-cookie", scopes: ["read", "write", "access"], client: { deviceType: "desktop", label: "Tiny Mac", os: "macOS 26", appVersion: "0.30.0" } });
+  });
+
+  it("sets no cookie for a ticket of another key, a person with no account here, or a body a form could send", async () => {
+    process.env.ACCOUNT_SIGNIN_SERVICE = SERVICE;
+    service(ticketFor({ provider: "google", sub: "g-sam" }, { jkt: "another-key" }));
+    for (const res of [await signIn(), await signIn({ proof: null }), await signIn({ type: "text/plain" })]) {
+      expect(res.status).toBe(400);
+      expect(res.headers.get("set-cookie")).toBeNull();
+    }
+    service(ticketFor({ provider: "google", sub: "g-nobody" }));
+    const none = await signIn();
+    expect(none.status).toBe(400);
+    expect(none.headers.get("set-cookie")).toBeNull();
+  });
+
+  it("a proof works once", async () => {
+    process.env.ACCOUNT_SIGNIN_SERVICE = SERVICE;
+    service(ticketFor({ provider: "google", sub: "g-sam" }));
+    const proof = dpop("POST", URL_);
+    expect((await signIn({ proof })).status).toBe(200);
+    expect((await signIn({ proof })).status).toBe(400);
+  });
+
+  it("is not there on a server that names no sign-in service", async () => {
+    expect((await signIn()).status).toBe(404);
+  });
+});
+
 describe("tried too often from one address", () => {
   it("the 11th ticket in a minute waits, and the service is not asked", async () => {
     process.env.ACCOUNT_SIGNIN_SERVICE = SERVICE;

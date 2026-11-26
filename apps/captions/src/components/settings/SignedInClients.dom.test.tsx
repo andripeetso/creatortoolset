@@ -4,7 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { AccessView, ClientSession, CreatedLink } from "@/lib/access";
 
-// Settings → Computers → Phones: pairing links (create, copy, expire, revoke) and the signed-in devices, live from the
+// Settings → Computers → Signed-in devices: pairing links (create, copy, expire, revoke) and the signed-in devices, live from the
 // server's access events.
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -47,6 +47,20 @@ const ipad: ClientSession = {
   expiresAt: new Date(NOW + 86_400_000).toISOString(),
   scopes: ["read"],
   client: { label: "Living room iPad", deviceType: "tablet", os: "iPadOS 26", appVersion: "1.4.0" },
+  lastConnectedAt: null,
+  connected: false,
+  current: false,
+};
+
+/** A sign-in in a browser (a cookie session): no kind or name of its own, only what the browser said of itself. */
+const signIn: ClientSession = {
+  sessionId: "s-signin",
+  subject: "sam",
+  method: "browser-cookie",
+  issuedAt: new Date(NOW - 86_400_000).toISOString(),
+  expiresAt: new Date(NOW + 86_400_000).toISOString(),
+  scopes: ["read", "write", "access"],
+  client: { deviceType: "unknown", userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36" },
   lastConnectedAt: null,
   connected: false,
   current: false,
@@ -130,6 +144,17 @@ it("lists the signed-in devices: name, os and app version, how they are connecte
   // this device is the one row without a Revoke of its own
   expect(document.querySelectorAll("button").length).toBe(3); // Revoke others, Create link, the phone's Revoke
   expect(button("Revoke others").disabled).toBe(false);
+});
+
+it("names a browser's sign-in from what the browser says of itself, and says whose it is when it is another account's", async () => {
+  const { useAuth } = await import("@/lib/auth");
+  useAuth.setState({ me: { username: "admin" } as never });
+  await show();
+  FakeSource.last!.send("clientUpserted", signIn);
+  expect(text()).toContain("Chrome");
+  expect(text()).toContain("sam · Windows");
+  // the viewer's own rows never repeat their account
+  expect(text()).not.toContain("admin · ");
 });
 
 it("follows the access events: a new device, a removed one, and a snapshot that replaces the list", async () => {

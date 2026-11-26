@@ -22,10 +22,14 @@ describe("the session cookie", () => {
     const u = createUser("cookie-person", "cookiepass1", { role: "user" });
     const mint = new Hono().get("/", (c) => { setLoginCookie(c, u); return c.text("ok"); });
     const fresh = ((await mint.request("/")).headers.get("set-cookie") ?? "").split(";")[0];
-    // an old session (signed over a password hash that changed since) sent before the new one, as a parent-domain cookie is
-    const stale = fresh.replace(/\.[a-f0-9]{64}$/, "." + "0".repeat(64));
+    // an old sign-in (ended since) sent before the new one, as a parent-domain cookie is
+    const stale = `cap_auth=cts_${"0".repeat(43)}`;
     expect(getSessionUser(`${stale}; ${fresh}`)?.username).toBe("cookie-person");
     expect(getSessionUser(stale)).toBeNull();
+    // a cookie from before each sign-in had a session of its own (a name and a signature) signs nobody in
+    const signed = `cap_auth=${Buffer.from("cookie-person").toString("base64url")}.${"0".repeat(64)}`;
+    expect(getSessionUser(signed)).toBeNull();
+    expect(getSessionUser(`${signed}; ${fresh}`)?.username).toBe("cookie-person");
   });
 });
 
