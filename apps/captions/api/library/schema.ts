@@ -784,4 +784,7 @@ export const MIGRATIONS: string[] = [
   // a computer's folder listing looks each file up by its path (report.ts applyFolder): without this every file read
   // every place row of its folder, so a page's time grew with the square of the library
   `CREATE INDEX IF NOT EXISTS version_places_path ON version_places(device, path);`,
+  // the library's monthly budget is gone (budgets are per key now, my-keys.ts): what it held runs again, and its setting goes
+  `UPDATE jobs SET error = NULL, run_after = 0 WHERE state = 'queued' AND error = 'monthly budget reached';
+  UPDATE libraries SET settings = json_remove(settings, '$.lookBudget') WHERE json_type(settings, '$.lookBudget') IS NOT NULL;`,
 ];

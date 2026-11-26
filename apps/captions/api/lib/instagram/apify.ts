@@ -1,5 +1,5 @@
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { recordService } from "../service-usage";
+import { budgetRefusal, recordService } from "../service-usage";
 import path from "node:path";
 import { env } from "../env";
 import { canonicalPostUrl, shortcodeFromUrl, shortcodeToMediaId } from "./url";
@@ -345,6 +345,8 @@ export async function apifyRun(
   label = "Content Analyzer: posts",
 ): Promise<unknown[]> {
   const stored = await requireApify(opts.username);
+  const over = budgetRefusal("APIFY_TOKEN", stored.source === "env" ? "server" : `own:${opts.username}`);
+  if (over) throw new Error(over);
   const limit = stored.slow ? 1 : MAX_RUNS;
   const sleep = opts.sleep ?? ((ms: number) => sleepAbortable(ms, opts.signal));
   const release = await acquireRunSlot(opts.username, limit, opts.signal);

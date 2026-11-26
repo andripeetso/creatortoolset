@@ -13,7 +13,7 @@ import { hasThisMac, useThisMac } from "@/components/settings/ThisMacSection";
 /**
  * The Media Library's processing, said in time and money: a line per step with the time left while clips are being
  * prepared (api/library/estimate.ts), read at this server's own pace. Nothing asks before files or a folder go in (11-19):
- * the import's one line and a folder's indexing line say the total, and the monthly budget guards the cost.
+ * the import's one line and a folder's indexing line say the total.
  */
 
 export function aboutTime(s: number): string {
@@ -160,7 +160,8 @@ export function LibraryProgressBar({ libraryId }: { libraryId: string }) {
   });
   // work that waits for a computer is said in the Status view and on Settings → Computers, not over the clips;
   // what needs the person, and work no computer has taken, are said here too
-  const shown = entries.filter((w) => needsYou(w) || w.wait === "stuck");
+  // and a pause for the plan's limit: nothing moves until it opens again
+  const shown = entries.filter((w) => w.limit || needsYou(w) || w.wait === "stuck");
   if (!moving && !shown.length) return null;
   const toggle = () => {
     setOpen(!open);
@@ -238,7 +239,8 @@ export function LibraryProgressBar({ libraryId }: { libraryId: string }) {
           {p.stages?.map((s) => <StageRow key={s.kind} name={STAGE_NAME[s.kind]} done={s.done} of={s.of} now={s.now} failed={s.failed} />)}
         </ul>
       )}
-      {(!moving || open) && waiting}
+      {/* a pause is said while the panel is closed too: it is why the bar does not move */}
+      {!moving || open ? waiting : waiting.filter((_, i) => shown[i]!.limit)}
     </section>
   );
 }

@@ -147,7 +147,7 @@ export function columnsOf(entries: UsageEntry[], since: number, now: number, met
 
 /* ---- API keys: the paid services' lines (GET /api/usage/services) ---- */
 
-export const NO_SERVICE_USAGE: ServiceUsageView = { lines: [], limits: [] };
+export const NO_SERVICE_USAGE: ServiceUsageView = { lines: [], limits: [], budgets: [] };
 
 /** The service lines since `since`; a server without the route yet answers 404, read as no lines. */
 export async function getServiceUsage(since: number): Promise<ServiceUsageView> {
@@ -155,7 +155,7 @@ export async function getServiceUsage(since: number): Promise<ServiceUsageView> 
   if (r.status === 404) return NO_SERVICE_USAGE;
   if (!r.ok) throw new Error(`Could not load usage (${r.status})`);
   const v = (await r.json()) as Partial<ServiceUsageView>;
-  return { lines: v.lines ?? [], limits: v.limits ?? [] };
+  return { lines: v.lines ?? [], limits: v.limits ?? [], budgets: v.budgets ?? [] };
 }
 
 /** A key's name as Settings → API keys shows it. */

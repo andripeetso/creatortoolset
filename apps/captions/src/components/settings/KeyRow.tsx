@@ -4,7 +4,8 @@ import { Button } from "@/components/ui/button";
 import { FormDialog, InUse, ListRow, RowMenu, SecretField, Status } from "./ui";
 import type { SearchRowId } from "./search";
 import { msg } from "./helpers";
-import { KeyUsageDialog, usageLine, useServiceUsage } from "./KeyUsage";
+import { KeyUsageDialog, usageLine, useServiceUsageLoad } from "./KeyUsage";
+import { BudgetDialog, BudgetLine, budgetFor } from "./KeyBudget";
 
 export interface KeyRowProps {
   id: SearchRowId;
@@ -51,9 +52,15 @@ const inUse = (last4: string | undefined, broken?: string) => (
 export function KeyRow({ id, name, subtitle, where, set, last4, readOnly, readOnlyText = "Set in the server's settings file (.env)", served, broken, removeBody, service, save }: KeyRowProps) {
   const [open, setOpen] = useState(false);
   const [usageOpen, setUsageOpen] = useState(false);
-  const view = useServiceUsage();
+  const [budgetOpen, setBudgetOpen] = useState(false);
+  const { data: view, refresh } = useServiceUsageLoad();
   const used = service ? usageLine(view, service) : null;
-  const usageItem = service ? [{ label: "Usage", onSelect: () => setUsageOpen(true) }] : [];
+  // the budget of the key in use: the person's own, else the server's that serves them (an admin's)
+  const budget = service ? budgetFor(view, service, set && !readOnly ? "own" : "server") : null;
+  const usageItem = [
+    ...(service ? [{ label: "Usage", onSelect: () => setUsageOpen(true) }] : []),
+    ...(budget ? [{ label: "Monthly budget", onSelect: () => setBudgetOpen(true) }] : []),
+  ];
   const [value, setValue] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -66,10 +73,15 @@ export function KeyRow({ id, name, subtitle, where, set, last4, readOnly, readOn
     <Status>{set ? "Your key" : "Server key"}</Status>
   ) : undefined;
   // the last 30 days and the service's own limit, under the status; it opens the key's usage by tool
-  const usage = used && (
-    <button type="button" className="block max-w-full truncate text-left text-xs text-muted-foreground hover:text-foreground hover:underline" onClick={() => setUsageOpen(true)}>
-      {used}
-    </button>
+  const usage = (used || budget) && (
+    <>
+      {used && (
+        <button type="button" className="block max-w-full truncate text-left text-xs text-muted-foreground hover:text-foreground hover:underline" onClick={() => setUsageOpen(true)}>
+          {used}
+        </button>
+      )}
+      {budget && <BudgetLine b={budget} onClick={() => setBudgetOpen(true)} />}
+    </>
   );
 
   const actions: ReactNode = readOnly ? (
@@ -128,6 +140,7 @@ export function KeyRow({ id, name, subtitle, where, set, last4, readOnly, readOn
     <>
       <ListRow id={id} title={name} subtitle={subtitle} status={status || usage ? <>{status}{usage}</> : undefined} actions={actions} />
       {service && <KeyUsageDialog service={service} name={name} open={usageOpen} onOpenChange={setUsageOpen} />}
+      {budget && <BudgetDialog name={name} b={budget} open={budgetOpen} onOpenChange={setBudgetOpen} saved={() => refresh().catch(() => {})} />}
       <FormDialog
         open={open}
         onOpenChange={(o) => {

@@ -7,12 +7,12 @@ import type { LookLevel } from "../../contracts/library";
 import { aiFor, onApiKey } from "../ai-complete";
 import { completeVisionWithFallback } from "../ai-vision";
 import { ffmpegCommand } from "../ffmpeg-runtime";
-import { BACKGROUND_SLOTS, macUsageSince } from "../lib/mac-claude";
+import { BACKGROUND_SLOTS } from "../lib/mac-claude";
 import { mayRead } from "../work/offline";
 import { stampOf } from "../lib/workshop/context";
-import { blobs, libraryLookBudget, libraryLookLevel, librarySetting, LOOK_SINCE } from "./db";
+import { blobs, libraryLookLevel, librarySetting, LOOK_SINCE } from "./db";
 import { mayLeave } from "./upload-gate";
-import { DESCRIBE_LABEL, libraryWorkspaceId, whoFor, workspaceOf } from "./describe";
+import { whoFor, workspaceOf } from "./describe";
 import { enqueueJob, prepareFirst } from "./jobs";
 import { CUTS_BY_MODEL } from "./cuts";
 import { clock, FRAME_H, FRAME_W, lookPrompt, parseRated, pictureHash, readPicture, SHEET_STRETCHES, shotsOf, STRETCH_COLS, STRETCH_FRAMES, stretchSheet, type RatedLine } from "./look";
@@ -35,9 +35,9 @@ import { NeedsKey } from "./transcribe";
 
 /** What the usage tally counts a shot description call as (estimate.ts reads its average cost back). */
 export const LOOK_LABEL = "Media Library shot descriptions";
-/** What the usage tally counts a timeline call on a Gemini key as (timeline.ts): inside the same monthly budget. */
+/** What the usage tally counts a timeline call on a Gemini key as (timeline.ts). */
 export const WATCH_LABEL = `${LOOK_LABEL} (Gemini)`;
-/** What the usage tally counts Gemini listening to a sound file as (sound-kind.ts): inside the same monthly budget. */
+/** What the usage tally counts Gemini listening to a sound file as (sound-kind.ts). */
 export const LISTEN_LABEL = "Media Library sound kinds (Gemini)";
 /** The look prompt's version, in its context stamp: a change that should describe shots again bumps it. */
 export const LOOK_VERSION = "look-1";
@@ -49,17 +49,6 @@ export const SHEETS_PER_CALL = 6;
 export const SHEET_FORMAT = `${STRETCH_FRAMES}x${SHEET_STRETCHES}`;
 /** Why a look of a file kept on a Mac waits (estimate.ts progress tells these apart by it). */
 export const MAC_WAITS = "Waits for the Mac this file is on to read its picture";
-/** Why a description or look waits for its library's monthly budget (lookBudgetWaits; worker.ts holds it, estimate.ts shows budgetPause). */
-export const BUDGET_WAITS = "monthly budget reached";
-/** Work held for its library's monthly budget: its job waits, saying so, and asks again later (worker.ts). */
-export class BudgetSpent extends Error {}
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-/** The progress line while the budget is spent: analysis resumes on the first of next month (UTC, the budget's month). */
-export const budgetPause = (now = Date.now()): string => {
-  const n = new Date(now);
-  const next = new Date(Date.UTC(n.getUTCFullYear(), n.getUTCMonth() + 1, 1));
-  return `Paused until ${next.getUTCDate()} ${MONTHS[next.getUTCMonth()]}: ${BUDGET_WAITS}`;
-};
 /** Why a look parks when the account it runs as may no longer see the clip (lookAllowed): the sweep queues it again once they may. */
 export const NO_ACCESS = "The person this runs as no longer sees this clip";
 
@@ -175,44 +164,6 @@ export async function sweepLook(db: DatabaseSync, now = Date.now()): Promise<boo
     if (queueLook(db, r.id, r.actor, true)) return true;
   }
   return false;
-}
-
-/** The first moment of this month, UTC (the budget's month). */
-const monthStart = (now = Date.now()) => {
-  const d = new Date(now);
-  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1);
-};
-
-/** What shot descriptions cost this month in a workspace (all of them when undefined), by the usage tally: API-equivalent on a provider, the bill on a key. */
-export async function lookSpent(workspace: string | undefined, now = Date.now()): Promise<number> {
-  let usd = 0;
-  for (const labels of Object.values(await macUsageSince(monthStart(now))))
-    for (const label of [LOOK_LABEL, `${LOOK_LABEL} (API)`, WATCH_LABEL, LISTEN_LABEL, DESCRIBE_LABEL, `${DESCRIBE_LABEL} (API)`]) {
-      const t = labels[label];
-      usd += (workspace ? t?.ws?.[workspace]?.costUsd : t?.costUsd) ?? 0;
-    }
-  return usd;
-}
-
-/** What a library's shot descriptions cost this month (lookSpent of its workspace). */
-export const librarySpent = async (db: DatabaseSync, libraryId: string): Promise<number> => lookSpent(await libraryWorkspaceId(db, libraryId));
-
-/**
- * BUDGET_WAITS when the library of `versionId` spent its monthly budget on shot descriptions, else null. A file an edit
- * waits on (jobs.ts prepareFirst) is not held: the person asked for it.
- * ponytail: checked per file, so a long file started under the cap finishes over it (a 3-hour file: about $9 at Standard)
- */
-export async function lookBudgetWaits(db: DatabaseSync, versionId: string, first: readonly string[] = []): Promise<string | null> {
-  if (first.includes(versionId)) return null;
-  const r = db.prepare("SELECT a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(versionId) as { library_id: string } | undefined;
-  const cap = r ? libraryLookBudget(r.library_id) : null;
-  if (cap === null || !r) return null;
-  return (await librarySpent(db, r.library_id)) >= cap ? BUDGET_WAITS : null;
-}
-
-/** The library's budget for shot descriptions was raised or taken off: the looks held for it (worker.ts) run again at once. */
-export function releaseBudget(db: DatabaseSync, libraryId: string): void {
-  db.prepare("UPDATE jobs SET error = NULL, run_after = 0 WHERE library_id = ? AND kind IN ('look', 'describe') AND state = 'queued' AND error = ?").run(libraryId, BUDGET_WAITS);
 }
 
 /** Shot description calls in flight per account, and the ones waiting for a turn (callTurn). */

@@ -87,6 +87,11 @@ describe("the library's processing line", () => {
     expect((await render()).textContent).toBe("");
   });
 
+  it("says a pause for the plan's limit, also while the panel is closed", async () => {
+    progress = { ...progress, waiting: [{ step: "look", count: 78, missing: "Usage limit reached until 9:00. They continue then.", limit: true }] };
+    expect((await render()).textContent).toContain("78 shot descriptions paused: Usage limit reached until 9:00. They continue then.");
+  });
+
   const held: LibraryProgress["waiting"] = [
     { step: "files", count: 6, missing: "", away: true, wait: "stuck", reason: "Mac Studio hasn't started on these", href: "/settings/devices", mine: true, device: "mac" },
     { step: "look", count: 14, missing: "", away: true, wait: "offline", reason: "Linux box is offline", mine: true, device: "linux", devices: ["linux", "mac"] },

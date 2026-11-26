@@ -30,17 +30,14 @@ const { tick } = await import("./worker");
 const { searchApp, searchLibrary } = await import("./search");
 const { stretchesOf, setUserLine } = await import("./stretches");
 const { mayRead } = await import("../work/offline");
-const { BUDGET_WAITS, budgetPause, LOOK_LABEL, lookBudgetWaits, lookable, lookFromSheets, lookSpent, lookStamp, MAC_WAITS, NO_ACCESS, queueLook, redoLook, releaseBudget, sheetHashes, sweepLook } = await import("./shots");
-const { DESCRIBE_LABEL, libraryWorkspaceId } = await import("./describe");
-const { askedWatch, watchAfter } = await import("./timeline");
-const { saveMyKey } = await import("../my-keys");
+const { LOOK_LABEL, lookable, lookFromSheets, lookStamp, MAC_WAITS, NO_ACCESS, queueLook, redoLook, sheetHashes, sweepLook } = await import("./shots");
 const { storeStretches } = await import("./stretches");
 const { lookPrompt, RULE, samePicture, stretchSheet } = await import("./look");
 const { describePrompt } = await import("./describe");
 const { estimate, progress } = await import("./estimate");
 const { footageProfile } = await import("../lib/workshop/context");
 const { completeVisionWithFallback } = await import("../ai-vision");
-const { MacClaudeError, recordUsage } = await import("../lib/mac-claude");
+const { MacClaudeError } = await import("../lib/mac-claude");
 
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
@@ -322,81 +319,6 @@ describe("the background index", () => {
     await runLooks();
     expect(job(v)?.state).toBe("done");
     expect(stretchesOf(d, v).every((r) => r.text)).toBe(true);
-  });
-
-  it("a spent monthly budget holds looks, saying so; raised, they run", async () => {
-    const d = libraryDb();
-    const v = await seed("ast-bud-01");
-    vi.mocked(completeVisionWithFallback).mockImplementation(answerAll());
-    await recordUsage(LOOK_LABEL, { tokens: 1000, costUsd: 21 }, undefined, "workspace", (await libraryWorkspaceId(d, "lib_s")) ?? null);
-    enqueueJob(d, "lib_s", v, "look", "local");
-    await tick(Date.now(), ["look"]);
-    expect(job(v)).toMatchObject({ state: "queued", error: BUDGET_WAITS });
-    expect(job(v)!.run_after).toBeGreaterThan(Date.now());
-    expect(completeVisionWithFallback).not.toHaveBeenCalled();
-    expect((await progress("lib_s", "local")).waiting).toContainEqual(expect.objectContaining({ step: "look", count: 1, missing: budgetPause(), limit: true }));
-    expect((await estimate("lib_s", "local", { clips: 1, bytes: 1 })).lookSpent).toBeGreaterThanOrEqual(21);
-    d.prepare(`UPDATE libraries SET settings = json_set(settings, '$.lookBudget', 50) WHERE id = 'lib_s'`).run();
-    releaseBudget(d, "lib_s");
-    await runLooks();
-    expect(job(v)?.state).toBe("done");
-    d.prepare(`UPDATE libraries SET settings = json_set(settings, '$.lookBudget', json('null')) WHERE id = 'lib_s'`).run();
-  });
-
-  it("a description counts in the monthly budget on its own label and the API's; an edit's own ask is not held", async () => {
-    const d = libraryDb();
-    const v = await seed("ast-bud-02");
-    const ws = (await libraryWorkspaceId(d, "lib_s")) ?? null;
-    const before = await lookSpent(ws ?? undefined);
-    await recordUsage(DESCRIBE_LABEL, { tokens: 1000, costUsd: 1 }, undefined, "workspace", ws);
-    await recordUsage(`${DESCRIBE_LABEL} (API)`, { tokens: 1000, costUsd: 2 }, undefined, "workspace", ws);
-    expect((await lookSpent(ws ?? undefined)) - before).toBeCloseTo(3);
-    d.prepare(`UPDATE libraries SET settings = json_set(settings, '$.lookBudget', 1) WHERE id = 'lib_s'`).run();
-    expect(await lookBudgetWaits(d, v)).toBe(BUDGET_WAITS);
-    expect(await lookBudgetWaits(d, v, [v])).toBeNull();
-    d.prepare(`UPDATE libraries SET settings = json_set(settings, '$.lookBudget', json('null')) WHERE id = 'lib_s'`).run();
-  });
-
-  it("a held description waits for the budget, and is released with the looks", async () => {
-    const d = libraryDb();
-    const v = await seed("ast-bud-03", { described: false }); // one described already would read done (jobs.ts HAVE)
-    await recordUsage(DESCRIBE_LABEL, { tokens: 1000, costUsd: 5 }, undefined, "workspace", (await libraryWorkspaceId(d, "lib_s")) ?? null);
-    d.prepare(`UPDATE libraries SET settings = json_set(settings, '$.lookBudget', 1) WHERE id = 'lib_s'`).run();
-    enqueueJob(d, "lib_s", v, "describe", "local");
-    await tick(Date.now(), ["describe"]);
-    expect(job(v, "describe")).toMatchObject({ state: "queued", error: BUDGET_WAITS });
-    d.prepare(`UPDATE libraries SET settings = json_set(settings, '$.lookBudget', json('null')) WHERE id = 'lib_s'`).run();
-    releaseBudget(d, "lib_s");
-    expect(job(v, "describe")?.error).toBeNull();
-  });
-
-  it("a computer's stills are held by a spent budget too: describeFromStills throws before any AI call", async () => {
-    const { describeFromStills } = await import("./worker");
-    const { BudgetSpent } = await import("./shots");
-    const d = libraryDb();
-    const v = await seed("ast-bud-04");
-    await recordUsage(DESCRIBE_LABEL, { tokens: 1000, costUsd: 5 }, undefined, "workspace", (await libraryWorkspaceId(d, "lib_s")) ?? null);
-    d.prepare(`UPDATE libraries SET settings = json_set(settings, '$.lookBudget', 1) WHERE id = 'lib_s'`).run();
-    try {
-      await expect(describeFromStills(d, "lib_s", v, "local", [])).rejects.toBeInstanceOf(BudgetSpent);
-    } finally {
-      d.prepare(`UPDATE libraries SET settings = json_set(settings, '$.lookBudget', json('null')) WHERE id = 'lib_s'`).run();
-    }
-  });
-
-  it("a timeline watch is held by a spent budget: it does not read the file or ask Gemini", async () => {
-    const d = libraryDb();
-    const v = await seed("ast-watch-01");
-    await recordUsage(LOOK_LABEL, { tokens: 1000, costUsd: 5 }, undefined, "workspace", (await libraryWorkspaceId(d, "lib_s")) ?? null);
-    d.prepare(`UPDATE libraries SET settings = json_set(settings, '$.lookBudget', 1) WHERE id = 'lib_s'`).run();
-    saveMyKey("local", "GEMINI_API_KEY", "test-gemini");
-    const src = vi.fn(async () => cuts);
-    askedWatch.add(v);
-    await watchAfter(d, v, src, "local");
-    expect(src).not.toHaveBeenCalled();
-    askedWatch.delete(v);
-    saveMyKey("local", "GEMINI_API_KEY", null);
-    d.prepare(`UPDATE libraries SET settings = json_set(settings, '$.lookBudget', json('null')) WHERE id = 'lib_s'`).run();
   });
 
   it("a talking take gets a look only where the library's Max level reads them (lookTalking)", async () => {

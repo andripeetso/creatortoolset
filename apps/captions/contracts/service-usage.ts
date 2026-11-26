@@ -40,7 +40,28 @@ export interface ServiceLimit {
   at: number;
 }
 
+/**
+ * A key's monthly budget and what it spent this calendar month (UTC). Set per key: the person's own key, or the server's
+ * (an admin's). At the budget every tool's call on that key stops until the next month or a higher budget.
+ *   PUT /api/usage/budgets/:service  { whose: "own" | "server", budget: number | null }  (null = no limit)
+ */
+export interface KeyBudget {
+  service: string;
+  whose: "own" | "server";
+  /** dollars a month; null = no limit */
+  budget: number | null;
+  spent: number;
+}
+
+/** The services whose calls say what they cost, so a budget can hold them (the others count requests only). */
+export const BUDGET_SERVICES = ["DEEPGRAM_API_KEY", "ELEVENLABS_API_KEY", "PERPLEXITY_API_KEY", "APIFY_TOKEN", "OPENAI_API_KEY", "GEMINI_API_KEY", "ANTHROPIC_API_KEY"] as const;
+
+/** Spent at or past this share of the budget: the key is near it (Activity and its row say so). */
+export const BUDGET_NEAR = 0.8;
+
 export interface ServiceUsageView {
   lines: ServiceUsageLine[];
   limits: ServiceLimit[];
+  /** each key the person has (and for an admin the server's) that can take a budget */
+  budgets: KeyBudget[];
 }

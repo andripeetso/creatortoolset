@@ -8,7 +8,7 @@ import { bunnyBlobs, type BunnyPlace } from "./storage/bunny";
 import { localBlobs } from "./storage/local";
 import { s3Blobs, s3Client, type S3Place } from "./storage/s3";
 import type { BlobStore } from "./storage/types";
-import { hostsOriginals, hostsProxies, LIBRARY_UPLOADS, LOOK_BUDGET_DEFAULT, lookLevelOf, proxyQualityOf, type Blur, type LibraryUpload, type LookLevel, type ProxyQuality } from "../../contracts/library";
+import { hostsOriginals, hostsProxies, LIBRARY_UPLOADS, lookLevelOf, proxyQualityOf, type Blur, type LibraryUpload, type LookLevel, type ProxyQuality } from "../../contracts/library";
 
 /**
  * The library database uses Node's built-in `node:sqlite`: no native dependency. It needs Node 22.13+ (the
@@ -217,7 +217,7 @@ export const LOOK_SINCE = `${sinceSql("look")} AND (IFNULL(a.roll, '') != 'a' OR
  * A new library's stored settings (UNIFIED-PRD §2 M4, M9): Smart folders, no monthly limit. Existing libraries keep
  * what they store (none of these is written to them).
  */
-export const newLibrarySettings = (extra: Record<string, unknown> = {}): string => JSON.stringify({ organize: "ai", lookBudget: null, ...extra });
+export const newLibrarySettings = (extra: Record<string, unknown> = {}): string => JSON.stringify({ organize: "ai", ...extra });
 
 /** What a file added from a computer the server is not on sends here (contracts LibrarySettings.upload); old true/false read as all/none. */
 export const uploadOf = (v: unknown): LibraryUpload => (v === true || v === 1 ? "all" : LIBRARY_UPLOADS.includes(v as LibraryUpload) ? (v as LibraryUpload) : "none");
@@ -328,12 +328,3 @@ export const makesProxyOf = (libraryId: string, versionId: string): boolean =>
 /** How densely the library describes shots (contracts LOOK_LEVELS). */
 export const libraryLookLevel = (libraryId: string): LookLevel =>
   lookLevelOf((libraryDb().prepare("SELECT json_extract(settings, '$.lookLevel') AS v FROM libraries WHERE id = ?").get(libraryId) as { v: unknown } | undefined)?.v);
-
-/** The library's monthly cap on shot descriptions in dollars: LOOK_BUDGET_DEFAULT until its owner sets one, null when they took it off. */
-export function libraryLookBudget(libraryId: string): number | null {
-  const r = libraryDb().prepare("SELECT json_type(settings, '$.lookBudget') AS t, json_extract(settings, '$.lookBudget') AS v FROM libraries WHERE id = ?").get(libraryId) as
-    | { t: string | null; v: unknown }
-    | undefined;
-  if (!r?.t) return LOOK_BUDGET_DEFAULT;
-  return typeof r.v === "number" && r.v >= 0 ? r.v : null;
-}

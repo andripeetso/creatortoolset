@@ -28,7 +28,7 @@ import { libraryDb } from "../library/db";
 import { firstClips, NOT_TRASHED, type JobRow } from "../library/jobs";
 import { lookHeldOn, placedOn, tookLookAfter, type PlaceRow } from "../library/mac-look";
 import { OWN, placesFor } from "../library/places";
-import { BUDGET_WAITS, MAC_WAITS } from "../library/shots";
+import { MAC_WAITS } from "../library/shots";
 import { keySound } from "../library/transcribe";
 import { resolveDevice } from "../library/whereis";
 import { DECODES, leaveToComputers, leftHere, LIMIT_LIKE, type WaitClass, type WaitSnapshot } from "../library/worker";
@@ -685,7 +685,7 @@ export function classifyJob(ctx: Ctx, job: JobRow, seenInPass = new Map<number, 
   return out;
 }
 
-const HELD_SQL = `(j.kind IN ('describe', 'look') AND j.state != 'needs_key' AND (IFNULL(j.error, '') LIKE ? OR IFNULL(j.error, '') = '${BUDGET_WAITS.replace(/'/g, "''")}'))`;
+const HELD_SQL = `(j.kind IN ('describe', 'look') AND j.state != 'needs_key' AND IFNULL(j.error, '') LIKE ?)`;
 
 function candidateJobs(libraryId: string, now: number): (JobRow & { source_key: string | null })[] {
   const kinds = [...new Set(["send", ...leaveToComputers.kinds, ...DECODES])];

@@ -1,8 +1,10 @@
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Hono } from "hono";
-import type { MyKeyEnv } from "../../contracts/service-keys";
-import type { ServiceLimit, ServiceUsageLine, ServiceUsageView } from "../../contracts/service-usage";
+import { MY_KEYS, type MyKeyEnv } from "../../contracts/service-keys";
+import type { ActivityRow } from "../../contracts/activity";
+import { BUDGET_NEAR, BUDGET_SERVICES, type KeyBudget, type ServiceLimit, type ServiceUsageLine, type ServiceUsageView } from "../../contracts/service-usage";
 import type { AuthVars } from "../auth";
 import { isAdminActor, myKeys } from "../my-keys";
 import { listUsers, LOCAL_USER } from "../users";
@@ -25,7 +27,13 @@ type Tally = Record<string, Record<string, Cell>>;
 const FILE = () => path.join(env.dataDir, "service-usage.json");
 let tally: Promise<Tally> | null = null;
 let saving: Promise<void> = Promise.resolve();
-const load = () => (tally ??= readFile(FILE(), "utf-8").then((t) => JSON.parse(t) as Tally).catch((): Tally => ({})));
+/** the tally once read: a key's spend this month is asked on every call (keyFor), so it is read without waiting */
+let loaded: Tally | null = null;
+const load = () =>
+  (tally ??= readFile(FILE(), "utf-8")
+    .then((t) => JSON.parse(t) as Tally)
+    .catch((): Tally => ({}))
+    .then((t) => (loaded = t)));
 
 /**
  * USD per unit, for a service whose answer does not say what it cost.
@@ -79,6 +87,7 @@ export async function recordService(c: ServiceCall, calls = 1): Promise<void> {
   cell.calls += calls;
   cell.units += c.units;
   cell.costUsd += costOf(c.service, c.units, c.unit, c.costUsd);
+  spentCache.clear();
   for (const h of Object.keys(all).sort().slice(0, -24 * 90)) delete all[h]; // 90 days
   const json = JSON.stringify(all);
   saving = saving
@@ -103,6 +112,106 @@ export async function serviceLines(since: number, username: string, admin: boole
     }
   }
   return out;
+}
+
+/* ---- a monthly budget per key ---- */
+
+/** Whose key a budget is on: the server's, or one account's own ("own:<username>"). */
+export type Holder = "server" | `own:${string}`;
+type Budgets = Record<string, Partial<Record<ServiceId, number>>>;
+const BUDGETS = () => path.join(env.dataDir, "key-budgets.json");
+let budgets: Budgets | null = null;
+
+const allBudgets = (): Budgets => {
+  if (!budgets)
+    try {
+      budgets = JSON.parse(readFileSync(BUDGETS(), "utf-8")) as Budgets;
+    } catch {
+      budgets = {};
+    }
+  return budgets;
+};
+
+export const budgetOf = (service: ServiceId, holder: Holder): number | null => allBudgets()[holder]?.[service] ?? null;
+
+export function setBudget(service: ServiceId, holder: Holder, usd: number | null): void {
+  const mine = Object.fromEntries(Object.entries(allBudgets()[holder] ?? {}).filter(([s]) => s !== service));
+  const next: Budgets = { ...allBudgets(), [holder]: usd === null ? mine : { ...mine, [service]: Math.round(usd * 100) / 100 } };
+  mkdirSync(env.dataDir, { recursive: true });
+  const tmp = `${BUDGETS()}.tmp-${process.pid}`;
+  writeFileSync(tmp, JSON.stringify(next), { mode: 0o600 });
+  renameSync(tmp, BUDGETS());
+  budgets = next;
+}
+
+const spentCache = new Map<string, number>();
+
+/** What `holder`'s key of `service` cost this calendar month (UTC): 0 until the tally is read (it is read on the first ask). */
+export function spentThisMonth(service: ServiceId, holder: Holder, now = Date.now()): number {
+  if (!loaded) {
+    void load();
+    return 0;
+  }
+  const month = new Date(now).toISOString().slice(0, 7);
+  const id = `${month}\0${service}\0${holder}`;
+  const hit = spentCache.get(id);
+  if (hit !== undefined) return hit;
+  const user = holder === "server" ? null : holder.slice(4);
+  let usd = 0;
+  for (const [hour, cells] of Object.entries(loaded)) {
+    if (!hour.startsWith(month)) continue;
+    for (const [key, x] of Object.entries(cells)) {
+      const [s, , whose, u] = JSON.parse(key) as [string, string, Whose, string];
+      if (s === service && (user === null ? whose === "server" : whose === "own" && u === user)) usd += x.costUsd;
+    }
+  }
+  spentCache.set(id, usd);
+  return usd;
+}
+
+const keyName = (service: ServiceId) => (service === "APIFY_TOKEN" ? "Apify" : (MY_KEYS.find((k) => k.env === service)?.name ?? service));
+
+/** Why a call on this key may not run: it spent its monthly budget. null while it may. */
+export function budgetRefusal(service: ServiceId, holder: Holder, now = Date.now()): string | null {
+  const cap = budgetOf(service, holder);
+  if (cap === null || spentThisMonth(service, holder, now) < cap) return null;
+  return `${keyName(service)} key reached its monthly budget of $${cap}: raise it in Settings → API keys`;
+}
+
+/** The budgets `username` sees: one per key they have that can take one, and for an admin the server's keys too. */
+async function budgetsFor(username: string, admin: boolean, now = Date.now()): Promise<KeyBudget[]> {
+  await load();
+  const mine = myKeys(username);
+  const apify = await readApify(username).catch(() => null);
+  const out: KeyBudget[] = [];
+  for (const service of BUDGET_SERVICES) {
+    const own = service === "APIFY_TOKEN" ? apify?.source === "file" && !!apify.token : !!mine[service];
+    const server = service === "APIFY_TOKEN" ? apify?.source === "env" && !!apify.token : !!process.env[service];
+    const keys: Array<[boolean, KeyBudget["whose"], Holder]> = [[own, "own", `own:${username}`], [admin && server, "server", "server"]];
+    for (const [has, whose, holder] of keys) if (has) out.push({ service, whose, budget: budgetOf(service, holder), spent: spentThisMonth(service, holder, now) });
+  }
+  return out;
+}
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const money = (n: number) => `$${n.toFixed(2).replace(/\.00$/, "")}`;
+
+/** Activity rows for the keys `username` sees that are near their budget (BUDGET_NEAR) or at it, opening Settings → API keys. */
+export async function budgetRows(username: string, admin: boolean, now = Date.now()): Promise<ActivityRow[]> {
+  const reset = `1 ${MONTHS[(new Date(now).getUTCMonth() + 1) % 12]}`;
+  return (await budgetsFor(username, admin, now))
+    .filter((b) => b.budget !== null && b.budget > 0 && b.spent >= b.budget * BUDGET_NEAR)
+    .map((b) => {
+      const at = b.spent >= b.budget!;
+      const name = `${keyName(b.service as ServiceId)}${b.whose === "server" ? " (server key)" : ""}`;
+      return {
+        id: `budget:${b.whose}:${b.service}`,
+        title: at ? `${name}: monthly budget reached` : `${name}: ${Math.floor((b.spent / b.budget!) * 100)}% of monthly budget`,
+        detail: `${money(b.spent)} of ${money(b.budget!)} this month${at ? ` · stopped until ${reset}` : ""}`,
+        state: "ready",
+        href: "/settings/keys",
+      } satisfies ActivityRow;
+    });
 }
 
 /* ---- each service's own limits or balance, where its API offers one ---- */
@@ -176,6 +285,20 @@ serviceUsageApp.get("/services", async (c) => {
   const asked = Number(c.req.query("since"));
   const since = Math.max(now - 90 * 864e5, Number.isFinite(asked) && asked > 0 ? asked : now - 30 * 864e5);
   const admin = u.role === "admin" || isAdminActor(u.username);
-  const [lines, limits] = await Promise.all([serviceLines(since, u.username, admin), serviceLimits(u.username, admin, now).catch(() => [])]);
-  return c.json({ lines, limits } satisfies ServiceUsageView);
+  const [lines, limits, budgets] = await Promise.all([serviceLines(since, u.username, admin), serviceLimits(u.username, admin, now).catch(() => []), budgetsFor(u.username, admin, now)]);
+  return c.json({ lines, limits, budgets } satisfies ServiceUsageView);
+});
+
+/** PUT /api/usage/budgets/:service { whose, budget }: a key's monthly budget in dollars, null for no limit. The server's keys: admins only. */
+serviceUsageApp.put("/budgets/:service", async (c) => {
+  const u = c.get("user");
+  if (u.role === "visitor") return c.json({ error: "Sign in with an account to set a budget" }, 403);
+  const service = c.req.param("service") as ServiceId;
+  if (!(BUDGET_SERVICES as readonly string[]).includes(service)) return c.json({ error: "Key not found" }, 404);
+  const b = (await c.req.json().catch(() => null)) as { whose?: unknown; budget?: unknown } | null;
+  const budget = b?.budget === null ? null : typeof b?.budget === "number" && Number.isFinite(b.budget) && b.budget >= 0 && b.budget <= 1_000_000 ? b.budget : undefined;
+  if (budget === undefined || (b?.whose !== "own" && b?.whose !== "server")) return c.json({ error: "Needs an amount in dollars, or null for no limit" }, 400);
+  if (b.whose === "server" && !(u.role === "admin" || isAdminActor(u.username))) return c.json({ error: "Only an admin sets the server's key budgets" }, 403);
+  setBudget(service, b.whose === "server" ? "server" : `own:${u.username}`, budget);
+  return c.json({ ok: true });
 });

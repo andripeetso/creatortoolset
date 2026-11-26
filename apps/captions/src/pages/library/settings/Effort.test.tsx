@@ -48,7 +48,7 @@ async function render(el: ReactNode) {
   for (let i = 0; i < 6; i++) await act(async () => new Promise<void>((done) => setTimeout(done, 0)));
 }
 
-const SETTINGS: LibrarySettings = { describe: true, look: true, timeline: true, embed: true, proxy: true, upload: "none", lookLevel: "standard", lookBudget: null };
+const SETTINGS: LibrarySettings = { describe: true, look: true, timeline: true, embed: true, proxy: true, upload: "none", lookLevel: "standard" };
 const library: LibrarySummary = { id: "lib_1", name: "Tiny Acrobatics", storage: "local", mayKeepAsFilmed: true, settings: SETTINGS };
 const buttons = (text: string) => [...(host?.querySelectorAll("button") ?? [])].filter((b) => b.textContent?.trim() === text);
 

@@ -6,6 +6,7 @@ import { env } from "./lib/env";
 import { findUser, LOCAL_USER, USERNAME_RE, type SessionUser } from "./users";
 import { serverKeyFrom, teamUseOn } from "./service-keys";
 import { localModelApp } from "./local-model";
+import { budgetRefusal, type Holder } from "./lib/service-usage";
 import { budgetLeft, teamRefusal, workspaceOf } from "./lib/workspaces";
 import { JOBS, type JobId } from "../contracts/providers";
 import { MY_KEYS, type MyKeyEnv, type MyKeyView } from "../contracts/service-keys";
@@ -112,10 +113,15 @@ export function keyFor(actor: Actor, name: MyKeyEnv): KeyRoute {
   const username = (typeof actor === "string" ? actor : actor?.username) ?? "";
   const role = typeof actor === "object" && actor ? actor.role : undefined;
   if (!username || role === "visitor") return { key: "", missing: addKeyMessage(name) };
+  // a key that spent its monthly budget (Settings → API keys) serves nothing until next month or a higher budget
+  const held = (holder: Holder): KeyRoute | null => {
+    const why = budgetRefusal(name, holder);
+    return why ? { key: "", missing: why } : null;
+  };
   const own = myKeys(username)[name];
-  if (own) return { key: own };
+  if (own) return held(`own:${username}`) ?? { key: own };
   const server = serverKeyOf(actor, name);
-  if (server) return { key: server };
+  if (server) return held("server") ?? { key: server };
   return { key: "", missing: addKeyMessage(name) };
 }
 

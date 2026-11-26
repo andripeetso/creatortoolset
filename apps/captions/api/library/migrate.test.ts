@@ -36,17 +36,6 @@ writeFileSync(
   }),
 );
 writeFileSync(path.join(dir, "server-work.json"), '{"on":true}');
-// the last 30 days' spend per workspace: ws_b 12 + 6 = 18 (the describe line counts ws_a's 50 too, not ws_b's); a hour from September is out
-writeFileSync(
-  path.join(dir, "mac-claude-usage.json"),
-  JSON.stringify({
-    "2026-11-10T09": {
-      "Media Library shot descriptions": { costUsd: 12, ws: { ws_b: { costUsd: 12 } } },
-      "Media Library describe": { costUsd: 56, ws: { ws_a: { costUsd: 50 }, ws_b: { costUsd: 6 } } },
-    },
-    "2026-09-01T09": { "Media Library describe": { costUsd: 100, ws: { ws_b: { costUsd: 100 } } } },
-  }),
-);
 
 // the owner's account: hasMembers finds the workspace's owner through it
 const { createUser } = await import("../users");
@@ -75,7 +64,6 @@ lib("lib_b", "Tiny Acrobatics Stories", {
   upload: false,
   copyTo: "/Volumes/Tiny Footage/Stories",
   places: [{ path: "/Users/tiny/Movies/Gone", mode: "in-place" }],
-  lookBudget: 10,
 });
 const asset = (id: string, libraryId: string) => d.prepare("INSERT INTO assets (id, library_id, kind, title, created_by, created_at) VALUES (?, ?, 'video', 'V', 'tinyacrobatics', 0)").run(id, libraryId);
 asset("a_a1", "lib_a");
@@ -102,7 +90,7 @@ const row = (id: string, host: string, p: string, ws: string) => ({ id, role: "f
 const listFile = path.join(dir, "storage", "tinyacrobatics.json");
 writeFileSync(listFile, JSON.stringify({ schemaVersion: 3, folders: [row("f-shoots", "mac_laptop", "/Users/tiny/Movies/Shoots", "ws_a"), row("f-c", "mac_studio", "/Volumes/Tiny Footage/Projects", "ws_c")] }));
 
-// the Workshop projects are the workspaces the usage tally names: libraryWorkspaceId maps a library to one of them
+// the Workshop projects are the workspaces the libraries belong to
 mkdirSync(path.join(dir, "workshop", "projects"), { recursive: true });
 for (const id of ["ws_a", "ws_b", "ws_c"])
   writeFileSync(path.join(dir, "workshop", "projects", `${id}.json`), JSON.stringify({ id, owner: "tinyacrobatics", name: id, audience: "", voice: "", cta: "", notes: "", createdAt: 1, updatedAt: 1 }));
@@ -130,11 +118,8 @@ describe("§4.6 the one-time Media Library migration", () => {
       ["lib_b", "folder", "Source media on Computer not found: /Users/tiny/Movies/Gone"],
       ["(new library in ws_c)", "setupAt", NOW],
       ["lib_a", "setupAt", NOW],
-      // no stored cap: the default 20 applies, and ws_a spent 50 on describe in the last 30 days: 1.5 × 50
-      ["lib_a", "lookBudget", 75],
       ["lib_b", "setupAt", NOW],
       ["lib_b", "upload", "proxies"],
-      ["lib_b", "lookBudget", 27],
     ]);
     expect(r.outside).toEqual([{ libraryId: "lib_a", versionId: "v_a3", device: "mac_studio", path: "/Users/tiny/Stray/z.mov" }]);
     expect(r.notes).toEqual([
@@ -147,9 +132,9 @@ describe("§4.6 the one-time Media Library migration", () => {
     if (process.env.MIGRATE_PRINT) console.log(JSON.stringify(r, null, 2));
   });
 
-  it("a real run writes the rows (copy root first), setup, proxies and the cap, and keeps the Finals entry and server-work.json", async () => {
+  it("a real run writes the rows (copy root first), setup and proxies, and keeps the Finals entry and server-work.json", async () => {
     const r = await migrateOnce({ now: NOW });
-    expect(r.changes.length).toBe(11);
+    expect(r.changes.length).toBe(9);
     // the copy roots lead, the rows already there keep their place, and the new ones follow
     expect(folders().map((f) => [f.origin.host, f.origin.path, f.workspace])).toEqual([
       ["mac_studio", "/Volumes/Tiny Footage/Copies", "ws_a"],
@@ -161,8 +146,8 @@ describe("§4.6 the one-time Media Library migration", () => {
       ["not-found", "/Users/tiny/Movies/Gone", "ws_b"],
     ]);
     expect((libRow("lib_a").watch as unknown[]).length).toBe(3);
-    expect(libRow("lib_a")).toMatchObject({ upload: "none", setupAt: NOW, lookBudget: 75 });
-    expect(libRow("lib_b")).toMatchObject({ upload: "proxies", setupAt: NOW, lookBudget: 27 });
+    expect(libRow("lib_a")).toMatchObject({ upload: "none", setupAt: NOW });
+    expect(libRow("lib_b")).toMatchObject({ upload: "proxies", setupAt: NOW });
     expect(readFileSync(path.join(dir, "server-work.json"), "utf-8")).toBe('{"on":true}');
     expect(existsSync(path.join(dir, "library", "migrated.json"))).toBe(true);
     const made = d.prepare("SELECT id, settings FROM libraries WHERE settings LIKE '%ws_c%'").get() as { id: string; settings: string };

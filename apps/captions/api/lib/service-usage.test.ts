@@ -15,7 +15,8 @@ vi.stubEnv("DEEPGRAM_API_KEY", "server-dg");
 vi.stubGlobal("fetch", () => Promise.reject(new Error("offline")));
 const { createUser } = await import("../users");
 const { saveMyKey } = await import("../my-keys");
-const { costOf, recordService, serviceUsageApp } = await import("./service-usage");
+const { budgetRows, costOf, recordService, serviceUsageApp, setBudget } = await import("./service-usage");
+const { keyFor } = await import("../my-keys");
 createUser("lee", "password1");
 saveMyKey("lee", "DEEPGRAM_API_KEY", "lee-dg");
 afterAll(() => vi.unstubAllGlobals());
@@ -54,5 +55,30 @@ describe("service usage", () => {
     const all = await admin();
     expect(all.lines.map((l) => `${l.label}:${l.whose}`).sort()).toEqual(["Media Library: transcripts:server", "Video Notes: transcripts:server"]);
     expect(all.limits).toEqual([]);
+  });
+
+  it("a key's monthly budget: near it Activity warns, at it keyFor refuses that key alone with the reason", async () => {
+    const put = (user: SessionUser, body: unknown) => {
+      const app = new Hono<{ Variables: AuthVars }>();
+      app.use("*", async (c, next) => (c.set("user", user), next()));
+      app.route("/", serviceUsageApp);
+      return app.request("/budgets/DEEPGRAM_API_KEY", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    };
+    const leeUser = { username: "lee", role: "user", cloud: true, off: [] } as SessionUser;
+    expect((await put(leeUser, { whose: "server", budget: 1 })).status).toBe(403);
+    expect((await put(leeUser, { whose: "own", budget: -1 })).status).toBe(400);
+    const spent = (await lee()).budgets.find((b) => b.service === "DEEPGRAM_API_KEY" && b.whose === "own")!.spent;
+    expect((await put(leeUser, { whose: "own", budget: spent + 1 })).status).toBe(200);
+    expect(keyFor("lee", "DEEPGRAM_API_KEY")).toEqual({ key: "lee-dg" });
+    // 200 minutes at $0.0043: about $0.86 more, past 80% of the budget, under it
+    await recordService({ service: "DEEPGRAM_API_KEY", key: "lee-dg", actor: "lee", label: "Caption Studio: captions", units: 200, unit: "audio minutes", workspace: null });
+    expect((await budgetRows("lee", false)).map((r) => r.title)).toEqual([expect.stringMatching(/^Deepgram: \d+% of monthly budget$/)]);
+    await recordService({ service: "DEEPGRAM_API_KEY", key: "lee-dg", actor: "lee", label: "Caption Studio: captions", units: 100, unit: "audio minutes", workspace: null });
+    expect(keyFor("lee", "DEEPGRAM_API_KEY")).toEqual({ key: "", missing: expect.stringContaining("Deepgram key reached its monthly budget") });
+    expect((await budgetRows("lee", false))[0]).toMatchObject({ title: "Deepgram: monthly budget reached", href: "/settings/keys" });
+    // the server's key has its own budget: none set, the admin's calls go on
+    expect(keyFor("admin", "DEEPGRAM_API_KEY")).toEqual({ key: "server-dg" });
+    setBudget("DEEPGRAM_API_KEY", "own:lee", null);
+    expect(keyFor("lee", "DEEPGRAM_API_KEY")).toEqual({ key: "lee-dg" });
   });
 });

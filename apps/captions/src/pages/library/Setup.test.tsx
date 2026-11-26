@@ -132,7 +132,7 @@ async function mount(kind: Kind, inline = false) {
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
-  const library = { id: "lib_1", name: "Tiny", storage: "local" as const, mayKeepAsFilmed: true, settings: { describe: true, embed: true, look: true, timeline: true, proxy: true, upload: "none" as const, lookLevel: "standard" as const, lookBudget: null } };
+  const library = { id: "lib_1", name: "Tiny", storage: "local" as const, mayKeepAsFilmed: true, settings: { describe: true, embed: true, look: true, timeline: true, proxy: true, upload: "none" as const, lookLevel: "standard" as const } };
   act(() => {
     root!.render(
       <MemoryRouter>
@@ -190,7 +190,7 @@ describe("Media Library setup: scratch, This Mac", () => {
     expect(h.calls.every((c) => c.body.host === "this-computer" && c.workspace === "ws_1")).toBe(true);
     const s = h.updates[0]!.settings;
     expect(s).not.toHaveProperty("importMode");
-    expect(s).toMatchObject({ defaultFolders: true, organize: "ai", proxy: false, proxyQuality: "standard", describe: true, timeline: true, lookBudget: null }); // proxies are asked, never on unasked
+    expect(s).toMatchObject({ defaultFolders: true, organize: "ai", proxy: false, proxyQuality: "standard", describe: true, timeline: true }); // proxies are asked, never on unasked
     expect(typeof s.setupAt).toBe("string");
     expect(s).not.toHaveProperty("upload"); // a Mac library has no server to upload to
     expect(h.events.map((e) => e.detail)).toEqual([{ workspace: "ws_1" }]);
@@ -439,7 +439,7 @@ describe("Media Library setup: analysis and organization", () => {
 
 describe("rowsOf", () => {
   it("names the scratch folders for the workspace and puts the others beside the first Source media folder", () => {
-    const base: Parameters<typeof rowsOf>[0] = { start: "scratch", base: "", sources: [], projects: "", exports: "", proxy: true, proxyQuality: "standard", effort: "high", watchModel: "gemini-3.8-flash", budget: null, organize: "ai", hosted: { finals: true, proxies: false, originals: false } };
+    const base: Parameters<typeof rowsOf>[0] = { start: "scratch", base: "", sources: [], projects: "", exports: "", proxy: true, proxyQuality: "standard", effort: "high", watchModel: "gemini-3.8-flash", organize: "ai", hosted: { finals: true, proxies: false, originals: false } };
     expect(rowsOf(base, "Moo/Classic")).toEqual([
       { role: "footage", path: "~/Movies/Creator Toolset/Moo-Classic/Source media" },
       { role: "projects", path: "~/Movies/Creator Toolset/Moo-Classic/Project files" },
@@ -555,10 +555,9 @@ describe("Media Library setup: proxies, analysis and organization details", () =
     expect(h.updates[0]!.settings).toMatchObject(flagsOf("low"));
   });
 
-  it("Models are hidden at Effort Off, and the budget reads No limit until one is set", async () => {
+  it("Models are hidden at Effort Off", async () => {
     await mount("mac");
     for (let i = 0; i < 3; i++) await next();
-    expect(document.body.textContent).toContain("Monthly budget: No limit");
     await press(stop("Off"));
     expect(document.body.textContent).not.toContain("Descriptions");
   });

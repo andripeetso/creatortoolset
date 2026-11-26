@@ -5,7 +5,6 @@ import type { SessionUser } from "../users";
 import { blobs, libraryDb, librarySetting } from "./db";
 import { workspaceOf } from "./describe";
 import { indexAsset } from "./query";
-import { lookBudgetWaits } from "./shots";
 import { fileSmart } from "./smart";
 import { FILMED, fileShoot, isGraphic, readHere, type Asset } from "./shoots";
 import type { ProbeSummary } from "./media/probe";
@@ -160,7 +159,7 @@ export async function fileUnfiled(d: DatabaseSync, libraryId: string, who: Who):
   // one at a time: each judge call is a model call (shortcut: not batched as sortFolder is, fine while the sweep is once per library, upgrade if a large library stalls)
   for (const r of unfiled(d, libraryId)) {
     if (r.kind !== "video") {
-      const judge = librarySetting(libraryId, "describe") && !(await lookBudgetWaits(d, r.version));
+      const judge = librarySetting(libraryId, "describe");
       if (judge && ((await fileSmart(d, r.version, who, await workspaceOf(d, r.version)).catch(() => 0)) ?? 0)) continue;
     }
     // a sound by its kind's tag (sound-kind.ts, since its probe): one with none (taken off, someone talking) stays where it is

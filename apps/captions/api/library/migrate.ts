@@ -2,26 +2,23 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { LOOK_BUDGET_DEFAULT, type LibrarySettings, type WatchFolder } from "../../contracts/library";
+import type { LibrarySettings, WatchFolder } from "../../contracts/library";
 import { EVERY_WORKSPACE, THIS_COMPUTER, type StorageFolder } from "../../contracts/storage";
 import { isThisMachine, listDevices } from "../lib/devices";
 import { env } from "../lib/env";
-import { macUsageSince, type UsageTally } from "../lib/mac-claude";
 import { migrateStorage, parseStorageFile, storageFilePath } from "../lib/storage";
 import { changeStorage } from "../devices-storage";
 import { LOCAL_USER, listUsers, type SessionUser } from "../users";
 import { projectOf } from "../lib/project-of";
 import { accountOf, ensureLibrary, servedByPlugin } from "./access";
-import { DESCRIBE_LABEL, libraryWorkspaceId } from "./describe";
 import { libraryDb, uploadOf } from "./db";
-import { LISTEN_LABEL, LOOK_LABEL, WATCH_LABEL } from "./shots";
 import { hasMembers } from "./upload-gate";
 import { resolveDevice } from "./whereis";
 
 /** One change the migration makes, or in a dry run would make. A folder's `to` is the line the hand-off shows. */
 export interface MigrationChange {
   libraryId: string;
-  field: "setupAt" | "upload" | "lookBudget" | "folder";
+  field: "setupAt" | "upload" | "folder";
   from: unknown;
   to: unknown;
 }
@@ -46,9 +43,6 @@ export interface MigrationResult {
 /** The host of a folder whose computer no account has: the page says "Computer not found" for it (§4.6 item 1). */
 export const NOT_FOUND = "not-found";
 const MARK = "4.6";
-const DAY = 86_400_000;
-/** The spend the monthly budget counts (§4.5): shot descriptions, the video breakdown, sound listens and describe. */
-const SPEND = [LOOK_LABEL, `${LOOK_LABEL} (API)`, WATCH_LABEL, LISTEN_LABEL, DESCRIBE_LABEL, `${DESCRIBE_LABEL} (API)`];
 
 /** The settings as stored: the library's own fields, plus `watch` and `projectId`, which the type does not list */
 // the removed settings (copyTo, places) are read here from the stored JSON only, by this one-time migration (UNIFIED-PRD §4.6)
@@ -186,11 +180,10 @@ export function planFolders(folders: StorageFolder[], libs: Lib[], here: string,
   return { folders: next, changes, outside, notes };
 }
 
-/** Items 3, 4 and 6 on the library rows. Convergent: a second run changes nothing. A dry run lists every change and writes none. */
+/** Items 3 and 4 on the library rows. Convergent: a second run changes nothing. A dry run lists every change and writes none. */
 export async function migrateLibraries(opts: { dryRun?: boolean; now?: string } = {}): Promise<MigrationChange[]> {
   const db = libraryDb();
   const nowIso = opts.now ?? new Date().toISOString();
-  const usage = await macUsageSince(Date.parse(nowIso) - 30 * DAY);
   const lists = new Map<string, StorageFolder[]>();
   const changes: MigrationChange[] = [];
   for (const lib of factsOf()) {
@@ -209,30 +202,12 @@ export async function migrateLibraries(opts: { dryRun?: boolean; now?: string } 
     const upload = s.upload as unknown;
     if (!served && uploadOf(upload) === "none" && (await hasMembers(lib.id)))
       changes.push({ libraryId: lib.id, field: "upload", from: upload === false ? 0 : (upload ?? null), to: "proxies" });
-    // item 6: at or over the cap (stored, else the default; a stored null is no cap), the cap becomes 1.5× the last 30 days' spend
-    const cap = "lookBudget" in s ? s.lookBudget : LOOK_BUDGET_DEFAULT;
-    if (typeof cap === "number") {
-      const spent = spendIn(usage, await libraryWorkspaceId(db, lib.id));
-      const next = Math.ceil(spent * 1.5);
-      if (spent >= cap && next > cap) changes.push({ libraryId: lib.id, field: "lookBudget", from: cap, to: next });
-    }
   }
   if (!opts.dryRun)
     for (const c of changes)
       if (c.field !== "folder")
         db.prepare(`UPDATE libraries SET settings = json_set(COALESCE(settings, '{}'), '$.${c.field}', ?) WHERE id = ?`).run(c.to as string | number, c.libraryId);
   return changes;
-}
-
-/** What the workspace spent in the tally's hours (all workspaces when undefined), by the labels the budget counts. */
-function spendIn(usage: UsageTally, ws?: string): number {
-  let usd = 0;
-  for (const labels of Object.values(usage))
-    for (const l of SPEND) {
-      const t = labels[l];
-      usd += (ws ? t?.ws?.[ws]?.costUsd : t?.costUsd) ?? 0;
-    }
-  return usd;
 }
 
 const markFile = () => path.join(env.dataDir, "library", "migrated.json");

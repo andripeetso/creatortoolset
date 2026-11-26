@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Hono } from "hono";
-import { afterAll, describe, expect, it, vi } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import type { AuthVars } from "../auth";
 
 // The library settings PATCH (UNIFIED-PRD §2 M1–M9, §4.1): what it saves, what it stops writing, and the new-library defaults.
@@ -12,15 +12,8 @@ process.env.DATA_DIR = dir;
 const { libraryDb, newLibrarySettings } = await import("./db");
 const { libraryApp } = await import("./routes");
 const { libraryOf } = await import("./finals");
-const { releaseBudget } = await import("./shots");
 
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
-
-// a budget change must release the looks held for it (shots.ts); the real function still runs
-vi.mock("./shots", async (orig) => {
-  const m = await orig<typeof import("./shots")>();
-  return { ...m, releaseBudget: vi.fn(m.releaseBudget) };
-});
 
 const app = new Hono<{ Variables: AuthVars }>();
 app.use(async (c, next) => {
@@ -51,10 +44,10 @@ function clip(lib: string, id: string, width: number, height: number) {
 const proxyJobs = (v: string) => (libraryDb().prepare("SELECT COUNT(*) AS n FROM jobs WHERE version_id = ? AND kind = 'proxy'").get(v) as { n: number }).n;
 
 describe("new libraries", () => {
-  it("start on Smart folders with No limit; nothing asks how to import (the import rule decides)", () => {
-    expect(JSON.parse(newLibrarySettings())).toEqual({ organize: "ai", lookBudget: null });
+  it("start on Smart folders; nothing asks how to import (the import rule decides)", () => {
+    expect(JSON.parse(newLibrarySettings())).toEqual({ organize: "ai" });
     const id = libraryOf("settings-owner");
-    expect(stored(id)).toEqual({ organize: "ai", lookBudget: null });
+    expect(stored(id)).toEqual({ organize: "ai" });
   });
 });
 
@@ -106,20 +99,18 @@ describe("the library settings PATCH", () => {
       organize: "own",
       upload: "originals",
       finalsUpload: "proxies",
-      lookBudget: 12.5,
       timelineModel: "antigravity",
       lookLevel: "detailed",
       describe: false,
     });
+    expect(stored("lib_set").lookBudget).toBeUndefined();
     expect(stored("lib_set").copyTo).toBeUndefined();
     expect(stored("lib_set").places).toBeUndefined();
   });
 
-  it("does not force describe on under Smart folders, and keeps a stored budget of null", async () => {
+  it("does not force describe on under Smart folders", async () => {
     await patch("lib_set", { organize: "ai" });
     expect(stored("lib_set")).toMatchObject({ organize: "ai", describe: false });
-    await patch("lib_set", { lookBudget: null });
-    expect(stored("lib_set").lookBudget).toBeNull();
   });
 
   it("takes only a Hosted media value from the list, and no unknown one", async () => {
@@ -173,23 +164,17 @@ describe("the library settings PATCH", () => {
     expect(proxyJobs(v)).toBe(0);
   });
 
-  it("a budget change releases the looks held for it", async () => {
-    vi.mocked(releaseBudget).mockClear();
-    await patch("lib_set", { lookBudget: 7 });
-    expect(releaseBudget).toHaveBeenCalledWith(expect.anything(), "lib_set");
-  });
-
   it("setupAt is written once: a later or empty one leaves the first", async () => {
     await patch("lib_set", { setupAt: "2026-11-19T09:00:00.000Z" });
     await patch("lib_set", { setupAt: "" });
     expect(stored("lib_set").setupAt).toBe("2026-11-18T09:00:00.000Z");
   });
 
-  it("organize Standard is stored as own; a PATCH without organize or budget keeps both", async () => {
+  it("organize Standard is stored as own; a PATCH without organize keeps it", async () => {
     await patch("lib_set", { organize: "default" });
     expect(stored("lib_set").organize).toBe("own");
-    await patch("lib_set", { organize: "ai", lookBudget: 5 });
+    await patch("lib_set", { organize: "ai" });
     await patch("lib_set", { describe: true });
-    expect(stored("lib_set")).toMatchObject({ organize: "ai", lookBudget: 5 });
+    expect(stored("lib_set")).toMatchObject({ organize: "ai" });
   });
 });

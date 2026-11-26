@@ -20,8 +20,11 @@ const load = async (): Promise<ServiceUsageView> => {
 
 /** The page's usage, null until it is read (and when it can't be: a row then shows no usage line). */
 export function useServiceUsage(): ServiceUsageView | null {
-  return useCachedLoad<ServiceUsageView>(USAGE_URL, load, { topic: [] }).data;
+  return useServiceUsageLoad().data;
 }
+
+/** The same with its refresh (after a budget is saved). */
+export const useServiceUsageLoad = () => useCachedLoad<ServiceUsageView>(USAGE_URL, load, { topic: [] });
 
 const hourMs = (hour: string) => Date.parse(`${hour}:00:00Z`);
 export const usd = (n: number) => (n > 0 && n < 0.01 ? "<$0.01" : `$${n.toFixed(2)}`);

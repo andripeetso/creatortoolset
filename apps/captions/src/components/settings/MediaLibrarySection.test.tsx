@@ -35,7 +35,7 @@ vi.mock("@/lib/undo", async (orig) => ({ ...(await orig<object>()), undoable: (w
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const SETTINGS: LibrarySettings = { describe: true, look: true, timeline: true, embed: true, proxy: true, upload: "none", lookLevel: "standard", lookBudget: null };
+const SETTINGS: LibrarySettings = { describe: true, look: true, timeline: true, embed: true, proxy: true, upload: "none", lookLevel: "standard" };
 const library: LibrarySummary = { id: "lib_1", name: "Tiny Acrobatics", storage: "local", mayKeepAsFilmed: true, settings: SETTINGS };
 const watch = { allowed: false, folders: [], missing: 0 };
 const patches: unknown[] = [];
@@ -71,7 +71,7 @@ beforeEach(() => {
     if (url.endsWith("/space")) return ok({ videos: { onMac: 0, inPlace: 0, stored: { bytes: 0, files: 0 } }, proxies: { bytes: 0, files: 0 }, pictures: { bytes: 0, files: 0 }, models: null });
     if (url.endsWith("/status")) return ok({ clips: 0, unreadable: 0, stages: [] });
     if (url.endsWith("/made")) return ok(made);
-    if (url.includes("/estimate")) return ok({ steps: [], lookSpent: 0, lookLevels: [], timelineModels: [] });
+    if (url.includes("/estimate")) return ok({ steps: [], lookLevels: [], timelineModels: [] });
     if (url.startsWith("/api/devices/storage")) return ok({ folders: storageFolders, serverDisks: [], here: [] });
     if (url.startsWith("/api/providers")) return ok({ devices: [] });
     return ok({});
@@ -159,7 +159,7 @@ describe("Settings → Media Library, the owner's page", () => {
     expect(stops.map((b) => b.textContent)).toEqual(["Off", "Low", "Medium", "High", "Extra high", "Max"]);
     expect(stops.filter((b) => b.getAttribute("aria-checked") === "true").map((b) => b.textContent)).toEqual(["High"]);
     expect(stops.find((b) => b.textContent === "High")!.title).toBe("Recommended");
-    expect(bodyText()).toContain("Monthly budget: No limit");
+    expect(bodyText()).not.toContain("Monthly budget");
   });
 
   it("Smart folders stay a choice while Effort is Off: they file by shoot with no AI", async () => {

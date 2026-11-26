@@ -1,10 +1,8 @@
 import { useEffect, useState, type DragEvent, type ReactNode } from "react";
 import { Cloud, FolderOpen, Gauge, ScanSearch, type LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Card, InfoTip, Row } from "@/components/settings/kit-rows";
 import { hasThisMac } from "@/components/settings/ThisMacSection";
 import { call, STORAGE_API } from "@/components/settings/StorageRows";
@@ -24,7 +22,6 @@ import {
   ANALYSIS_LEVELS,
   LIBRARY_SETUP_DONE,
   LIBRARY_WORDS,
-  LOOK_BUDGET_DEFAULT,
   PROXY_QUALITIES,
   WATCH_MODELS,
   flagsOf,
@@ -71,8 +68,6 @@ interface Answers {
   effort: AnalysisLevel;
   /** the Video breakdown model (shown at High and above) */
   watchModel: WatchModel;
-  /** dollars a month; null: No limit (the default for a new library) */
-  budget: number | null;
   organize: "ai" | "own";
   hosted: HostedMix;
   blurFaces?: boolean;
@@ -89,7 +84,6 @@ const START: Answers = {
   proxyQuality: "standard",
   effort: ANALYSIS_DEFAULT,
   watchModel: WATCH_MODELS[0]!.value,
-  budget: null,
   organize: "ai",
   hosted: HOSTED_DEFAULT,
 };
@@ -357,7 +351,6 @@ export function LibrarySetup({ library, inline = false, stay, onDone, onClose }:
         proxyQuality: a.proxyQuality,
         ...flagsOf(a.effort),
         timelineModel: a.watchModel,
-        lookBudget: a.budget,
         defaultFolders: defaultsOf(a),
         setupAt: new Date().toISOString(),
         // a library on This Mac has no server to upload to, so the hosted answers stay as they are
@@ -515,7 +508,7 @@ export function LibrarySetup({ library, inline = false, stay, onDone, onClose }:
     if (step === "analysis")
       return (
         <div className="space-y-5">
-          {/* Effort: six stops in a row (11-19 sign-off B7), with its cost and the monthly budget on one line above them */}
+          {/* Effort: six stops in a row (11-19 sign-off B7), with its cost on one line above them */}
           <div className="space-y-2">
             <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
               <p className="flex items-center gap-1 text-sm font-medium">
@@ -524,35 +517,6 @@ export function LibrarySetup({ library, inline = false, stay, onDone, onClose }:
               </p>
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
                 <EffortCost libraryId={library.id} level={a.effort} />
-                <span aria-hidden>·</span>
-                <Popover>
-                  <PopoverTrigger className="underline-offset-4 outline-none hover:underline focus-visible:underline">
-                    {`${LIBRARY_WORDS.budget.label}: ${a.budget === null ? LIBRARY_WORDS.budget.noLimit : `$${a.budget}`}`}
-                  </PopoverTrigger>
-                  <PopoverContent className="w-72 space-y-3">
-                    <p className="flex items-center gap-2 text-sm font-medium">
-                      {LIBRARY_WORDS.budget.label}
-                      <InfoTip text={LIBRARY_WORDS.budget.tip} label={LIBRARY_WORDS.budget.label} />
-                    </p>
-                    <div className="flex items-center gap-2 text-sm">
-                      $
-                      <Input
-                        type="number"
-                        min={0}
-                        aria-label="Monthly budget in dollars"
-                        value={a.budget ?? ""}
-                        disabled={a.budget === null}
-                        onChange={(e) => set({ budget: Math.max(0, Number(e.target.value) || 0) })}
-                        className="w-24"
-                      />
-                      {LIBRARY_WORDS.budget.amount}
-                    </div>
-                    <label className="flex items-center gap-2 text-sm">
-                      <input type="checkbox" aria-label={LIBRARY_WORDS.budget.noLimit} checked={a.budget === null} onChange={(e) => set({ budget: e.target.checked ? null : LOOK_BUDGET_DEFAULT })} />
-                      {LIBRARY_WORDS.budget.noLimit}
-                    </label>
-                  </PopoverContent>
-                </Popover>
               </div>
             </div>
             <EffortStops value={a.effort} onPick={(effort) => set({ effort })} />

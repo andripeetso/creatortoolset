@@ -69,17 +69,4 @@ describe("settleSoundKind", () => {
     expect(await backfillSoundKinds(d)).toBe(false);
     expect([tags("talk"), tags("old")]).toEqual([[], [{ tag: "sound effect", source: "ai" }]]);
   });
-
-  it("a listen the monthly budget holds leaves the sound unsettled (no length guess); the next settle asks once more", async () => {
-    const { BudgetSpent, BUDGET_WAITS } = await import("./shots");
-    sound("held", "/Users/tiny/Downloads/loop.wav", 45);
-    const listen = vi.fn(async () => {
-      if (listen.mock.calls.length === 1) throw new BudgetSpent(BUDGET_WAITS);
-      return "music" as const;
-    });
-    await expect(settleSoundKind(d, "v-held", { song: false, seconds: 45, listen })).rejects.toBeInstanceOf(BudgetSpent);
-    expect(tags("held")).toEqual([]);
-    expect(await settleSoundKind(d, "v-held", { song: false, seconds: 45, listen })).toBe("music");
-    expect(listen).toHaveBeenCalledTimes(2);
-  });
 });

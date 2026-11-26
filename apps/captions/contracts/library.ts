@@ -241,8 +241,6 @@ export interface LibrarySettings {
   organize?: Organize;
   /** how densely shots are described (LOOK_LEVELS); absent: "standard" */
   lookLevel: LookLevel;
-  /** dollars a month (UTC) shot descriptions may cost in this library's workspace, by the usage tally; null: no cap */
-  lookBudget: number | null;
 }
 
 /**
@@ -272,8 +270,6 @@ export const WATCH_MODELS: readonly { value: WatchModel; label: string; note: st
   { value: "antigravity", label: "Antigravity", note: "Picture only, no sound" },
 ];
 export const watchModelOf = (v: unknown): WatchModel => (WATCH_MODELS.some((m) => m.value === v) ? (v as WatchModel) : WATCH_MODELS[0]!.value);
-/** A new library's monthly cap on shot descriptions, in dollars (API-equivalent on an AI provider). */
-export const LOOK_BUDGET_DEFAULT = 20;
 
 /**
  * The files the Library takes as pictures (photos): the web's own formats, HEIC, and camera RAW (11-19: RAW is read by
@@ -470,8 +466,6 @@ export interface LibraryEstimate {
   unanalyzed?: { seconds: number; hourUsd: number };
   /** shot descriptions of one hour of footage at each level (LOOK_LEVELS), on the look's route; absent when it has none */
   lookLevels?: { level: LookLevel; seconds: number; usd: number }[];
-  /** what shot descriptions cost this month in this library's workspace, in dollars */
-  lookSpent?: number;
   /** the asker has a Gemini key, so the library's Timelines run (api/library/timeline.ts) */
   timelineKey?: boolean;
   /** a timeline of one hour of footage at the library's level, by Gemini model (WATCH_MODELS); absent without a Gemini key */
@@ -1005,12 +999,6 @@ export const LIBRARY_WORDS = {
   noClipsYet: "No clips yet",
   blurExisting: { title: "Blur the files already in the library?", yes: "Blur all files", no: "New files only" },
   recommended: "Recommended",
-  budget: {
-    label: "Monthly budget",
-    tip: "Analysis waits until next month once this workspace's library has spent this.",
-    noLimit: "No limit",
-    amount: "a month",
-  },
   analysisTitle: "Analysis",
   madeTitle: "What's made",
   statusTitle: "Status",

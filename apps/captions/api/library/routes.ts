@@ -22,9 +22,8 @@ import { sendFile } from "../lib/send-file";
 import { emitEvent, notifyLibraryChanges } from "../lib/events";
 import { playCopy, pushPlayCopy } from "../lib/play-copies";
 import { isFinal } from "./finals";
-import { type Blur, cantFind, LIBRARY_WORDS, flagsOf, HOSTED_DEFAULT, hostedSettings, type ActionNeeded, hostsNone, hostsOriginals, hostsProxies, PICTURE_FILE, RAW_FILE, RAW_FROM_COMPUTER, LIBRARY_UPLOADS, LOOK_BUDGET_DEFAULT, LOOK_LEVELS, lookLevelOf, MADE_KINDS, PROXY_QUALITIES, proxyQualityOf, SOUNDS, WATCH_MODELS, watchModelOf, type AssetCard, type LibrarySettings, type LibrarySummary, type LibraryUpload, type Sound, type WhereAnswer } from "../../contracts/library";
+import { type Blur, cantFind, LIBRARY_WORDS, flagsOf, HOSTED_DEFAULT, hostedSettings, type ActionNeeded, hostsNone, hostsOriginals, hostsProxies, PICTURE_FILE, RAW_FILE, RAW_FROM_COMPUTER, LIBRARY_UPLOADS, LOOK_LEVELS, lookLevelOf, MADE_KINDS, PROXY_QUALITIES, proxyQualityOf, SOUNDS, WATCH_MODELS, watchModelOf, type AssetCard, type LibrarySettings, type LibrarySummary, type LibraryUpload, type Sound, type WhereAnswer } from "../../contracts/library";
 import type { LibraryViewer } from "../../contracts/library-source";
-import { releaseBudget } from "./shots";
 import { enqueueJob, prepareFirst } from "./jobs";
 import { fileUnfiled, organizeOf } from "./organize";
 import { needsProxy, wantsProxy } from "./media/proxy";
@@ -1174,7 +1173,6 @@ export const settingsOf = (json: string): LibrarySettings => {
     ...(s.organize ? { organize: s.organize } : {}),
     lookLevel: lookLevelOf(s.lookLevel),
     timelineModel: watchModelOf(s.timelineModel),
-    lookBudget: s.lookBudget === undefined ? LOOK_BUDGET_DEFAULT : typeof s.lookBudget === "number" && s.lookBudget >= 0 ? s.lookBudget : null,
   };
 };
 
@@ -1326,11 +1324,6 @@ async function patchLibrary(c: Context<{ Variables: AuthVars }>, libraryId: stri
   if (LOOK_LEVELS.some((l) => l.value === s.lookLevel)) put("lookLevel", s.lookLevel);
   // a new model watches the videos watched from now on; the timelines made keep theirs
   if (WATCH_MODELS.some((m) => m.value === s.timelineModel)) put("timelineModel", s.timelineModel);
-  if (s.lookBudget === null || (typeof s.lookBudget === "number" && Number.isFinite(s.lookBudget) && s.lookBudget >= 0 && s.lookBudget <= 1_000_000)) {
-    put("lookBudget", s.lookBudget === null ? null : Math.round(s.lookBudget * 100) / 100);
-    releaseBudget(db(), libraryId); // raised or off: the looks held for it ask again now (still over: they wait again, saying so)
-    libraryChanged(libraryId);
-  }
   if (LIBRARY_UPLOADS.includes(s.finalsUpload as LibraryUpload)) put("finalsUpload", s.finalsUpload);
   // Generate proxies is its own switch: hosting proxies uploads the ones made and never forces it on (owner, 2026-11-25).
   // Switched on: proxies for the files added from now on (db.ts SINCE, makesProxyOf); the ones already here take
@@ -1408,7 +1401,7 @@ libraryApp.post("/:id/setup/quick", async (c) => {
   return patchLibrary(c, libraryId, {
     settings: {
       // proxies only when the card's own answer says so (contracts quickSetup sends none: setup asks, starting on No)
-      proxy: b?.proxy === true, proxyQuality: proxyQualityOf(b?.proxyQuality), ...flagsOf("high"), organize: "ai", timelineModel: WATCH_MODELS[0]!.value, lookBudget: null,
+      proxy: b?.proxy === true, proxyQuality: proxyQualityOf(b?.proxyQuality), ...flagsOf("high"), organize: "ai", timelineModel: WATCH_MODELS[0]!.value,
       defaultFolders: !b?.base, setupAt: new Date().toISOString(),
       // a library on This Mac has no server to upload to, so the hosted answers stay as they are (the page's setup)
       ...(watchAllowed(user.username) ? {} : hostedSettings(HOSTED_DEFAULT)),

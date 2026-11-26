@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router";
 import { ChevronDown, RefreshCw, X } from "lucide-react";
-import type { ServiceLimit, ServiceUsageView } from "@contracts/service-usage";
+import type { KeyBudget, ServiceLimit, ServiceUsageView } from "@contracts/service-usage";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -9,6 +9,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, EmptyRow, ErrorRow, LoadingRow, Row } from "@/components/settings/ui";
 import { ProviderLogo } from "@/components/settings/ProviderLogos";
 import { PlanLimits } from "@/components/settings/UsageSection";
+import { BudgetDialog, BudgetLine } from "@/components/settings/KeyBudget";
 import { hasThisMac, useThisMac } from "@/components/settings/ThisMacSection";
 import { useProviders, usageSince } from "@/lib/providers";
 import { useWorkspace } from "@/lib/workspace";
@@ -208,7 +209,7 @@ export default function UsagePage({ onClose }: { onClose: () => void }) {
 
   let body: ReactNode;
   if (!view) body = <Card>{error ? <ErrorRow title="Could not load usage" detail={error} retry={reload} /> : <LoadingRow />}</Card>;
-  else if (metric === "limits") body = <Limits view={view} now={now} services={svc.limits} reload={reload} />;
+  else if (metric === "limits") body = <Limits view={view} now={now} services={svc.limits} budgets={svc.budgets} reload={reload} />;
   else if (key)
     body = <KeyView service={key} groups={servicesOf(svc.lines, since, workspace)} lines={svc.lines} since={since} now={now} workspace={workspace} error={servicesError} retry={loadServices} />;
   else {
@@ -471,7 +472,7 @@ function KeyView({ service, groups, lines, since, now, workspace, error, retry }
 }
 
 /** The plans' limits on each sign-in, then each paid service's own account limits. */
-function Limits({ view, now, services, reload }: { view: NonNullable<ReturnType<typeof useProviders>["data"]>; now: number; services: ServiceLimit[]; reload: () => void }) {
+function Limits({ view, now, services, budgets, reload }: { view: NonNullable<ReturnType<typeof useProviders>["data"]>; now: number; services: ServiceLimit[]; budgets: KeyBudget[]; reload: () => void }) {
   const bridge = useThisMac(hasThisMac());
   // plan limits turned on from a row's button: the readings it starts come in now, not in five minutes
   const on = bridge?.limits;
@@ -486,6 +487,7 @@ function Limits({ view, now, services, reload }: { view: NonNullable<ReturnType<
   return (
     <div className="flex flex-col gap-8">
       <PlanLimits view={view} now={now} bridge={bridge} />
+      <Budgets budgets={budgets} reload={reload} />
       <section className="flex flex-col gap-3">
         <h2 className="text-sm font-medium">API keys</h2>
         <Card>
@@ -514,5 +516,29 @@ function Limits({ view, now, services, reload }: { view: NonNullable<ReturnType<
         </Card>
       </section>
     </div>
+  );
+}
+
+/** Each key's monthly budget and what it spent this month (api/lib/service-usage.ts): the fullest first, each opens its budget. */
+function Budgets({ budgets, reload }: { budgets: KeyBudget[]; reload: () => void }) {
+  const [editing, setEditing] = useState<KeyBudget | null>(null);
+  const share = (b: KeyBudget) => (b.budget ? b.spent / b.budget : -1);
+  const rows = [...budgets].sort((a, b) => share(b) - share(a) || b.spent - a.spent);
+  return (
+    <section className="flex flex-col gap-3">
+      <h2 className="text-sm font-medium">Budgets</h2>
+      <Card>
+        {rows.length === 0 ? (
+          <EmptyRow title="No API keys" />
+        ) : (
+          rows.map((b) => (
+            <Row key={`${b.service}:${b.whose}`} title={serviceName(b.service)} description={b.whose === "server" ? "Server key" : undefined} control={<Button size="sm" variant="outline" onClick={() => setEditing(b)}>{b.budget === null ? "Set budget" : "Change"}</Button>}>
+              <BudgetLine b={b} onClick={() => setEditing(b)} />
+            </Row>
+          ))
+        )}
+      </Card>
+      {editing && <BudgetDialog name={serviceName(editing.service)} b={editing} open onOpenChange={(o) => !o && setEditing(null)} saved={reload} />}
+    </section>
   );
 }

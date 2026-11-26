@@ -283,8 +283,9 @@ export function appRows(w: AppWork): ActivityRow[] {
 async function appActivity(user: SessionUser): Promise<ActivityRow[]> {
   if (user.role === "visitor") return [];
   try {
-    const [{ creditRows }, { antigravityRoute }] = await Promise.all([import("./credits"), import("./library/timeline")]);
-    return [...appRows(await appWork(user)), ...creditRows(user.username, !!antigravityRoute(user.username))];
+    const [{ creditRows }, { antigravityRoute }, { budgetRows }, { isAdminActor }] = await Promise.all([import("./credits"), import("./library/timeline"), import("./lib/service-usage"), import("./my-keys")]);
+    const budgets = await budgetRows(user.username, user.role === "admin" || isAdminActor(user.username)).catch(() => []);
+    return [...appRows(await appWork(user)), ...creditRows(user.username, !!antigravityRoute(user.username)), ...budgets];
   } catch (err) {
     console.warn(`[activity] ${err instanceof Error ? err.message : String(err)}`);
     return [];

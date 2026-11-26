@@ -77,7 +77,7 @@ describe("(b) the correction", () => {
     writeFileSync(path.join(dir, "library", "migrated.json"), JSON.stringify({ "4.6": STAMP }));
     // a plug-in that serves ws_cat's media itself (a footage catalog)
     mountPlugins(new Hono(), [{ id: "catalog", uploadsTo: () => (workspaceScope.getStore()?.id === "ws_cat" ? "catalog" : null) }]);
-    lib("lib_wrong", { projectId: "ws_new", setupAt: STAMP, organize: "ai", lookBudget: null });
+    lib("lib_wrong", { projectId: "ws_new", setupAt: STAMP, organize: "ai" });
     lib("lib_done", { projectId: "ws_done", setupAt: STAMP, importMode: "copy" });
     lib("lib_clips", { projectId: "ws_clips", setupAt: STAMP });
     d.prepare("INSERT INTO assets (id, library_id, kind, title, created_by, created_at) VALUES ('ast_1', 'lib_clips', 'video', 'V', 'tinyacrobatics', 0)").run();

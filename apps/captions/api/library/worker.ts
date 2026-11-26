@@ -24,8 +24,8 @@ import { makeThumb } from "./media/thumb";
 import { makeWave } from "./media/wave";
 import { keySound, NeedsKey, transcribeVersion, versionRoute } from "./transcribe";
 import { sortAfter, sortRoll, sortUnsorted } from "./roll";
-import { BUDGET_WAITS, BudgetSpent, lookAllowed, lookBudgetWaits, lookFromSheets, lookVersion, MAC_WAITS, needLookRoute, NO_ACCESS, queueLook, sweepLook } from "./shots";
-import { macSheetsWaiting, onTheirMac, takeMacSheets, takeWatchCopy } from "./mac-look";
+import { lookAllowed, lookFromSheets, lookVersion, MAC_WAITS, needLookRoute, NO_ACCESS, queueLook, sweepLook } from "./shots";
+import { onTheirMac, takeMacSheets, takeWatchCopy } from "./mac-look";
 import { askedWatch, storeTimeline, sweepWatch, wantsWatch, watchAfter } from "./timeline";
 import { picturesHere, sheetPictures, startPictureCatchUp, wakePictures } from "./pictures";
 import { organizeOnProbe, refileAllShoots, rereadUploadedDates } from "./organize";
@@ -85,9 +85,6 @@ const EXTRA = new Set(["transcribe", "describe", "look", "fingerprint", "embed",
 /** The steps that ask the person's AI: a usage limit or a Mac that is off holds them, never fails them. */
 const ON_AI = ["describe", "look"];
 
-/** A look or a listen held for its library's monthly budget (shots.ts BudgetSpent): it waits, saying so, and asks again in BUDGET_RETRY_S. */
-const BUDGET_RETRY_S = 10 * 60;
-
 const scratch = () => process.env.LIBRARY_SCRATCH_DIR || path.join(env.dataDir, "library", "scratch");
 
 interface VersionRow {
@@ -112,7 +109,6 @@ function waitFor(e: unknown): number {
     return until && until > Date.now() ? Math.ceil((until - Date.now()) / 1000) : 15 * 60;
   }
   if (under instanceof MacClaudeError && under.kind === "unclaimed") return 5 * 60;
-  if (e instanceof BudgetSpent) return BUDGET_RETRY_S;
   return e instanceof AiProviderError && e.code === "RATE_LIMIT" ? 60 : 0;
 }
 
@@ -345,12 +341,11 @@ export async function tick(now = Date.now(), kinds: readonly string[] = LANES.fl
     // a transcript whose speech model did not download (a weak connection) waits a minute and tries again, saying why:
     // the clip did not fail, and what came in whole is kept (lib/device-transcribe.ts)
     // one made on the person's computer waits for one with its model to be on, saying so
-    const wait = ON_AI.includes(job.kind) || e instanceof BudgetSpent ? waitFor(e) : e instanceof ModelNotReady || e instanceof ComputerOff ? MODEL_RETRY_S : 0;
+    const wait = ON_AI.includes(job.kind) ? waitFor(e) : e instanceof ModelNotReady || e instanceof ComputerOff ? MODEL_RETRY_S : 0;
     if (wait) {
       defer(db, job.id, wait);
       if (isLimit(e)) holdForLimit(db, job.actor, limitLine((e as Error).message), Date.now() + wait * 1000);
       if (e instanceof ModelNotReady || e instanceof ComputerOff) db.prepare("UPDATE jobs SET error = ? WHERE id = ?").run(e instanceof ComputerOff ? e.message : MODEL_WAITS, job.id);
-      if (e instanceof BudgetSpent) db.prepare("UPDATE jobs SET error = ? WHERE id = ?").run(BUDGET_WAITS, job.id);
       return true;
     }
     finishJob(db, job.id, false, e instanceof Error ? e.message : String(e), Math.max(now, Date.now()));
@@ -616,8 +611,6 @@ async function run(job: JobRow): Promise<void> {
   if (!v) throw new Error("Version not found");
   // a look runs as its uploader, queued long before: one who may no longer see the clip gets nothing read or asked (shots.ts lookAllowed)
   if (job.kind === "look" && !(await lookAllowed(db, v.id, job.actor))) throw new NeedsKey(NO_ACCESS);
-  // a description counts in the library's monthly budget too (UNIFIED-PRD §4.5); an edit's own ask is never held
-  if (job.kind === "describe") await budgetCheck(db, v.id);
   // a file indexed where it is on a Mac (on-mac.ts): this server never has it, so only the steps that read what the Mac
   // sent run here (the description from its stills, search by meaning from words). One uploaded to a library that keeps
   // only proxies reads its proxy, which is its source once the original is gone (dropOriginal)
@@ -745,7 +738,6 @@ async function run(job: JobRow): Promise<void> {
     await embedVersion(db, v.id, job.actor);
   } else if (job.kind === "look") {
     needLookRoute(job.actor);
-    await budgetCheck(db, v.id);
     // the file the description read (the proxy when there is one), so it shows the AI nothing the description didn't
     await lookVersion(db, v.id, lighter, p, job.actor, dir);
     wakePictures(); // its kept sheets give its shots their picture vectors
@@ -765,8 +757,6 @@ async function run(job: JobRow): Promise<void> {
  */
 async function lookOnMac(db: ReturnType<typeof libraryDb>, v: VersionRow, job: JobRow): Promise<void> {
   needLookRoute(job.actor);
-  // the sheets a Mac sent are asked about whatever the budget says: they are read, and held only in memory
-  if (!macSheetsWaiting(v.id)) await budgetCheck(db, v.id);
   const sheets = takeMacSheets(v.id);
   if (!sheets) {
     void wakeEditorPolls(); // the Mac's long poll hears of it at once
@@ -791,8 +781,6 @@ async function lookOnMac(db: ReturnType<typeof libraryDb>, v: VersionRow, job: J
  * what follows a description: its first one gets shot descriptions, new words get search by meaning. The caller drops the stills.
  */
 export async function describeFromStills(db: ReturnType<typeof libraryDb>, libraryId: string, versionId: string, actor: string | null, stills: string[], duration?: number): Promise<void> {
-  // held by the monthly budget here too: a computer's stills are described on the server's key the same way (UNIFIED-PRD §4.5)
-  await budgetCheck(db, versionId);
   const fresh = !described(versionId);
   const p = JSON.parse((db.prepare("SELECT probe FROM asset_versions WHERE id = ?").get(versionId) as { probe: string | null } | undefined)?.probe ?? "null") as ProbeSummary | null;
   await describeVersion(db, versionId, "", duration ?? p?.duration ?? 0, actor, scratch(), stills);
@@ -814,10 +802,6 @@ export function aiWaits(db: ReturnType<typeof libraryDb>, job: JobRow, e: unknow
   return true;
 }
 
-/** Holds a look whose library spent its monthly budget (BudgetSpent), before its picture is read or its AI asked. */
-async function budgetCheck(db: ReturnType<typeof libraryDb>, versionId: string): Promise<void> {
-  if (await lookBudgetWaits(db, versionId, firstClips())) throw new BudgetSpent(BUDGET_WAITS);
-}
 
 /** Ready: probed, and the derivatives the probe asked for are there (audio has no thumb). */
 export function markReady(db: ReturnType<typeof libraryDb>, versionId: string, p: ProbeSummary): void {

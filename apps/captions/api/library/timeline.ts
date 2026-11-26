@@ -18,11 +18,11 @@ import { libraryChanged, libraryRole } from "./access";
 import { libraryLookLevel, librarySetting, sinceSql } from "./db";
 import { WORKSPACE_MAX, workspaceIdOf } from "./describe";
 import { canEmbed } from "./embed";
-import { enqueueJob, firstClips } from "./jobs";
+import { enqueueJob } from "./jobs";
 import { clock, RULE } from "./look";
 import { hasSound } from "./media/probe";
 import { ffmpeg } from "./media/run";
-import { LOOK_LABEL, lookBudgetWaits, WATCH_LABEL } from "./shots";
+import { LOOK_LABEL, WATCH_LABEL } from "./shots";
 
 /**
  * Timelines: Gemini watches a video with its sound and says what happens when (contracts TimelineEvent), on top of the
@@ -30,7 +30,7 @@ import { LOOK_LABEL, lookBudgetWaits, WATCH_LABEL } from "./shots";
  * key (Settings → API keys); with no key, or the library's Timelines off, nothing here runs and the look is as before.
  * The file sent is the one the look read: the proxy when there is one. A file kept on a Mac with nothing uploaded is
  * sent by that Mac to this server as a small copy made for it (mac-look.ts), so the key stays on the server and the call
- * is counted in the usage tally and the library's monthly budget like the look's own. A watch that fails never fails the
+ * is counted in the usage tally like the look's own. A watch that fails never fails the
  * look: its error is kept and it is tried again RETRY_MS later (sweepWatch). A watch runs beside the look lane, never in
  * it (watchAfter): a busy model can keep one call waiting for minutes.
  * The library's Timelines may watch on Antigravity instead (WATCH_MODELS), the person's own AI provider signed in with
@@ -695,8 +695,6 @@ export function watchAfter(db: DatabaseSync, versionId: string, src: () => Promi
   }
   const run = (async () => {
     try {
-      // a watch counts in the library's monthly budget: held (sweepWatch asks again), never spent past it (UNIFIED-PRD §4.5)
-      if (await lookBudgetWaits(db, versionId, firstClips())) return;
       const file = await src();
       // the key's credit ran out on this watch and its owner picked Antigravity until then: watched there at once
       const r = await watchVersion(db, versionId, file, actor, sent).catch((e: unknown) => {
