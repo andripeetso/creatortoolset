@@ -89,10 +89,10 @@ describe("no key anywhere", () => {
     for (const use of ["mic", "captions", "transcripts", "default"] as const) {
       expect(speechFor("local", use)).toMatchObject({ engine: "local", on: "server", model: "whisper-base" });
     }
-    // Automatic goes to This Mac's model before a key the person added (no bill)
+    // with a key added: talking to the assistant stays on This Mac's model (no bill); the rest keeps the key first
     process.env.DEEPGRAM_API_KEY = "dg";
     expect(speechFor("local", "mic")).toMatchObject({ engine: "local", on: "server" });
-    expect(speechFor("local", "captions")).toMatchObject({ engine: "local", on: "server" });
+    expect(speechFor("local", "captions")).toMatchObject({ engine: "deepgram" });
   });
 
   it("on a server with no computer of theirs and no key, the answer names the key to add (never a key asked for a computer that serves it)", () => {

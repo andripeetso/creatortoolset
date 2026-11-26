@@ -172,8 +172,12 @@ function onDeepgram(actor: Actor, languages: string[], note: string): Speech | {
   return k.missing ? { needs: NEEDS.deepgram, key: "DEEPGRAM_API_KEY" } : { engine: "deepgram", model: "nova-3", key: k.key, languages, note };
 }
 
-/** `auto` order: the computers and This Mac's own model first (no key, no bill), then a key the person added. */
-const AUTO_ORDER: Engine[] = ["local", "deepgram", "openai"];
+/**
+ * `auto` order. Talking to the assistant: the computers and This Mac's own model first (no key, no bill), then a key.
+ * Everything else keeps a key first: a key's service takes many transcripts at once, and the editor's rules for the
+ * computers (its own row, English) stay as they are.
+ */
+const autoOrder = (use: SpeechUse | "default"): Engine[] => (use === "mic" ? ["local", "deepgram", "openai"] : ["deepgram", "openai", "local"]);
 
 /**
  * What `use` runs on for `actor`: their choice for that use, else their default; `auto` is the first that serves them
@@ -187,7 +191,7 @@ export function speechFor(actor: Actor, use: SpeechUse | "default", languages?: 
   const choice = (use !== "default" && prefs.stt.per[use]) || prefs.stt.default;
   const langs = languages?.length ? languages : prefs.languages;
   const can = availableEngines(actor, use === "default" ? "transcripts" : use);
-  const engine = choice.engine === "auto" ? AUTO_ORDER.find((e) => can.includes(e) && (use !== "editor" || e !== "local")) : choice.engine;
+  const engine = choice.engine === "auto" ? autoOrder(use).find((e) => can.includes(e) && (use !== "editor" || e !== "local")) : choice.engine;
   if (!engine) return { needs: "Add your Deepgram (or OpenAI) key in Settings → API keys", key: "DEEPGRAM_API_KEY" };
   // the default row stands for every use: a local model on it is read as the transcripts'
   const as: SpeechUse = use === "default" ? "transcripts" : use;
