@@ -224,7 +224,7 @@ const levelShare = (level: string) => 8 / (LOOK_LEVELS.find((l) => l.value === l
 /**
  * A look of `clipSeconds` of footage at `share` of Standard's lines (levelShare): its calls at the tally's average cost,
  * its time at this server's measured pace, else the picture read plus its calls spread over the calls that run at once
- * (two on an AI provider, six on a key: shots.ts callsAtOnce).
+ * (a Mac's background slots on an AI provider, six on a key: shots.ts callsAtOnce).
  * ponytail: the measured pace is of every level run here, scaled by `share` against the library's own level
  */
 async function lookPerClip(db: DatabaseSync, route: LibraryStepRoute, clipSeconds: number, share = 1, paceShare = 1) {

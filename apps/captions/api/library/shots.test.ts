@@ -435,7 +435,7 @@ describe("the background index", () => {
     d.prepare("UPDATE jobs SET state = 'done' WHERE version_id = ? AND kind = 'look'").run(v);
   });
 
-  it("a file's calls run side by side, two at once on an AI provider", async () => {
+  it("a file's calls run side by side, all three at once on an AI provider", async () => {
     const d = libraryDb();
     const v = await seed("ast-par-01", { macPath: "/Volumes/Card/par.mov", duration: 3600 });
     storeStretches(d, v, Array.from({ length: 200 }, (_, i) => ({ a: i * 18, b: i * 18 + 18, motion: 0.5 })));
@@ -450,7 +450,7 @@ describe("the background index", () => {
       return answer(...(a as unknown as Parameters<typeof answer>));
     });
     expect(await lookFromSheets(d, v, "local", sheets)).toBe(3); // 13 sheets, 6 a call
-    expect(most).toBe(2);
+    expect(most).toBe(3);
     expect(stretchesOf(d, v).every((s) => s.text)).toBe(true);
   });
 

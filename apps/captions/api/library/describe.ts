@@ -354,8 +354,8 @@ export function saveDescribed(db: DatabaseSync, versionId: string, d: Described,
 let onProvider = 0;
 
 /**
- * A turn for one description as `actor`: their own Anthropic key takes many at once; a connected AI takes two (its
- * background slots, mac-claude.ts), so a job's time is its own and the estimate can read it. Null when the AI is full
+ * A turn for one description as `actor`: their own Anthropic key takes many at once; a connected AI takes its
+ * background slots (mac-claude.ts), so a job's time is its own and the estimate can read it. Null when the AI is full
  * (the job waits in the queue); else the function that gives the turn back.
  */
 export function describeSlot(actor: string | null): (() => void) | null {

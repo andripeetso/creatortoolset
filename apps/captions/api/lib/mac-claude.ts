@@ -23,8 +23,8 @@ import { workspaceScope } from "./workshop/workspace";
  * and effort; no tools, or web search for research, or a folder to read for a
  * Workshop turn) and posts the text as it is written. A device counts as on while
  * it has polled in the last 40 s (paused = it stops). What a person waits on goes
- * first; background work (deep research) waits up to 10 min and takes at most 2
- * of a Mac's 4.
+ * first; background work (deep research, the library) waits up to 10 min and takes every slot of a Mac's 4 while
+ * nobody asks, one fewer for PERSON_HOLD_MS after a person's request (backgroundRoom).
  *
  * A restart of this server (a deploy) must not lose an answer the Mac is still writing. A caller that can take its
  * answer up again says so (MacOpts.keep): its request is then also kept on disk from the moment a Mac claims it
@@ -334,9 +334,17 @@ export const answersAtRisk = (): number => [...reqs.values()].filter((r) => !(r.
  */
 const PATIENCE_MS = { now: 15_000, busy: 3 * 60_000, background: 10 * 60_000, afterStart: 45_000 };
 const startedAt = Date.now();
-export const BACKGROUND_SLOTS = 2;
 /** the Mac runs this many Claude calls at once (the Mac relay SLOTS) */
 const MAC_SLOTS = 4;
+/** the most background requests a Mac runs at once: all its slots, while nobody asks (backgroundRoom) */
+export const BACKGROUND_SLOTS = MAC_SLOTS;
+/** after a person's request, one slot stays free this long, so their next one never waits behind background calls */
+const PERSON_HOLD_MS = 5 * 60_000;
+/** when a person last asked, by device */
+const personAt = new Map<string, number>();
+/** How many background requests a device may run now: one fewer while a person asked in the last PERSON_HOLD_MS. */
+export const backgroundRoom = (device: string, now = Date.now()): number =>
+  now - (personAt.get(device) ?? -Infinity) < PERSON_HOLD_MS ? MAC_SLOTS - 1 : MAC_SLOTS;
 /** the Mac posts at least every 20 s while Claude thinks */
 export const SILENT_MS = 60_000;
 const TOTAL_MS = 20 * 60_000;
@@ -353,7 +361,7 @@ export function patienceMs(background: boolean, busy: boolean, sinceStart = Infi
 function next(device: string): Req | undefined {
   const open = [...reqs.values()].filter((r) => !r.claimed && r.device === device);
   const busy = [...reqs.values()].filter((r) => r.claimed && r.background && r.device === device).length;
-  return open.find((r) => !r.background) ?? (busy < BACKGROUND_SLOTS ? open.find((r) => r.background) : undefined);
+  return open.find((r) => !r.background) ?? (busy < backgroundRoom(device) ? open.find((r) => r.background) : undefined);
 }
 
 function claim(r: Req): Req {
@@ -571,6 +579,7 @@ function wait(asked: Asked, claimed: boolean, cancel: AbortSignal | undefined, o
       pump(); // a background slot may be free now
     }
     reqs.set(r.id, r);
+    if (!r.background && !claimed) personAt.set(r.device, started);
     cancel?.addEventListener("abort", onAbort);
     pump();
   });

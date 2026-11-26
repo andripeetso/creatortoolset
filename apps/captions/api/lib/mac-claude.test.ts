@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 
 process.env.DATA_DIR = mkdtempSync(path.join(tmpdir(), "mac-claude-")); // the usage tally lands here
 const { isOnline, pairDevice } = await import("./devices");
-const { macUsageLines, macUsageSince, patienceMs, recordUsage, relayRoutes, streamMacClaude: streamOnMac, usageIn, usageOf } = await import("./mac-claude");
+const { backgroundRoom, macUsageLines, macUsageSince, patienceMs, recordUsage, relayRoutes, streamMacClaude: streamOnMac, usageIn, usageOf } = await import("./mac-claude");
 const { workspaceScope } = await import("./workshop/workspace");
 import type { MacOpts, MacUsage } from "./mac-claude";
 
@@ -139,9 +139,9 @@ describe("Claude on the Mac", () => {
     await answer;
   });
 
-  it("hands out what a person waits on first, and at most two background requests at a time", async () => {
+  it("hands out what a person waits on first, and, after a person asked, one slot fewer to background requests", async () => {
     const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-    const bg = [1, 2, 3].map((i) => streamMacClaude("sys", `bg${i}`, undefined, () => {}, undefined, { background: true, web: true }));
+    const bg = [1, 2, 3, 4].map((i) => streamMacClaude("sys", `bg${i}`, undefined, () => {}, undefined, { background: true, web: true }));
     const fg = streamMacClaude("sys", "now", undefined, () => {});
     for (const p of [...bg, fg]) p.catch(() => {});
     const got = async () => (await (await post("/wait")).json()) as { id: string; user: string; web: boolean };
@@ -149,14 +149,19 @@ describe("Claude on the Mac", () => {
     expect(first.user).toBe("now");
     const a = await got();
     const b = await got();
-    expect([a.user, b.user]).toEqual(["bg1", "bg2"]);
+    const b2 = await got();
+    expect([a.user, b.user, b2.user]).toEqual(["bg1", "bg2", "bg3"]);
     expect(a.web).toBe(true);
     const third = post("/wait");
     expect(await Promise.race([third.then(() => "claimed"), sleep(50).then(() => "waiting")])).toBe("waiting");
-    await post(`/${a.id}/fail`, { error: "x" }); // a slot frees: the waiting poll gets bg3
+    await post(`/${a.id}/fail`, { error: "x" }); // a slot frees: the waiting poll gets bg4
     const c = (await (await third).json()) as { id: string; user: string };
-    expect(c.user).toBe("bg3");
-    for (const r of [first, b, c]) await post(`/${r.id}/fail`, { error: "x" });
+    expect(c.user).toBe("bg4");
+    for (const r of [first, b, b2, c]) await post(`/${r.id}/fail`, { error: "x" });
+    // nobody asked for five minutes, or ever: background takes every slot
+    expect(backgroundRoom(mac.id)).toBe(3);
+    expect(backgroundRoom(mac.id, Date.now() + 5 * 60_000 + 1)).toBe(4);
+    expect(backgroundRoom("never-asked")).toBe(4);
   });
 
   it("rejects when the Mac fails, so the caller can fall back", async () => {
