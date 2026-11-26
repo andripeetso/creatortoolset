@@ -57,7 +57,7 @@ const STAGE_NAME: Record<LibraryStage["kind"], string> = {
   blur: "Face Blur",
   thumb: "Pictures",
   proxy: "Proxies",
-  fingerprint: "Duplicate checks",
+  fingerprint: "Footage fingerprints",
   transcribe: "Transcripts",
   describe: "Descriptions",
   look: "Shot descriptions",

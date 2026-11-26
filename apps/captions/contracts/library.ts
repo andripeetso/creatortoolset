@@ -484,14 +484,16 @@ export interface LibraryEstimate {
  * What a library makes for its files (Settings → Media Library and the library's Status view, one list: api/library/made.ts).
  * `setting`: its "Make for new files" switch; the ones without are always made for new files (they cost nothing).
  * `about`: what it is, in one sentence. `auto`: sorted by itself from what the file already has, so it has no Make.
- * `ready`: a file is ready once it has it (worker.ts markReady), so what is queued for it has no Cancel.
+ * `ready`: made as the file comes in, so what is queued for it has no Cancel and the library's Stop leaves it: a file is
+ * ready once it has its thumbnail and waveform (worker.ts markReady), and its footage fingerprints are made beside them
+ * (no AI, nothing paid, seconds a clip; a Stop that left them unmade hid the clip from every same-footage list).
  */
 export type MadeKind = "thumb" | "sprite" | "wave" | "fingerprint" | "blur" | "proxy" | "transcribe" | "describe" | "embed" | "pictures" | "look" | "timeline" | "sound" | "roll";
 export const MADE_KINDS: readonly { kind: MadeKind; label: string; about: string; setting?: "proxy" | "transcribe" | "describe" | "embed" | "pictures" | "look" | "timeline"; auto?: true; ready?: true }[] = [
   { kind: "thumb", label: "Thumbnails", about: "The picture on each clip's card.", ready: true },
   { kind: "sprite", label: "Frame strips", about: "The frames shown while the pointer moves over a clip." },
   { kind: "wave", label: "Waveforms", about: "The shape of a clip's sound on the timeline.", ready: true },
-  { kind: "fingerprint", label: "Duplicate check", about: "Marks the clips that hold the same footage twice." },
+  { kind: "fingerprint", label: "Footage fingerprints", about: "Lets a clip list the other clips that share its footage.", ready: true },
   // Face Blur's (shown with the plug-in): no job of its own, a Mac makes each copy (editor-steps/blur-faces)
   { kind: "blur", label: "Blurred copies", about: "A copy of each clip with its faces covered." },
   { kind: "proxy", label: "Proxies", about: "A lighter copy that plays smoothly where the original can't.", setting: "proxy" },

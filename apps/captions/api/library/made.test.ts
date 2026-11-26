@@ -230,6 +230,13 @@ describe("what's made", () => {
     clip("ast-hum", { kind: "audio" });
     expect(await row("sound")).toMatchObject({ have: 2, missing: 1, cost: "free" });
     expect(stopQueued("lib_m", "thumb", "local")).toBe(0); // a file is ready once it has one: no Cancel
+    const printed = clip("ast-print");
+    enqueueJob(d, "lib_m", printed, "fingerprint", "local");
+    expect(stopQueued("lib_m", "fingerprint", "local")).toBe(0); // made as the file comes in: Stop leaves it
+    expect(job(printed, "fingerprint")?.state).toBe("queued");
+    d.prepare("DELETE FROM jobs WHERE version_id = ?").run(printed);
+    d.prepare("DELETE FROM asset_versions WHERE id = ?").run(printed);
+    d.prepare("DELETE FROM assets WHERE id = 'ast-print'").run();
     const before = (await row("roll")).missing;
     clip("ast-unsorted");
     d.prepare("UPDATE assets SET roll = NULL WHERE id = 'ast-unsorted'").run();
