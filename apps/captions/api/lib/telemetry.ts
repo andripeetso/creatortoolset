@@ -4,7 +4,8 @@ import { arch, homedir, platform } from "node:os";
 import path from "node:path";
 import { Hono } from "hono";
 import { env } from "./env";
-import { providerSettings } from "./providers";
+import { ownSettings, providerSettings } from "./providers";
+import { listUsers } from "../users";
 import { connectState } from "../connect/state";
 import { putBackFailureCounts, takeFailureCounts } from "./failures";
 import { libraryDb } from "../library/db";
@@ -19,18 +20,22 @@ import type { AuthVars } from "../auth";
  * switch writes $DATA_DIR/no-ping.
  *
  * What goes to creatortoolset.com (which may pass it on to PostHog and Sentry):
- * - a check-in at start and every 6 hours: a random install id ($DATA_DIR/install-id), the version, the system, how
+ * - a check-in at start, a minute after the first page and every hour: a random install id ($DATA_DIR/install-id), the version, the system, how
  *   many pages were opened since the last one and which (by page name only, from PAGES), whether Connect is linked,
  *   and which AIs are set up (their kind: claude, codex…), and what failed since the last one (an action's name or a
  *   request's route with no ids in it, the status, how many times; never the error line, which can name a file), the
  *   actions taken since (a request's route, as above, and how many times) and how big the Media Library is (clips,
  *   hours, bytes);
- * - events, every 15 minutes: each page opened, each AI run (the job's name, the model, its tokens and API-equivalent
+ * - events, every 5 minutes: each page opened, each AI run (the job's name, the model, its tokens and API-equivalent
  *   cost) and each export (how it ended, how long it took), with the time it happened;
  * - a crash or an error: where (server or web), the message and the stack, with the home folder replaced by ~.
  * No name, account, content, file name or address.
  */
-const CHECKIN_MS = 6 * 3_600_000;
+const CHECKIN_MS = 3_600_000;
+// the first page of a run checks in soon after: the check-in at start comes before the window opens, so a run shorter
+// than CHECKIN_MS would otherwise count as never opened
+const FIRST_PAGE_MS = 60_000;
+let firstPageSent = false;
 const HOUR = 3_600_000;
 const CRASHES_PER_HOUR = 20;
 const ID = /^[a-f0-9]{32}$/;
@@ -105,6 +110,9 @@ export function notePage(page: string): void {
   opened++;
   pages[name] = (pages[name] ?? 0) + 1;
   track("page", { page: name });
+  if (firstPageSent) return;
+  firstPageSent = true;
+  setTimeout(() => void sendCheckin(), FIRST_PAGE_MS).unref();
 }
 
 export async function sendCheckin(): Promise<void> {
@@ -118,7 +126,9 @@ export async function sendCheckin(): Promise<void> {
   const library = librarySize();
   let ai: string[] = [];
   try {
-    ai = [...new Set(providerSettings().instances.filter((i) => i.enabled).map((i) => i.driver))].slice(0, 8);
+    // the server's own providers and each account's (a person's Claude Code or Codex is saved under their account)
+    const all = [providerSettings(), ...listUsers().map((u) => ownSettings(u.username))].flatMap((s) => s?.instances ?? []);
+    ai = [...new Set(all.filter((i) => i.enabled).map((i) => i.driver))].slice(0, 8);
   } catch {
     // unreadable settings: the check-in goes without
   }
@@ -135,7 +145,7 @@ export async function sendCheckin(): Promise<void> {
 
 type Props = Record<string, string | number | boolean>;
 const EVENTS_MAX = 1000;
-const EVENTS_MS = 15 * 60_000;
+const EVENTS_MS = 5 * 60_000;
 const BATCH = 200;
 // shortcut: events wait in memory, so a quit loses up to 15 minutes of them; keep them on disk if the counts look low
 let events: Array<{ name: string; at: number; props: Props }> = [];

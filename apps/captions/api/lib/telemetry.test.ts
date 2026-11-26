@@ -54,6 +54,14 @@ describe("usage and crash reports", () => {
     expect(sent[1].body).toMatchObject({ opened: 0, tools: {} });
   });
 
+  it("names the AI programs a person set up under their own account, not only the server's", async () => {
+    process.env.CT_CHANNEL = "release";
+    const { saveSettings, DEFAULT_SETTINGS } = await import("./providers");
+    await saveSettings({ ...structuredClone(DEFAULT_SETTINGS), instances: [{ id: "codex", driver: "codex", name: "Codex", enabled: true }] }, "ana");
+    await t.sendCheckin();
+    expect(sent[0].body.ai).toContain("codex");
+  });
+
   it("a check-in carries what failed since the last one, with no account, id or file path", async () => {
     process.env.CT_CHANNEL = "release";
     const { noteFailure } = await import("./failures");
