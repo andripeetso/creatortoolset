@@ -773,4 +773,12 @@ export const MIGRATIONS: string[] = [
   // by the one server process that starts it
   `ALTER TABLE uploads ADD COLUMN version_id TEXT;
   CREATE TABLE chat_starts (reply TEXT PRIMARY KEY, at INTEGER NOT NULL);`,
+  // Blur faces, putting right an earlier step here (the one that sets Upload to originals): it stored Blurred (until then "proxies") as the Originals part with
+  // Generate proxies off, which changed by itself what such a library does. The proxies the server holds of clips kept
+  // as filmed stopped being served (upload-gate.ts mayServe asks for the Proxies part), and each new blurred copy went up
+  // whole where a proxy of it had. Back to how it behaved: the proxies go up (Upload → Proxies, Generate proxies on, for
+  // files from now: proxySince) and Blurred, which nobody chose, is off. Only a library that step made matches:
+  // Originals could not be stored under Blur faces before it
+  `UPDATE libraries SET settings = json_set(settings, '$.upload', 'proxies', '$.proxy', json('true'), '$.proxySince', CAST(strftime('%s', 'now') AS INTEGER) * 1000)
+     WHERE json_extract(settings, '$.blurFaces') = 1 AND json_extract(settings, '$.upload') = 'originals' AND json_extract(settings, '$.proxy') = 0;`,
 ];

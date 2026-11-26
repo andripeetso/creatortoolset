@@ -690,6 +690,14 @@ describe("Upload under Blur faces: Blurred is the blurred copies, Proxies the pr
     const stored = (id: string) => JSON.parse((d.prepare("SELECT settings FROM libraries WHERE id = ?").get(id) as { settings: string }).settings) as { upload: string; proxy: boolean };
     expect(stored("lib_mig")).toMatchObject({ upload: "originals", proxy: false });
     expect(stored("lib_mig_plain")).toMatchObject({ upload: "proxies", proxy: true });
+    // and the step that puts it right: such a library sends proxies again, made from the blurred copies, from now on, so
+    // what it sends and serves is what it did before; a library without Blur faces, or one with Upload off, is left alone
+    lib("lib_mig_off", { upload: "none", blurFaces: true, proxy: false });
+    d.exec(MIGRATIONS.find((m) => m.includes("'$.upload', 'proxies'"))!);
+    expect(stored("lib_mig")).toMatchObject({ upload: "proxies", proxy: true });
+    expect(Math.abs(Number((stored("lib_mig") as { proxySince?: number }).proxySince) - Date.now())).toBeLessThan(60_000);
+    expect(stored("lib_mig_plain")).toMatchObject({ upload: "proxies", proxy: true });
+    expect(stored("lib_mig_off")).toMatchObject({ upload: "none", proxy: false });
   });
 
   it("a file found to have no faces follows Upload from then on: its computer is asked to send it, once; while it waits for its blur, never", async () => {
