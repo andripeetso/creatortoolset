@@ -5,6 +5,7 @@
 # PRODUCT_BUNDLE_IDENTIFIER in the project first. BUILD_DIR moves the output (default apps/ios/build).
 set -euo pipefail
 cd "$(dirname "$0")/.."
+here=$PWD
 : "${DEVELOPMENT_TEAM:?set DEVELOPMENT_TEAM to your Apple team id}"
 out="${BUILD_DIR:-build}"
 build=$(git rev-list --count HEAD)
@@ -24,7 +25,11 @@ xcodebuild -quiet -project CreatorToolset.xcodeproj -scheme CreatorToolset -conf
   -destination generic/platform=iOS -archivePath "$out/CreatorToolset.xcarchive" -allowProvisioningUpdates \
   DEVELOPMENT_TEAM="$DEVELOPMENT_TEAM" CURRENT_PROJECT_VERSION="$build" archive
 # Readable crash reports: the Sentry CLI (logged in, with its default org and project set) uploads the build's debug symbols.
-if command -v sentry >/dev/null; then sentry debug-files upload "$out/CreatorToolset.xcarchive/dSYMs" || echo "Sentry: debug symbols not uploaded"; fi
+if command -v sentry >/dev/null; then
+  # from the checkout, so its .sentryclirc decides the project even when the build folder is elsewhere
+  dsyms=$(cd "$out/CreatorToolset.xcarchive/dSYMs" && pwd)
+  (cd "$here" && sentry debug-files upload "$dsyms") || echo "Sentry: debug symbols not uploaded"
+fi
 plist="$out/ExportOptions.plist"
 cat > "$plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
