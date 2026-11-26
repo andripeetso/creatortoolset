@@ -44,7 +44,8 @@ import { sortAfter } from "../library/roll";
 import { serveBlob } from "../library/routes";
 import { askVersionIn, fileTranscript, hearSound, keySound, NeedsKey } from "../library/transcribe";
 import { resolveDevice } from "../library/whereis";
-import { aiWaits, describeFromStills, leaveToComputers } from "../library/worker";
+import { aiWaits, described, describeFromStills, leaveToComputers } from "../library/worker";
+import { hasMacFrames } from "../library/on-mac";
 import { status } from "./waits";
 import { mayRead } from "./offline";
 
@@ -71,11 +72,12 @@ const SENDS: Record<string, string[]> = {
 const REQUIRED: Record<string, string> = { thumb: "thumb", wave: "wave", sprite: "sprite", describe: "still0" };
 /**
  * The kinds that may download the original of a file only the server has: the proxy, and the probe, card picture,
- * waveform, strip and fingerprint it has no lighter copy for (an upload in a library that makes no proxy).
+ * waveform, strip, fingerprint and description's stills it has no lighter copy for (an upload in a library that makes no
+ * proxy, a Finals file).
  */
-export const READS_ORIGINAL = ["proxy", "probe", "thumb", "wave", "sprite", "fingerprint"];
+export const READS_ORIGINAL = ["proxy", "probe", "thumb", "wave", "sprite", "fingerprint", "describe"];
 /** Of those, the ones that wait for a proxy on its way (the lighter read) rather than download the original too. */
-const PROXY_FIRST = ["wave", "sprite", "fingerprint"];
+const PROXY_FIRST = ["wave", "sprite", "fingerprint", "describe"];
 const proxyComing = (versionId: string): boolean =>
   !!libraryDb().prepare("SELECT 1 FROM jobs WHERE version_id = ? AND kind = 'proxy' AND state IN ('queued', 'running')").get(versionId);
 /** The most a small file (picture, waveform, strip) may weigh; a proxy is capped as a result file is. */
@@ -182,8 +184,9 @@ export function libraryRank(d: Device, job: Pick<JobRow, "kind" | "actor">, r: L
   if (LATER_KINDS.includes(job.kind) && !d.work?.libraryKinds?.includes(job.kind)) return 0;
   // only a transcript on the person's key: the speech road takes one on a computer's model, this server one on its own
   if (job.kind === "transcribe" && !keySound(job.actor, r.id)) return 0;
-  // a file indexed on a Mac is described here from the stills that Mac sent (library/worker.ts)
-  if (job.kind === "describe" && r.source_key.startsWith("mac:")) return 0;
+  // a file indexed on a Mac is described here from the stills that Mac sent, or again from its words (library/worker.ts).
+  // Stills lost (held in memory for Blur faces, gone with a restart) and never described: a computer with the file cuts them
+  if (job.kind === "describe" && r.source_key.startsWith("mac:") && (hasMacFrames(r.id) || described(r.id))) return 0;
   const at = fileFor(where(r), d.id, folders, isThisMachine);
   if (at && "path" in at) return 3;
   if (job.kind === "send") return 0;

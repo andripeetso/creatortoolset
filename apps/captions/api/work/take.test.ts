@@ -371,6 +371,23 @@ describe("G1 taker gap and reach (tests 1–9, 9b)", () => {
     await revokeDevice(other.device.id);
   });
 
+  it("a Mac-indexed clip whose stills are lost and that was never described goes to the Mac that has it, which cuts them; one with stills or a description stays the server's", async () => {
+    const { libraryRank, rowOf } = await import("./library-package");
+    const { holdStills } = await import("../library/on-mac");
+    const mac = pairDevice("tiny", "Mac Studio", "0.28.0", "hw-mac-stills");
+    await report(mac.token, MAC_MACHINE);
+    setDeviceWork(mac.device.id, { v: WORK_V, steps: [], at: Date.now(), libraryAt: Date.now(), library: true, libraryKinds: ["describe"] });
+    const anyone = { off: [], originals: {}, libraries: {} } as never;
+    const rank = (v: string) => libraryRank(deviceOf(mac.device.id)!, { kind: "describe", actor: "tiny" }, rowOf(v)!, [], anyone);
+    const lost = addVersion({ sourceKey: "mac:lost", macPath: "/Users/tiny/lost.mov", macDevice: mac.device.id, described: false });
+    expect(rank(lost)).toBeGreaterThan(0);
+    holdStills(lost, [Buffer.from("jpg")]);
+    expect(rank(lost)).toBe(0);
+    const told = addVersion({ sourceKey: "mac:told", macPath: "/Users/tiny/told.mov", macDevice: mac.device.id, described: true });
+    expect(rank(told)).toBe(0);
+    await revokeDevice(mac.device.id);
+  });
+
   it("5. residue: a row stored as { v: 1, library: true } with no at is not a taker, computerTakesLibrary does not leave its server-held jobs, startsForLibrary is true, and its claim makes it a taker", async () => {
     const mac = pairDevice("tiny", "Mac Studio", "0.17.6", "hw-mac-5");
     await report(mac.token, MAC_MACHINE);

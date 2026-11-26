@@ -499,12 +499,13 @@ export function classifyJob(ctx: Ctx, job: JobRow, seenInPass = new Map<number, 
     }
   }
 
-  // A describe waits for its clip's transcript, as the claim does (library-package.ts waitsForWords): it takes that job's class.
+  // A describe waits for its clip's transcript, as the claim does (library-package.ts waitsForWords): it takes that job's
+  // class. A transcript this server's lane runs (on a computer's speech model, or here) is on its way: queued
   if (!isLook && r && job.kind === "describe") {
     const t = ctx.jobOf(r.id, "transcribe");
     if (t) {
       since.delete(job.id);
-      const out: WaitClass = t.state === "running" ? { wait: "queued", actor: job.actor } : { ...classifyJob(ctx, t, seenInPass), actor: job.actor };
+      const out: WaitClass = t.state === "running" || !leftHere(t) ? { wait: "queued", actor: job.actor } : { ...classifyJob(ctx, t, seenInPass), actor: job.actor };
       seenInPass.set(job.id, out);
       return out;
     }

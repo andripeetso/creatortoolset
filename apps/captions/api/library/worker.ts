@@ -638,7 +638,7 @@ export async function afterProbe(
 }
 
 /** Whether the AI described the version before. */
-const described = (versionId: string) => !!libraryDb().prepare("SELECT 1 FROM descriptions WHERE version_id = ? AND source = 'ai'").get(versionId);
+export const described = (versionId: string) => !!libraryDb().prepare("SELECT 1 FROM descriptions WHERE version_id = ? AND source = 'ai'").get(versionId);
 
 async function run(job: JobRow): Promise<void> {
   const db = libraryDb();

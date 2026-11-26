@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import { mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -169,6 +170,12 @@ export function holdStills(versionId: string, stills: Buffer[], now = Date.now()
     total -= h.bytes;
   }
 }
+
+/** Whether this server holds stills for `versionId` (held in memory, or in framesDir), with no disk read past one stat. */
+export const hasMacFrames = (versionId: string, now = Date.now()): boolean => {
+  const h = heldStills.get(versionId);
+  return (!!h && now - h.at <= HELD_STILLS_MS) || existsSync(framesDir(versionId));
+};
 
 /** The stills kept for `versionId`, in order; [] when there are none. */
 export async function macFrames(versionId: string): Promise<string[]> {

@@ -256,13 +256,23 @@ describe("library work on the computer that has the file", () => {
     expect(await tick(Date.now(), ["thumb"])).toBe(true);
     // no computer has it and there is no proxy to read: the computer downloads the original for each (once nothing could)
     expect(await tick(Date.now(), ["sprite", "fingerprint", "wave"])).toBe(false);
+    // a description's stills too: a Finals file is one the server holds with no proxy (no transcript to wait for)
+    d.prepare("DELETE FROM jobs WHERE version_id = ? AND kind = 'transcribe'").run(versionId);
+    enqueueJob(d, "lib_phone", versionId, "describe", "tiny", true);
+    expect(await tick(Date.now(), ["describe"])).toBe(false);
     const done: string[] = [];
-    for (let lib = (await claim()).lib; lib; lib = (await claim()).lib) {
+    const now = () => claimAs(mac.token, { machine: MAC, libraryKinds: LIBRARY_HERE });
+    for (let lib = (await now()).lib; lib; lib = (await now()).lib) {
       expect(lib.original).toEqual({ bytes: size });
-      expect(await runLibraryJob(lib, o())).toBe("done");
+      // the server describes from the stills (no AI here): the computer's part is done once they are sent
+      await runLibraryJob(lib, o());
       done.push(lib.job.kind);
     }
-    expect(done.sort()).toEqual(["fingerprint", "sprite", "wave"]);
+    expect(done.sort()).toEqual(["describe", "fingerprint", "sprite", "wave"]);
+    // the stills reached the server, which asks the AI (none in this test: parked for one)
+    expect(d.prepare("SELECT state FROM jobs WHERE version_id = ? AND kind = 'describe'").get(versionId)).toEqual({ state: "needs_key" });
+    d.prepare("DELETE FROM jobs WHERE version_id = ? AND kind = 'describe'").run(versionId);
+    expect((await claim()).lib).toBeUndefined(); // the Mac claims as the other tests' older app again
     expect(gets.every((g) => g === "original")).toBe(true);
     expect(readdirSync(path.join(dir, "library-work"))).toEqual([]); // each downloaded original went with its job's folder
   }, 60_000);
