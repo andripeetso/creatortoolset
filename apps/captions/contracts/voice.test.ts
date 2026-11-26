@@ -17,7 +17,7 @@ it("the Mac app runs exactly the catalog's `coreml` models, under the same ids",
   const swift = readFileSync(path.join(import.meta.dirname, "../../mac/Sources/CreatorToolsetMac/Dictation/Whisper.swift"), "utf-8");
   const block = /static let shared: \[TranscriptionModel\] = \[([\s\S]*?)\n {4}\]/.exec(swift)![1]!;
   const mac = Object.fromEntries(block.split("TranscriptionModel(").slice(1).map((e) => [
-    /id: "([^"]+)"/.exec(e)![1], /(?:whisperKitID|parakeet): "([^"]+)"/.exec(e)![1],
+    /id: "([^"]+)"/.exec(e)![1], /(?:whisperKitID|parakeet): (?:onThisChip\()?"([^"]+)"/.exec(e)![1],
   ]));
   const catalog = Object.fromEntries(STT_MODELS.filter((m) => m.coreml).map((m) => [m.id, m.coreml]));
   expect(Object.keys(mac).length).toBeGreaterThan(0);

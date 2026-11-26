@@ -118,8 +118,8 @@ final class DictationPrefsTests: XCTestCase {
         // WhisperKit's own table for an M1 and for an M2, M3 or M4
         let m1 = ModelUtilities.modelSupport(for: "MacBookAir10,1").supported
         let m2 = ModelUtilities.modelSupport(for: "Mac14,2").supported
-        XCTAssertEqual(ModelRegistry.turbo(supported: m1).variant, "openai_whisper-large-v3-v20240930_626MB")
-        XCTAssertEqual(ModelRegistry.turbo(supported: m2).variant, "openai_whisper-large-v3-v20240930_turbo")
+        XCTAssertEqual(ModelRegistry.onThisChip("openai_whisper-large-v3-v20240930_turbo", supported: m1), "openai_whisper-large-v3-v20240930_626MB")
+        XCTAssertEqual(ModelRegistry.onThisChip("openai_whisper-large-v3-v20240930_turbo", supported: m2), "openai_whisper-large-v3-v20240930_turbo")
     }
 
     func testParakeetIsTheDefaultForEnglishAloneAndTurboOtherwise() {
