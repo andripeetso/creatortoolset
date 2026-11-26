@@ -6,7 +6,7 @@ import { ZipFile } from "yazl";
 import type { AuthVars } from "../auth";
 import { notifyLibraryChanges } from "../lib/events";
 import { libraryRole, mayWrite } from "./access";
-import { blobs, libraryDb } from "./db";
+import { blobs, libraryDb, librarySetting } from "./db";
 import { enqueueJob } from "./jobs";
 import { downloadName, readerOf } from "./routes";
 import { mayServe } from "./upload-gate";
@@ -93,15 +93,17 @@ bulkApp.post("/:id/jobs", async (c) => {
   const asked = Array.isArray(b?.assetIds) ? b.assetIds.filter((x): x is string => typeof x === "string").slice(0, MAX_IDS) : null;
   const rows = (
     asked
-      ? asked.map((id) => db().prepare("SELECT id, kind, current_version_id AS v FROM assets WHERE id = ? AND library_id = ? AND trashed_at IS NULL AND left_hidden_at IS NULL").get(id, libraryId))
-      : db().prepare("SELECT id, kind, current_version_id AS v FROM assets WHERE library_id = ? AND trashed_at IS NULL AND left_hidden_at IS NULL").all(libraryId)
-  ).filter(Boolean) as { id: string; kind: string; v: string | null }[];
+      ? asked.map((id) => db().prepare("SELECT id, kind, roll, current_version_id AS v FROM assets WHERE id = ? AND library_id = ? AND trashed_at IS NULL AND left_hidden_at IS NULL").get(id, libraryId))
+      : db().prepare("SELECT id, kind, roll, current_version_id AS v FROM assets WHERE library_id = ? AND trashed_at IS NULL AND left_hidden_at IS NULL").all(libraryId)
+  ).filter(Boolean) as { id: string; kind: string; roll: string | null; v: string | null }[];
+  // the whole library with Transcripts for B-roll off leaves B-roll out; clips picked by hand get what was asked
+  const skipB = !asked && !librarySetting(libraryId, "transcribeBroll");
   // described again: what the person's own tags mean is learned first, so this pass already knows (learn.ts)
   if (b?.count !== true && kinds.includes("describe")) await learnAll(db(), libraryId, user.username).catch(() => 0);
   let clips = 0;
   for (const r of rows) {
     const v = r.v;
-    const these = kinds.filter((k) => (k === "look" ? !!v && !!lookable(db(), v) : k === "describe" ? r.kind === "video" : r.kind === "video" || r.kind === "audio"));
+    const these = kinds.filter((k) => (k === "look" ? !!v && !!lookable(db(), v) : k === "describe" ? r.kind === "video" : (r.kind === "video" || r.kind === "audio") && !(k === "transcribe" && skipB && r.roll === "b")));
     if (!v || !these.length || !(await mayWrite(user.username, libraryId, r.id, v))) continue;
     clips++;
     if (b?.count !== true) for (const k of these) enqueueJob(db(), libraryId, v, k, user.username, true);

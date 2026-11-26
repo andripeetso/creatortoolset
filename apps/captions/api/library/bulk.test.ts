@@ -132,6 +132,21 @@ describe("Redo on many clips", () => {
     expect(jobs("transcribe")).toEqual(["c1-v1", "memo-v1"]);
   });
 
+  it("Redo transcripts on the whole library leaves B-roll out while Transcripts for B-roll is off; picked clips get it", async () => {
+    const d = libraryDb();
+    const count = async (assetIds?: string[]) => ((await (await call("owner-z", "POST", "/api/library/lib_z/jobs", { kinds: ["transcribe"], count: true, assetIds })).json()) as { clips: number }).clips;
+    const all = await count();
+    d.prepare("UPDATE assets SET roll = 'b' WHERE id = 'c1'").run();
+    d.prepare("UPDATE libraries SET settings = json_set(settings, '$.transcribeBroll', json('false')) WHERE id = 'lib_z'").run();
+    try {
+      expect(await count()).toBe(all - 1);
+      expect(await count(["c1"])).toBe(1);
+    } finally {
+      d.prepare("UPDATE libraries SET settings = json_remove(settings, '$.transcribeBroll') WHERE id = 'lib_z'").run();
+      d.prepare("UPDATE assets SET roll = NULL WHERE id = 'c1'").run();
+    }
+  });
+
   it("skips what a policy refuses, and asks for a kind it knows", async () => {
     registerLibrarySlot("test-bulk", { policies: [{ sourceId: "library", canSee: (_v, a) => a.assetId !== "hid" }] });
     try {

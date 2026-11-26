@@ -214,6 +214,8 @@ export interface LibrarySettings {
   proxyQuality?: ProxyQuality;
   /** transcripts at import (Analysis effort Low and up); absent: on */
   transcribe?: boolean;
+  /** B-roll clips get transcripts too (Make for the missing skips them while off); absent: on */
+  transcribeBroll?: boolean;
   /** Analysis effort Max: talking takes get shot descriptions too (with lookLevel "detailed") */
   lookTalking?: boolean;
   /** when setup was finished (ISO); absent: not set up, so mediaReady is false and the Library opens setup */

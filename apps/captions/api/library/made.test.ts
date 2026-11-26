@@ -218,6 +218,7 @@ describe("what's made", () => {
     d.prepare("DELETE FROM jobs WHERE kind = 'describe' AND state = 'queued'").run();
     d.prepare("UPDATE assets SET trashed_at = 1 WHERE id = 'ast-blurmake'").run();
   });
+
   it("timelines: a press covers the files with none once; a watch that fails after it is missing again", async () => {
     const v = clip("ast-tl", { at: 5 });
     d.prepare("INSERT INTO stretches (version_id, seg, a, b, motion, text, created_at) VALUES (?, 0, 0, 4, 0.5, 'A jump.', 1)").run(v);
@@ -227,6 +228,23 @@ describe("what's made", () => {
     expect(await row("timeline")).toMatchObject({ missing: 0, queued: before.queued + before.missing });
     d.prepare("INSERT INTO timelines (version_id, events, error, at) VALUES (?, '[]', 'failed', ?)").run(v, Date.now());
     expect((await row("timeline")).missing).toBe(1);
+  });
+
+  it("transcripts for B-roll off: Make for the missing leaves B-roll out and says it skips it", async () => {
+    const v = clip("ast-broll-off");
+    const before = await row("transcribe");
+    d.prepare("UPDATE libraries SET settings = json_set(settings, '$.transcribeBroll', json('false')) WHERE id = 'lib_m'").run();
+    try {
+      const off = await row("transcribe");
+      expect(before.missing).toBeGreaterThan(0);
+      expect(off.missing).toBe(0); // every clip here is B-roll
+      expect(off.skipped?.why).toBe("no sound, music, or B-roll");
+      makeMissing("lib_m", "transcribe", "local");
+      expect(job(v, "transcribe")).toBeUndefined();
+    } finally {
+      d.prepare("UPDATE libraries SET settings = json_remove(settings, '$.transcribeBroll') WHERE id = 'lib_m'").run();
+      d.prepare("UPDATE assets SET trashed_at = 1 WHERE id = 'ast-broll-off'").run();
+    }
   });
 
   it("a video indexed on a Mac counts for transcripts (its probe has no sound codec)", async () => {

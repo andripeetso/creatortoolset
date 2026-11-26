@@ -1164,6 +1164,7 @@ export const settingsOf = (json: string): LibrarySettings => {
     pictures: s.pictures ?? SETTING_DEFAULTS.pictures,
     transcribe: s.transcribe ?? SETTING_DEFAULTS.transcribe,
     ...(typeof s.lookTalking === "boolean" ? { lookTalking: s.lookTalking } : {}),
+    ...(s.transcribeBroll === false ? { transcribeBroll: false } : {}),
     // without it the page took every library for one never set up, and setup's Done changed nothing on screen
     ...(typeof s.setupAt === "string" ? { setupAt: s.setupAt } : {}),
     ...(typeof s.defaultFolders === "boolean" ? { defaultFolders: s.defaultFolders } : {}),
@@ -1285,7 +1286,7 @@ async function patchLibrary(c: Context<{ Variables: AuthVars }>, libraryId: stri
   if (name) db().prepare("UPDATE libraries SET name = ? WHERE id = ?").run(name, libraryId);
   // one key at a time: other settings (watch folders) are written by other code
   const put = (key: string, value: unknown) => db().prepare(`UPDATE libraries SET settings = json_set(settings, '$.${key}', json(?)) WHERE id = ?`).run(JSON.stringify(value), libraryId);
-  for (const key of ["describe", "look", "timeline", "embed", "pictures", "transcribe", "lookTalking"] as const) {
+  for (const key of ["describe", "look", "timeline", "embed", "pictures", "transcribe", "transcribeBroll", "lookTalking"] as const) {
     const on = b?.settings?.[key];
     // switched on: the catch-ups fill files added from now on, never the ones already here (db.ts SINCE)
     if (on === true && key in SINCE && !settingOn(libraryId, key)) put(SINCE[key as keyof typeof SINCE], Date.now());

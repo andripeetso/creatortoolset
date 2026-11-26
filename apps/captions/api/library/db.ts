@@ -203,7 +203,7 @@ export const blobs: Omit<BlobStore, "kind" | "caps"> = {
  * search by picture where this server makes picture vectors (pictures.ts).
  */
 // proxy: off until its owner turns it on (setup asks; owner, 2026-11-25). A library from before that default stores true (schema.ts)
-export const SETTING_DEFAULTS = { describe: true, look: true, timeline: true, embed: true, proxy: false, pictures: true, transcribe: true } as const;
+export const SETTING_DEFAULTS = { describe: true, look: true, timeline: true, embed: true, proxy: false, pictures: true, transcribe: true, transcribeBroll: true } as const;
 /**
  * The settings key holding when each background catch-up's switch went on (ms): the catch-up fills only files added since,
  * so turning a switch on never fills the files already there (those take "Make for the missing", made.ts). Absent: every file.

@@ -185,10 +185,19 @@ export function Made({ library, save, onSettings, faceBlur, onBlur, onProxy }: {
               }
               control={
                 change && (
-                  <label className="flex items-center gap-2 text-xs text-muted-foreground">
-                    New files
-                    <Switch aria-label={`${k.label} for new files`} checked={on} onCheckedChange={change} />
-                  </label>
+                  <span className="flex flex-col items-end gap-2">
+                    <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                      New files
+                      <Switch aria-label={`${k.label} for new files`} checked={on} onCheckedChange={change} />
+                    </label>
+                    {/* off: Make for the missing leaves clips sorted as B-roll out (made.ts) */}
+                    {k.kind === "transcribe" && save && (
+                      <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                        B-roll
+                        <Switch aria-label="Transcripts for B-roll" checked={library.settings.transcribeBroll !== false} onCheckedChange={(v) => void save({ transcribeBroll: v }).then(load)} />
+                      </label>
+                    )}
+                  </span>
                 )
               }
             >

@@ -5,7 +5,7 @@ import { PICTURE_MODEL } from "../lib/device-picture";
 import { deviceOf, isOnline, listDevices } from "../lib/devices";
 import { libraryWorkspace, serverWorks } from "../work/server-work";
 import { jobVersions } from "./blur-mirror";
-import { BLUR_SQL, keepsOnlyOriginals, libraryDb, libraryUploadStored } from "./db";
+import { BLUR_SQL, keepsOnlyOriginals, libraryDb, librarySetting, libraryUploadStored } from "./db";
 import { FINISHED } from "./query";
 import { DESCRIBE_LABEL, whoFor } from "./describe";
 import { makeCost, makeMinutes } from "./estimate";
@@ -73,7 +73,8 @@ const SPEC: Record<MadeKind, { job?: string; of: string; have: string; can?: str
   // a video indexed on a Mac: its probe has no sound codec (on-mac.ts), and it gets a transcript all the same
   transcribe: {
     job: "transcribe",
-    of: `(a.kind = 'video' OR a.kind = 'audio') AND (json_extract(v.probe, '$.acodec') IS NOT NULL OR (a.kind = 'video' AND v.source_key LIKE 'mac:%')) AND NOT ${MUSIC}`,
+    of: `(a.kind = 'video' OR a.kind = 'audio') AND (json_extract(v.probe, '$.acodec') IS NOT NULL OR (a.kind = 'video' AND v.source_key LIKE 'mac:%')) AND NOT ${MUSIC}
+      AND NOT (a.roll = 'b' AND json_extract(l.settings, '$.transcribeBroll') IS 0)`,
     have: has("transcripts"),
   },
   describe: { job: "describe", of: `a.kind IN ('video', 'image') AND NOT ${MUSIC}`, have: has("descriptions") },
@@ -170,7 +171,7 @@ export async function libraryMade(libraryId: string, username: string): Promise<
       ...(await makeCost(libraryId, username, kind, n, seconds)),
       ...engineOf(libraryId, kind, username),
       ...(n ? { minutes: await makeMinutes(libraryId, username, kind, n, seconds) } : {}),
-      ...(skipped ? { skipped: { n: skipped, why: skip!.why } } : {}),
+      ...(skipped ? { skipped: { n: skipped, why: kind === "transcribe" && !librarySetting(libraryId, "transcribeBroll") ? "no sound, music, or B-roll" : skip!.why } } : {}),
       ...(n && (kind === "transcribe" || kind === "describe") ? { broll: brollOf(libraryId, kind, username) } : {}),
     });
   }
