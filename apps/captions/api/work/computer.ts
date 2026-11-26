@@ -2,6 +2,7 @@ import { createReadStream, existsSync, mkdirSync, readFileSync, readdirSync, rmS
 import { mkdir, writeFile } from "node:fs/promises";
 // the bundle's banner declares createRequire itself (package.json build), so not a named import
 import nodeModule from "node:module";
+import os from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { WORK_V, type ComputerProxy, type WorkClaim, type WorkOffline, type WorkOutcome, type WorkPackage, type WorkResult, type WorkTable } from "../../contracts/work";
@@ -145,10 +146,17 @@ const runsPictureModel = (): boolean => {
 
 /**
  * CT_WORKER_KINDS=library: a computer that takes only Media Library jobs (a headless Linux box beside the Mac): no editor
- * step, no pictures. It sweeps its scratch at start (one job at a time, so none is live) and asks for no job while its
+ * step, no pictures. It sweeps its scratch at start (before its first job, so none is live) and asks for no job while its
  * disk has less than CT_LIBRARY_SCRATCH_GB (20) free.
  */
 export const libraryOnly = () => process.env.CT_WORKER_KINDS === "library";
+
+/**
+ * How many library jobs this worker runs at once: a library-only worker one per 8 cores (a 4K HEVC decode keeps about 9
+ * busy; a 32-core box runs 4), else one. One under a shared turn (CT_TURN_DIR: a Mac's servers take turns, turn.ts).
+ */
+export const librarySlots = (cpus = os.cpus().length, only = libraryOnly(), turns = !!process.env.CT_TURN_DIR): number =>
+  only && !turns ? Math.max(1, Math.floor(cpus / 8)) : 1;
 
 /**
  * Claims and runs steps until idleMs pass with none, the server asks for a newer app, or this computer's token has been
@@ -157,14 +165,17 @@ export const libraryOnly = () => process.env.CT_WORKER_KINDS === "library";
  */
 export async function startComputerWorker(o: WorkerOptions): Promise<"idle" | "update" | "refused"> {
   const alive = process.env.CT_EXIT_WITH_PARENT === "1" ? setInterval(() => console.log("[work:alive]"), o.aliveMs ?? 30_000).unref() : undefined;
+  // the library jobs a library-only worker runs beside its claims (librarySlots): each ends before the worker does
+  const jobs = new Set<Promise<unknown>>();
   try {
-    return await claimLoop(o);
+    return await claimLoop(o, jobs);
   } finally {
+    await Promise.allSettled(jobs);
     clearInterval(alive);
   }
 }
 
-async function claimLoop(o: WorkerOptions): Promise<"idle" | "update" | "refused"> {
+async function claimLoop(o: WorkerOptions, jobs: Set<Promise<unknown>>): Promise<"idle" | "update" | "refused"> {
   const c = client(o);
   const only = libraryOnly();
   const timeout = () => AbortSignal.timeout(o.claimTimeoutMs ?? CLAIM_TIMEOUT_MS);
@@ -174,6 +185,9 @@ async function claimLoop(o: WorkerOptions): Promise<"idle" | "update" | "refused
   let idleSince = Date.now();
   let refusedSince: number | undefined;
   let refusedWait = 0;
+  const slots = librarySlots();
+  // each ffmpeg of the jobs running beside the claims needs a slot of its own (media/run.ts ffmpegSlot)
+  if (slots > 1) process.env.FFMPEG_CONCURRENCY ||= String(slots);
   while (Date.now() - idleSince < (o.idleMs ?? 10 * 60_000)) {
     let claim: WorkClaim;
     try {
@@ -253,6 +267,17 @@ async function claimLoop(o: WorkerOptions): Promise<"idle" | "update" | "refused
       // this computer's row (work.tooOld), so the next start is told to update without failing the job again
       await c.post(`work/lib/${claim.lib.job.id}/fail`, { error: "This computer needs a newer Creator Toolset", update: true }).catch(() => {});
       return "update";
+    } else if (claim.lib && slots > 1) {
+      const run: Promise<unknown> = runLibraryJob(claim.lib, o)
+        .catch((e) => console.warn("[work] library job:", e instanceof Error ? e.message : e))
+        .finally(() => {
+          jobs.delete(run);
+          idleSince = Date.now();
+        });
+      jobs.add(run);
+      idleSince = Date.now();
+      // claims go on while a slot is free; a full worker waits for one job to end
+      if (jobs.size >= slots) await Promise.race(jobs);
     } else if (claim.lib) {
       await runLibraryJob(claim.lib, o);
       idleSince = Date.now();

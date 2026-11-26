@@ -1,22 +1,16 @@
-import { constants } from "node:fs";
-import { access, mkdtemp, rm } from "node:fs/promises";
-import path from "node:path";
 import { ffmpegCommand } from "../ffmpeg-runtime";
-import { currentJobSignal, spawnKillable } from "./media/run";
-import { vpdqHashes } from "./vpdq";
+import { spawnKillable } from "./media/run";
 
 /**
  * The library's `fingerprint` job (tasks/media-library-plan.md, sections 5 and 10): a 64-bit perceptual hash (DCT
- * pHash of a 32×32 grey frame, 16 hex) for every second of the video, plus its vPDQ frame hashes
- * (vpdq.ts) when the PDQ tool is installed. Stored inline in `derivatives`, where the duplicate
- * check reads it. No AI, nothing leaves the server.
+ * pHash of a 32×32 grey frame, 16 hex) for every second of the video. Stored inline in `derivatives`, where the
+ * duplicate check reads it (similar.ts). No AI, nothing leaves the server. Rows made before 2026-11-25 also carry a vPDQ
+ * sample (`pdq`) that nothing reads; it took a second full decode of every video.
  */
 
 export interface Fingerprint {
   /** one pHash per second, from zero */
   phash: string[];
-  /** the vPDQ sample; absent when the PDQ tool is not installed */
-  pdq?: { interval: number; frames: { hash: string; quality: number }[] };
 }
 
 const N = 32;
@@ -81,19 +75,7 @@ export function phashPerSecond(src: string): Promise<string[]> {
   });
 }
 
-/** The fingerprint of one version's source. `scratch` holds the vPDQ frames for the moment they exist. */
-export async function fingerprint(src: string, duration: number, scratch: string): Promise<Fingerprint> {
-  const phashes = await phashPerSecond(src);
-  const hasher = path.resolve(process.env.FINGERPRINT_BIN_DIR || "runtime/fingerprints", "pdq-photo-hasher");
-  if (!(await access(hasher, constants.X_OK).then(() => true, () => false))) return { phash: phashes };
-  const dir = await mkdtemp(path.join(scratch, "fingerprint-"));
-  try {
-    // ponytail: 30 min to decode one video for vPDQ; past that (or any vPDQ error) the pHashes are stored alone
-    const pdq = await vpdqHashes(src, Math.max(duration, 1), dir, ffmpegCommand(), hasher, "vpdq", currentJobSignal(), 30 * 60_000);
-    return { phash: phashes, pdq };
-  } catch {
-    return { phash: phashes };
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
+/** The fingerprint of one version's source: one decode, nothing written to disk. */
+export async function fingerprint(src: string): Promise<Fingerprint> {
+  return { phash: await phashPerSecond(src) };
 }

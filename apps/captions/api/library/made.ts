@@ -209,7 +209,7 @@ export function engineOf(libraryId: string, kind: MadeKind, username: string): P
       case "proxy":
         return { engine: "FFmpeg", where: videoWhere(libraryId, username) };
       case "fingerprint":
-        return { engine: "FFmpeg and PDQ picture hashes", where: videoWhere(libraryId, username) };
+        return { engine: "FFmpeg picture hashes", where: videoWhere(libraryId, username) };
       case "blur":
         return { engine: "Face Blur", where: "the Mac that has each file" };
       case "transcribe": {

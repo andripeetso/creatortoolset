@@ -739,7 +739,7 @@ async function run(job: JobRow): Promise<void> {
   } else if (job.kind === "fingerprint") {
     // the lighter copy's frames hash as the original's do (within 6 bits of the 10 a match allows, fingerprint.test.ts)
     // and decode many times faster: 0.3 to 2 s a 4K clip, where its original took 1.4 to 91 s
-    const f = JSON.stringify(await fingerprint(await lighter(), p.duration, dir));
+    const f = JSON.stringify(await fingerprint(await lighter()));
     db.prepare("INSERT OR REPLACE INTO derivatives (version_id, kind, inline, bytes) VALUES (?, 'fingerprint', ?, ?)").run(v.id, f, Buffer.byteLength(f));
   } else if (job.kind === "embed") {
     await embedVersion(db, v.id, job.actor);

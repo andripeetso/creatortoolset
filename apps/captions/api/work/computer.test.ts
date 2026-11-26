@@ -9,7 +9,7 @@ import type { WorkPackage, WorkResult } from "../../contracts/work";
 const dir = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "work-computer-"));
 process.env.DATA_DIR = dir;
 
-const { classify, client, idleFor, reportLeftover, runJob, startComputerWorker, STOPPED_LINE } = await import("./computer");
+const { classify, client, idleFor, librarySlots, reportLeftover, runJob, startComputerWorker, STOPPED_LINE } = await import("./computer");
 const { claimLook } = await import("./look");
 const { takeTurn } = await import("./turn");
 const { STEPS } = await import("../editor/worker");
@@ -252,6 +252,13 @@ describe("the claim loop never spins, hangs or loops for good (G4)", () => {
     await startComputerWorker({ ...o, fetch, claimTimeoutMs: 50, retryMs: 10, idleMs: 300 });
     expect(at.length).toBeGreaterThanOrEqual(2);
     expect(at[1]! - at[0]!).toBeLessThan(200);
+  });
+
+  it("a library-only worker runs one library job per 8 cores; any other, or one under a shared turn, runs one", () => {
+    expect(librarySlots(32, true, false)).toBe(4);
+    expect(librarySlots(4, true, false)).toBe(1);
+    expect(librarySlots(32, false, false)).toBe(1);
+    expect(librarySlots(32, true, true)).toBe(1);
   });
 
   it("PRD 26: idleFor is a day for a service and 10 min under the Mac; only under the Mac it says it is alive", async () => {

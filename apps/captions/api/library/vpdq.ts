@@ -4,8 +4,8 @@ import path from "node:path";
 
 /**
  * The PDQ tool (runtime/fingerprints/pdq-photo-hasher, scripts/install-fingerprint-runtime.sh) and a video's vPDQ frame
- * hashes made with it. The Media Library's fingerprint job reads them (library/fingerprint.ts); a plug-in that measures
- * videos can use the same three functions.
+ * hashes made with it, for a plug-in that measures videos. The Media Library's duplicate check uses pHashes alone
+ * (library/fingerprint.ts).
  */
 
 /** Runs one measuring program and returns what it printed. A timeout or an abort kills its whole process group, so a decoder it started goes too. */

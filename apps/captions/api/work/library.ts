@@ -51,14 +51,14 @@ const LINE: Record<string, string> = {
   transcribe: "Transcribing",
 };
 
-/** The running library job, for Cancel (the menu) and a stop of this worker. */
-let current: AbortController | null = null;
-let running: Promise<unknown> | null = null;
-export const cancelLibraryJob = (): void => current?.abort(new Error("Stopped"));
-/** Stops the running library job and waits for it to end (its processes killed, its fail sent), at most `ms`. */
+/** The running library jobs (a library-only worker runs several, computer.ts librarySlots), for Cancel and a stop of this worker. */
+const current = new Set<AbortController>();
+const running = new Set<Promise<unknown>>();
+export const cancelLibraryJob = (): void => current.forEach((c) => c.abort(new Error("Stopped")));
+/** Stops the running library jobs and waits for them to end (their processes killed, their fails sent), at most `ms`. */
 export async function stopLibraryJob(ms: number): Promise<void> {
   cancelLibraryJob();
-  if (running) await Promise.race([running.catch(() => {}), new Promise((r) => setTimeout(r, ms).unref())]);
+  if (running.size) await Promise.race([Promise.allSettled(running), new Promise((r) => setTimeout(r, ms).unref())]);
 }
 
 /** How long the server may answer nothing before this computer gives a job up: the lease (library-package.ts) less a minute. */
@@ -86,7 +86,7 @@ async function derive(lib: LibraryPackage, src: string, dir: string, hear?: (sou
       // from the lighter copy, as the server's steps read it (library/worker.ts lighter)
       const light = files.proxy ?? src;
       await makeSprite(light, (files.sprite = out("sprite.jpg")), p.duration, p.turn);
-      print = JSON.stringify(await fingerprint(light, p.duration, dir));
+      print = JSON.stringify(await fingerprint(light));
     }
     // the original goes only to a library that keeps originals: in a proxies-only library it never leaves this computer
     if (hostsOriginals(lib.upload)) files.original = src;
@@ -108,7 +108,7 @@ async function derive(lib: LibraryPackage, src: string, dir: string, hear?: (sou
   if (kind === "proxy") return { files: (await makeProxy(src, out("proxy.mp4"), !!p.cover || !p.vcodec, lib.proxy?.quality, p.duration)) ? { proxy: out("proxy.mp4") } : {} };
   if (kind === "wave") return { files: { wave: (await makeWave(src, out("wave.json"), !!p.acodec), out("wave.json")) } };
   if (kind === "sprite") return { files: { sprite: (await makeSprite(src, out("sprite.jpg"), p.duration, p.turn), out("sprite.jpg")) } };
-  if (kind === "fingerprint") return { files: {}, fingerprint: JSON.stringify(await fingerprint(src, p.duration, dir)) };
+  if (kind === "fingerprint") return { files: {}, fingerprint: JSON.stringify(await fingerprint(src)) };
   if (kind === "transcribe" && hear) {
     // the server's own cut, from this computer's copy: the same sound, so the same words
     const wav = lib.audio !== "m4a";
@@ -178,10 +178,8 @@ export async function mayReadHere(src: string, own: string[], only = process.env
  */
 export function runLibraryJob(lib: LibraryPackage, o: WorkerOptions): Promise<"done" | "failed" | "stopped"> {
   const run = runLibrary(lib, o);
-  running = run;
-  return run.finally(() => {
-    if (running === run) running = null;
-  });
+  running.add(run);
+  return run.finally(() => running.delete(run));
 }
 
 async function runLibrary(lib: LibraryPackage, o: WorkerOptions): Promise<"done" | "failed" | "stopped"> {
@@ -190,7 +188,7 @@ async function runLibrary(lib: LibraryPackage, o: WorkerOptions): Promise<"done"
   const c = client(claim ? { ...o, fetch: (u, i = {}) => f(u, { ...i, headers: { ...(i.headers as Record<string, string>), "x-ct-claim": claim } }) } : o);
   const base = `work/lib/${lib.job.id}`;
   const ctl = new AbortController();
-  current = ctl;
+  current.add(ctl);
   // taken back (410), or the server away past GIVE_UP_MS: the job is no longer this computer's, nothing more is sent
   let taken = false;
   const drop = (why: string) => {
@@ -338,7 +336,7 @@ async function runLibrary(lib: LibraryPackage, o: WorkerOptions): Promise<"done"
     release();
     clearTimeout(timer);
     ctl.abort();
-    if (current === ctl) current = null;
+    current.delete(ctl);
     // the job's folder, with an original downloaded for the proxy: never kept
     await rm(dir, { recursive: true, force: true });
   }
