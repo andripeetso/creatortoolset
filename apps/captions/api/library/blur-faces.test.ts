@@ -691,4 +691,24 @@ describe("Upload under Blur faces: Blurred is the blurred copies, Proxies the pr
     expect(stored("lib_mig")).toMatchObject({ upload: "originals", proxy: false });
     expect(stored("lib_mig_plain")).toMatchObject({ upload: "proxies", proxy: true });
   });
+
+  it("a file found to have no faces follows Upload from then on: its computer is asked to send it, once; while it waits for its blur, never", async () => {
+    const { followUpload } = await import("./derived");
+    lib("lib_follow", { upload: "all", blurFaces: true });
+    lib("lib_follow_off", { upload: "none", blurFaces: true });
+    const jobs = (v: string) => (d.prepare("SELECT kind FROM jobs WHERE version_id = ? AND kind IN ('send', 'proxy') ORDER BY kind").all(v) as { kind: string }[]).map((j) => j.kind);
+    const toy = await body(onMac("lib_follow", "Follow toy.mov"));
+    followUpload(toy.versionId);
+    expect(jobs(toy.versionId)).toEqual([]); // still to blur: nothing of it goes up
+    d.prepare("UPDATE assets SET blur = 'no', blur_note = 'none' WHERE id = ?").run(toy.assetId);
+    followUpload(toy.versionId);
+    followUpload(toy.versionId);
+    expect(jobs(toy.versionId)).toEqual(["send"]);
+    const sent = d.prepare("SELECT from_path, mac_path FROM asset_versions WHERE id = ?").get(toy.versionId) as { from_path: string; mac_path: string };
+    expect(sent.from_path).toBe(sent.mac_path); // its computer sends the file from where it is
+    const off = await body(onMac("lib_follow_off", "Follow off.mov"));
+    d.prepare("UPDATE assets SET blur = 'no', blur_note = 'none' WHERE id = ?").run(off.assetId);
+    followUpload(off.versionId);
+    expect(jobs(off.versionId)).toEqual([]); // Upload off, no proxies made: nothing to ask for
+  });
 });

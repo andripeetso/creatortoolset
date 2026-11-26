@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { libraryChanged } from "./access";
-import { blobs, keepsOnlyOriginals, libraryDb, type ProxyAnswer } from "./db";
-import { hostsOriginals, hostsProxies, type Blur } from "../../contracts/library";
+import { blobs, fileBlur, fileProxy, keepsOnlyOriginals, libraryDb, makesProxyOf, versionUpload, type ProxyAnswer } from "./db";
+import { hostsNone, hostsOriginals, hostsProxies, type Blur } from "../../contracts/library";
+import { wantsProxy } from "./media/proxy";
 import { uploadFor } from "./upload-gate";
 import { enqueueJob } from "./jobs";
 import { countryOf, type ProbeSummary } from "./media/probe";
@@ -84,6 +85,34 @@ export async function recordDerived(versionId: string, x: Derived, actor: string
   if (p) markReady(db, v.id, p);
   await dropOriginal(v.id).catch((e: unknown) => console.error("[library] dropping an original:", e));
   libraryChanged(v.library_id);
+}
+
+/**
+ * A file on a computer whose blur answer became no after it came in (Face Blur found no face in it, or a person kept it as
+ * filmed): from here it follows Upload and Generate proxies as a file added now does (docs/media-library-proxies-prd.md
+ * D3). Its computer sends what Upload asks for (job "send", which makes the proxy Upload sends too); where the server
+ * keeps no proxy of it and one is wanted, that computer makes it and keeps it (on-mac.ts). When it came in it waited for
+ * its blur, so neither was asked for then. A file that has either job already keeps it: nothing is asked for twice.
+ */
+export function followUpload(versionId: string): void {
+  const d = libraryDb();
+  const v = d
+    .prepare(
+      `SELECT a.library_id AS lib, a.kind, v.probe, v.created_by AS by FROM asset_versions v JOIN assets a ON a.id = v.asset_id
+       WHERE v.id = ? AND v.source_key LIKE 'mac:%' AND v.mac_path IS NOT NULL AND v.blurred_of IS NULL AND a.trashed_at IS NULL`,
+    )
+    .get(versionId) as { lib: string; kind: string; probe: string | null; by: string | null } | undefined;
+  if (!v || fileBlur(versionId)?.blur !== "no") return;
+  const has = (kind: string) => !!d.prepare("SELECT 1 FROM jobs WHERE version_id = ? AND kind = ?").get(versionId, kind);
+  const upload = versionUpload(versionId);
+  if (!hostsNone(upload) && !has("send")) {
+    d.prepare("UPDATE asset_versions SET from_path = mac_path, from_device = mac_device WHERE id = ?").run(versionId);
+    enqueueJob(d, v.lib, versionId, "send", v.by);
+  }
+  const asked = fileProxy(versionId);
+  const on = asked === "yes" || makesProxyOf(v.lib, versionId);
+  if (v.kind === "video" && v.probe && !hostsProxies(upload) && asked !== "no" && !has("proxy") && wantsProxy(JSON.parse(v.probe) as ProbeSummary, { cloud: false, on }))
+    enqueueJob(d, v.lib, versionId, "proxy", v.by);
 }
 
 /**

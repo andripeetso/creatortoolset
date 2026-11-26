@@ -46,7 +46,7 @@ import { fileRoll, rollFolder } from "./roll";
 // watch.ts imports from this file too: its functions are only called inside handlers, never while the files load
 import { IMPORT_WAIT_MS, takeFile, watchAllowed } from "./watch";
 import { dropMacFrames, indexOnMac, noPicture, parseOnMac, putSprite, putThumb, strayStrips } from "./on-mac";
-import { type Made, parseMade, recordMade, sendLater, sendsFromComputer, UPLOAD_TAKES } from "./derived";
+import { followUpload, type Made, parseMade, recordMade, sendLater, sendsFromComputer, UPLOAD_TAKES } from "./derived";
 import { deviceForToken, deviceOf, isOnline, listDevices } from "../lib/devices";
 import { actionDone, goOnFor } from "../lib/action-done";
 import { addFolder } from "../devices-storage";
@@ -1764,8 +1764,12 @@ libraryApp.put("/:id/assets/:assetId/blur", async (c) => {
   // every version of it that is not a blurred render: what the server cut from each goes (an older one too)
   if (blur === "yes") for (const v of db().prepare("SELECT id FROM asset_versions WHERE asset_id = ? AND blurred_of IS NULL").all(assetId) as { id: string }[]) await dropUnblurred(v.id);
   if (blur === "yes") emitEvent("library.version.blur", { libraryId, versionId: a.current_version_id, owner: a.created_by });
-  // kept as filmed: a file the server held for its blur is settled now (held.ts), once its master is on the main computer
-  else await settleHeldOf(assetId);
+  // kept as filmed: a file the server held for its blur is settled now (held.ts), once its master is on the main computer;
+  // and the file follows Upload from here, as one added now (derived.ts)
+  else {
+    await settleHeldOf(assetId);
+    followUpload(a.current_version_id);
+  }
   return c.json({ blur });
 });
 

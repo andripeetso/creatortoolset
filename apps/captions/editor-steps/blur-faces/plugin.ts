@@ -18,6 +18,7 @@ import { projectOf } from "../../api/lib/project-of";
 import { currentWorkspaceId } from "../../api/lib/workspace-scope";
 import type { SessionUser } from "../../api/users";
 import { BLUR_SQL, fileBlur, libraryDb } from "../../api/library/db";
+import { followUpload } from "../../api/library/derived";
 import { settleHeld } from "../../api/library/held";
 import { importTarget } from "../../contracts/storage";
 import { writeJsonAtomic } from "../../api/library/media/run";
@@ -384,6 +385,8 @@ const offered = (j: AutoJob, device: string, now: number) => j.state === "queued
 async function keepAsFilmed(versionId: string): Promise<void> {
   libraryDb().prepare("UPDATE assets SET blur = 'no', blur_note = 'none' WHERE id = (SELECT asset_id FROM asset_versions WHERE id = ?)").run(versionId);
   await settleHeld(versionId);
+  // nothing of it was sent while it waited for its blur: from here it follows Upload, as a file added now
+  followUpload(versionId);
   emitEvent("library.changed", {});
 }
 /** The original's full SHA-256 its Mac read: kept on the job, and on the version when it has none (the copy links on it). */
