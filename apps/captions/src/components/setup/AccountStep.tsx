@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Check, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Status } from "@/components/settings/ui";
-import { PROVIDER_NAME, ProviderMark, type Provider } from "@/components/ProviderMark";
+import { PROVIDER_NAME, ProviderMark, SIGN_IN_BUTTON, type Provider } from "@/components/ProviderMark";
 import { cn } from "@/lib/utils";
 
 /**
@@ -30,11 +30,12 @@ export type AccountState =
   | { state: "error"; message?: string };
 
 export type { Provider };
-const PROVIDERS: Provider[] = ["apple", "google", "github"];
-/** The providers a reply names, in the order it names them (the Mac app decides which comes first); unknown names and repeats are dropped. */
-export const parseProviders = (list: string) => [...new Set(list.split(","))].filter((p): p is Provider => (PROVIDERS as string[]).includes(p));
+/** Every sign-in list's order: Google, Apple, GitHub (Settings → Account and the server's sign-in page too). */
+const PROVIDERS: Provider[] = ["google", "apple", "github"];
+/** The providers a reply names, in PROVIDERS order (an older Mac app names Apple first); unknown names are dropped. */
+export const parseProviders = (list: string) => PROVIDERS.filter((p) => list.split(",").includes(p));
 
-/** The sign-ins linked to a signed-in account, with the email each has there, in the order the Mac app names them. */
+/** The sign-ins linked to a signed-in account, with the email each has there. */
 export function linkedOf(a: AccountState): { provider: Provider; email: string }[] {
   if (a.state !== "signedIn" || !a.logins) return [];
   const all = a as unknown as Record<string, string | undefined>;
@@ -163,12 +164,6 @@ export function AccountStep({ onDone }: { onDone?: () => void }) {
 /** Whether setup has an account screen: the Mac app names a sign-in and the person is not signed in yet. */
 export const offersAccount = (a: Pick<MacAccount, "account" | "providers">) =>
   a.providers.length > 0 && a.account.state !== "signedIn" && a.account.state !== "off" && a.account.state !== "checking";
-
-/** The sign-in card's one button per provider: the app's own plain button, with the provider's mark. */
-/** One sign-in's button: the provider's mark and Continue with …, the same on setup's card and in Settings → Account. */
-export const SIGN_IN_BUTTON =
-  "flex h-10 w-full items-center justify-center gap-2.5 rounded-lg border border-border bg-background text-sm font-medium text-foreground transition-colors hover:bg-accent " +
-  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--tint)] focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-default";
 
 /**
  * Setup's last screen, which anyone can skip: a sign-in card in the middle of the window. Its title and one line at the

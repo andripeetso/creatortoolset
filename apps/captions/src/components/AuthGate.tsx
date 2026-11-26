@@ -9,6 +9,8 @@ import { JoinPage } from "@/pages/JoinPage";
 import { joinToken } from "@/lib/workspaces";
 import { siteFrameFor } from "@/lib/plugin";
 import { CodeStep } from "@/components/SignInCode";
+import { PROVIDER_NAME, ProviderMark, SIGN_IN_BUTTON } from "@/components/ProviderMark";
+import { postToApp } from "@/lib/mac-record";
 import { webPlugins } from "@/plugins.gen";
 
 const PUBLIC_UUID =
@@ -48,7 +50,6 @@ export function isPublicReviewPath(pathname: string): boolean {
 
 export type SignInProvider = "apple" | "google" | "github";
 export type SignInProviders = Record<SignInProvider, boolean> & { /** false: this server takes no passwords */ password?: boolean };
-const PROVIDER_NAME: Record<SignInProvider, string> = { apple: "Apple", google: "Google", github: "GitHub" };
 
 /**
  * An AI app connecting by sign-in (api/oauth.ts) sends the person here first, with its Allow page as ?next=: the
@@ -75,7 +76,7 @@ function backHere(): string {
   return window.location.pathname + (s ? `?${s}` : "");
 }
 
-/** One "Sign in with …" button per provider this server has keys for (api/sign-in.ts, GET /api/account/providers). */
+/** One "Continue with …" button per provider this server offers (api/sign-in.ts, GET /api/account/providers), as on setup's sign-in card. */
 export function ProviderButtons({ providers }: { providers: SignInProviders }) {
   return (
     <>
@@ -85,9 +86,10 @@ export function ProviderButtons({ providers }: { providers: SignInProviders }) {
           <a
             key={p}
             href={`/api/account/login/${p}?for=site&next=${encodeURIComponent(backHere())}`}
-            className="flex items-center justify-center rounded-lg border border-zinc-700 bg-zinc-900 py-2 text-sm font-medium text-zinc-100 hover:border-violet-500"
+            className={SIGN_IN_BUTTON}
           >
-            Sign in with {PROVIDER_NAME[p]}
+            <ProviderMark provider={p} className="size-4 shrink-0" />
+            <span>Continue with {PROVIDER_NAME[p]}</span>
           </a>
         ))}
     </>
@@ -257,29 +259,30 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   if (step) return <CodeStep step={step.token} setup={step.setup} onDone={signedIn} onExpired={expired} />;
 
   return (
-    <div className="flex h-screen flex-col items-center justify-center bg-zinc-950 text-zinc-200">
-      <div className="mb-6 flex items-center gap-3">
-        <ToolsetLogo className="h-11 w-11" />
+    <div className="flex h-screen flex-col items-center justify-center bg-background px-4 text-foreground">
+      <section aria-label="Sign in" className="w-full max-w-[400px] space-y-6 rounded-2xl border border-border bg-card p-8 shadow-lg shadow-black/10">
+      <div className="flex items-center gap-3">
+        <ToolsetLogo className="h-10 w-10" />
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">Creator Toolset</h1>
-          <p className="text-sm text-zinc-500">{connectingApp() ? `Sign in to connect ${connectingApp()}` : "Sign in"}</p>
+          <h1 className="text-xl font-semibold tracking-tight">{connectingApp() ? `Sign in to connect ${connectingApp()}` : "Sign in to Creator Toolset"}</h1>
+          <p className="text-sm text-muted-foreground">{window.location.host}</p>
         </div>
       </div>
-      {error && <p className="w-72 text-xs text-red-400">{error}</p>}
+      {error && <p className="text-xs text-destructive">{error}</p>}
       {providers && (
-        <div className="flex w-72 flex-col gap-2">
+        <div className="flex flex-col gap-2">
           <ProviderButtons providers={providers} />
           {anyProvider && passwords && !usePassword && (
-            <button type="button" onClick={() => setUsePassword(true)} className="py-1 text-xs text-zinc-500 hover:text-zinc-300">
+            <button type="button" onClick={() => setUsePassword(true)} className="py-1 text-xs text-muted-foreground hover:text-foreground">
               Use a password instead
             </button>
           )}
         </div>
       )}
       {providers && passwords && (!anyProvider || usePassword) && (
-      <form onSubmit={submit} className="flex w-72 flex-col gap-2">
-        <div className="flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 focus-within:border-violet-500">
-          <UserRound className="h-4 w-4 shrink-0 text-zinc-500" />
+      <form onSubmit={submit} className="flex flex-col gap-2">
+        <div className="flex items-center gap-2 rounded-lg border border-border bg-background px-3 py-2 focus-within:border-[var(--tint)]">
+          <UserRound className="h-4 w-4 shrink-0 text-muted-foreground" />
           <input
             autoFocus
             autoCapitalize="none"
@@ -287,29 +290,39 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
             value={username}
             onChange={(e) => setUsername(e.target.value)}
             placeholder="Username"
-            className="w-full bg-transparent text-sm outline-none placeholder:text-zinc-600"
+            className="w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground"
           />
         </div>
-        <div className="flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 focus-within:border-violet-500">
-          <Lock className="h-4 w-4 shrink-0 text-zinc-500" />
+        <div className="flex items-center gap-2 rounded-lg border border-border bg-background px-3 py-2 focus-within:border-[var(--tint)]">
+          <Lock className="h-4 w-4 shrink-0 text-muted-foreground" />
           <input
             type="password"
             autoComplete="current-password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             placeholder="Password"
-            className="w-full bg-transparent text-sm outline-none placeholder:text-zinc-600"
+            className="w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground"
           />
         </div>
         <button
           type="submit"
           disabled={busy || !username || !password}
-          className="rounded-lg bg-violet-600 py-2 text-sm font-medium text-white hover:bg-violet-500 disabled:opacity-50"
+          className="h-10 rounded-lg bg-primary text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
         >
           {busy ? "Checking…" : "Sign in"}
         </button>
       </form>
       )}
+      </section>
+      {/* in the Mac app, on another server: back to the one on this Mac, which needs no sign-in (Shell.swift select) */}
+      {inMacApp() && team && (
+        <button type="button" onClick={() => postToApp("thismac-select:this-mac")} className="mt-4 text-xs text-muted-foreground hover:text-foreground">
+          Open This Mac
+        </button>
+      )}
     </div>
   );
 }
+
+/** Inside the Mac app (it sets <html data-mac-this-mac>, as ThisMacSection's hasThisMac reads it). */
+const inMacApp = () => document.documentElement.dataset.macThisMac === "1";

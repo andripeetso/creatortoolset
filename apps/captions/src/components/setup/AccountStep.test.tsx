@@ -25,7 +25,7 @@ it("shows a button only for the providers the account server has keys for", () =
   expect(html).not.toContain("Continue with Google");
   expect(parseProviders("google,github,microsoft")).toEqual(["google", "github"]);
   expect(parseProviders("")).toEqual([]);
-  expect(parseProviders("google,apple,google")).toEqual(["google", "apple"]); // the order the Mac app names them in
+  expect(parseProviders("apple,google,google")).toEqual(["google", "apple"]); // Google first, whatever order an older Mac app names them in
 });
 
 it("shows no sign-in button when the reply names no providers (an older Mac app)", () => {
@@ -68,7 +68,7 @@ it("setup has an account screen only when the Mac app names a sign-in and nobody
 
 it("the account screen is a sign-in screen: one button for each sign-in offered, with its mark, and no promise of anything", () => {
   const html = setup({ state: "signedOut" });
-  expect(buttons(html)).toEqual(["Continue with Google", "Continue with Apple"]); // the order the Mac app named them in
+  expect(buttons(html)).toEqual(["Continue with Google", "Continue with Apple"]); // Google first
   expect(html.match(/<svg/g)).toHaveLength(2); // each carries its provider's mark
   expect(html).toContain("#4285F4"); // Google's, in its own colours
   expect(html).not.toMatch(/GitHub|phone|settings|sync/i);
@@ -107,8 +107,8 @@ it("the account screen after a press: signed in says who; a closed sheet says no
 it("reads the sign-ins linked to the account, with each one's email, and none when signed out", () => {
   const a = { state: "signedIn", provider: "google", logins: "github,apple,microsoft", "login.github": "sam@gh.test" } as AccountState;
   expect(linkedOf(a)).toEqual([
-    { provider: "github", email: "sam@gh.test" },
     { provider: "apple", email: "" },
+    { provider: "github", email: "sam@gh.test" },
   ]);
   expect(linkedOf({ state: "signedIn", logins: "" })).toEqual([]);
   expect(linkedOf({ state: "signedOut" })).toEqual([]);

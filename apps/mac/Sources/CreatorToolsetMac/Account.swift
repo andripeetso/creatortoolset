@@ -13,7 +13,7 @@ let defaultAccountServer = URL(string: "https://creatortoolset.com")!
 
 /// The sign-in providers the account server can offer, in the order the first run shows them. A provider the server has
 /// no keys for is not offered (its sign-in page answers 404 or 501), so its button is not shown.
-let accountProviders = ["apple", "google", "github"]
+let accountProviders = ["google", "apple", "github"]
 
 /// The sign-ins the default account server offers, in the order setup's last screen shows them. A fixed list, so a
 /// signed-out person's status asks that server nothing and the app makes no call there before a press. A provider is

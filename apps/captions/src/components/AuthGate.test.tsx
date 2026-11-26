@@ -2,13 +2,12 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it } from "vitest";
 import { ProviderButtons, connectingApp } from "./AuthGate";
 
-it("shows a Sign in with button only for each provider this server has keys for", () => {
-  const html = renderToStaticMarkup(<ProviderButtons providers={{ apple: false, google: true, github: true }} />);
+it("shows a Continue with button only for each provider this server has keys for, Google first", () => {
+  const html = renderToStaticMarkup(<ProviderButtons providers={{ apple: true, google: true, github: true }} />);
+  expect([...html.matchAll(/Continue with (\w+)/g)].map((m) => m[1])).toEqual(["Google", "Apple", "GitHub"]);
+  expect(renderToStaticMarkup(<ProviderButtons providers={{ apple: false, google: true, github: true }} />)).not.toContain("Apple");
   // it carries the page it stands in for, to come back to after the provider
   expect(html).toMatch(/href="\/api\/account\/login\/google\?for=site&amp;next=%2F[^"]*"/);
-  expect(html).toContain("Sign in with Google");
-  expect(html).toContain("Sign in with GitHub");
-  expect(html).not.toContain("Apple");
 });
 
 it("shows no button when no provider has keys", () => {

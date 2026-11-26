@@ -1,6 +1,11 @@
 /** A sign-in provider: Apple, Google or GitHub. */
 export type Provider = "apple" | "google" | "github";
-export const PROVIDER_NAME: Record<Provider, string> = { apple: "Apple", google: "Google", github: "GitHub" };
+export const PROVIDER_NAME: Record<Provider, string> = { google: "Google", apple: "Apple", github: "GitHub" };
+
+/** One sign-in's button: the provider's mark and Continue with …, the same on setup's card, Settings → Account and a server's sign-in page. */
+export const SIGN_IN_BUTTON =
+  "flex h-10 w-full items-center justify-center gap-2.5 rounded-lg border border-border bg-background text-sm font-medium text-foreground transition-colors hover:bg-accent " +
+  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--tint)] focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-default";
 
 /** Each provider's own mark, as its sign-in button carries it (Google's in its four colours, the others in the button's text colour). */
 export function ProviderMark({ provider, className }: { provider: Provider; className?: string }) {
