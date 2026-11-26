@@ -43,6 +43,16 @@ export function missingWhy(m: Pick<LibraryMade, "missing" | "broll" | "skipped">
 export const makeWhat = (m: Pick<LibraryMade, "missing" | "where">) =>
   `queues ${n(m.missing)} ${m.missing === 1 ? "job" : "jobs"}${m.where ? ` that run on ${m.where}` : ""}, and Cancel takes off the ones still waiting`;
 
+/**
+ * The Make confirm's one sentence: what runs it and where, what it costs, what pressing does. The place is said once:
+ * the engine names it, so the jobs don't again. A blur has no job to cancel: it says what waits.
+ */
+export function makeBody(m: LibraryMade): string {
+  const runs = engineLine(m);
+  const what = m.kind === "blur" ? "each file plays only on its own computer until its blurred copy is made" : makeWhat(runs ? { missing: m.missing } : m);
+  return `${[runs, costWords(m), what].filter(Boolean).join(", ")}.`.replace(/^./, (c) => c.toUpperCase());
+}
+
 type Tone = "done" | "waiting" | "failed" | "off";
 /**
  * A kind's state at a glance: failed (Retry), waiting (what for, or which computer makes it), off for new files with
@@ -133,10 +143,7 @@ export function Made({ library, save, onSettings, faceBlur, onBlur, onProxy }: {
     }
   };
   const make = async (m: LibraryMade, label: string) => {
-    // one sentence: what runs it, what it costs, what pressing does (a blur has no job to cancel: it says what waits)
-    const what = m.kind === "blur" ? "each file plays only on its own computer until its blurred copy is made" : makeWhat(m);
-    const body = `${[engineLine(m), costWords(m), what].filter(Boolean).join(", ")}.`.replace(/^./, (c) => c.toUpperCase());
-    if (!(await confirmDialog({ title: `Make ${label.toLowerCase()} for ${files(m.missing)}`, body, ok: `Make ${n(m.missing)}` }))) return;
+    if (!(await confirmDialog({ title: `Make ${label.toLowerCase()} for ${files(m.missing)}`, body: makeBody(m), ok: `Make ${n(m.missing)}` }))) return;
     await run(`make-${m.kind}`, `make ${label.toLowerCase()}`, () => makeMissing(library.id, m.kind));
   };
 

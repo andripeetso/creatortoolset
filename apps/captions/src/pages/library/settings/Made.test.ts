@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { LibraryMade, LibrarySummary } from "@contracts/library";
-import { costWords, engineLine, healthOf, makeWhat, missingWhy, stateOf } from "./Made";
+import { costWords, engineLine, healthOf, makeBody, makeWhat, missingWhy, stateOf } from "./Made";
 
 const m = (o: Partial<LibraryMade>): LibraryMade => ({ kind: "fingerprint", have: 0, missing: 0, queued: 0, cost: "free", ...o });
 
@@ -28,6 +28,13 @@ describe("What's made: a kind's state at a glance", () => {
     expect(missingWhy(m({ missing: 838, broll: 700, skipped: { n: 120, why: "no sound, or music" } }))).toBe("Mostly B-roll · 120 files skipped: no sound, or music");
     expect(missingWhy(m({ missing: 10, broll: 2 }))).toBe("");
     expect(makeWhat(m({ missing: 21, where: "Studio Mac" }))).toBe("queues 21 jobs that run on Studio Mac, and Cancel takes off the ones still waiting");
+  });
+
+  it("the Make confirm says the place once, and for a blur what waits", () => {
+    expect(makeBody(m({ kind: "proxy", missing: 4, engine: "FFmpeg", where: "Studio Mac" }))).toBe("FFmpeg on Studio Mac, free, queues 4 jobs, and Cancel takes off the ones still waiting.");
+    expect(makeBody(m({ kind: "blur", missing: 2, cost: "tokens", engine: "Face Blur", where: "the Mac that has each file" }))).toBe(
+      "Face Blur on the Mac that has each file, uses tokens, each file plays only on its own computer until its blurred copy is made.",
+    );
   });
 });
 

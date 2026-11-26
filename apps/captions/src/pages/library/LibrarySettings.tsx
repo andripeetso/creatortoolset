@@ -45,7 +45,13 @@ export const needsAttention = (watch: WatchStatus) => watch.missing > 0 || watch
 export function LibrarySettings({ open, onOpenChange, ...body }: BodyProps & { open: boolean; onOpenChange: (open: boolean) => void }) {
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="w-full overflow-y-scroll p-0 sm:max-w-lg">
+      {/* a notice's Undo (Generate proxies off) takes a click: the drawer lets it through (index.css) and stays open */}
+      <SheetContent
+        side="right"
+        data-library-settings=""
+        onInteractOutside={(e) => e.target instanceof Element && e.target.closest("[data-sonner-toaster]") && e.preventDefault()}
+        className="w-full overflow-y-scroll p-0 sm:max-w-lg"
+      >
         {/* its end scrolls clear of the assistant's button while that is in a bottom corner (it stands over the sheet) */}
         <div className="flex flex-col gap-6 p-4 pt-12 sm:p-6 sm:pt-12 [html:has(button[data-assistant-dock][data-corner^=b])_&]:pb-24">
           <SheetTitle className="text-base">Library settings</SheetTitle>
