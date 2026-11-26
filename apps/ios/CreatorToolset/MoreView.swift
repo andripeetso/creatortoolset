@@ -32,7 +32,7 @@ struct ToolsView: View {
             }
             Section("Settings") {
                 // always shown: Sign out and Delete account must be found however the phone connected (App Store 5.1.1(v))
-                row("Account", "person.crop.circle", value: account.profile?.title ?? servers.current?.name) { AccountSettings() }
+                row("Account", "person.crop.circle", value: account.profile?.title) { AccountSettings() }
                 row("Computers", "desktopcomputer", value: servers.current?.name) { ServersView() }
                 row("Notifications", "bell") { Form { NotificationsRow() }.navigationTitle("Notifications").navigationBarTitleDisplayMode(.inline) }
                 row("Uploads", "arrow.up.circle", value: wifiOnly ? "Wi-Fi only" : "Any network") { UploadSettings() }
@@ -136,6 +136,8 @@ private struct AccountSettings: View {
     /// The computer ends this phone's sign-in (best effort: an older server or no connection leaves it to Revoke there),
     /// then the phone forgets it.
     private func signOut(_ entry: ServerEntry) async {
+        // notifications stop first, while the sign-in can still ask (remove's own call then does nothing)
+        await StudioHooks.removing(API.connected(entry))
         _ = try? await API.connected(entry).send("/api/auth/clients/sign-out", json: [String: String]())
         connections.remove(entry.serverId)
         dismiss()
