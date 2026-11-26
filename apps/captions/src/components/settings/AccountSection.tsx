@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router";
 import { toast } from "sonner";
-import { logout, useAuth } from "@/lib/auth";
+import { logout, signsIn, useAuth } from "@/lib/auth";
 import { useCachedLoad } from "@/lib/local-cache";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -133,6 +133,9 @@ export function AccountSection() {
   if (!account || !providers) return <LoadingRow />;
 
   const linkable = PROVIDERS.filter((p) => providers[p]);
+  // a sign-in name, a password, its code and Sign out only for someone who has a password of their own: on This Mac the
+  // app made the account and its password, and the person was shown neither
+  const own = signsIn(required, me);
   const saved = (name: string) => {
     setAccount((a) => ({ ...a, name }));
     useAuth.getState().setAuth(required, { ...me, name: name || me.username });
@@ -142,10 +145,11 @@ export function AccountSection() {
     <>
       <Section title="Profile">
         <Card>
-          <NameRow name={account.name} username={account.username} onSaved={saved} />
-          {required && <SignInNameRow login={account.login} onSaved={(login) => setAccount((a) => ({ ...a, login }))} />}
-          {required && <PasswordRow />}
-          {required && <SignInCodeRow />}
+          {/* with no name typed: the one the app calls them by (their Creator Toolset account's on This Mac), never the account's made-up one */}
+          <NameRow name={account.name} username={me.name || account.username} onSaved={saved} />
+          {own && <SignInNameRow login={account.login} onSaved={(login) => setAccount((a) => ({ ...a, login }))} />}
+          {own && <PasswordRow />}
+          {own && <SignInCodeRow />}
         </Card>
       </Section>
 
@@ -160,7 +164,7 @@ export function AccountSection() {
         }}
       />
       {hasAccountBridge() && <MacAppAccount />}
-      {required && (
+      {own && (
         <Section title="Session">
           <Card>
             <Row id="sign-out" title="This server" control={<Button size="sm" variant="outline" onClick={() => void logout()}>Sign out</Button>} />

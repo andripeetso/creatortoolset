@@ -22,6 +22,11 @@ export interface Me {
   /** a member of someone else's team: never deletes the owner's footage or finals (the server refuses it) */
   member?: true;
   logins?: number | null; // real accounts only — used to spot a first login
+  /**
+   * The server on this Mac made this account's password and showed it to nobody (api/auth.ts passwordIsAppMade): the
+   * person has nothing to sign in with, so no password rows and no Sign out.
+   */
+  noPassword?: true;
   /** The picture from a linked Google or GitHub sign-in (its own URL); null: the initial is shown. */
   picture?: string | null;
 }
@@ -55,6 +60,8 @@ export type { ServerKind } from "@contracts/work";
 import type { ServerKind } from "@contracts/work";
 /** The server has accounts and a team (a Server or Creator Toolset Cloud). */
 export const hasTeam = (kind: ServerKind): boolean => kind !== "mac";
+/** Whether this person signs in and out here: the server asks for a sign-in, and they have one of their own to give. */
+export const signsIn = (required: boolean, me: Me | null): boolean => required && !me?.noPassword;
 
 interface AuthState {
   required: boolean;

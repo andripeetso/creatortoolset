@@ -333,6 +333,8 @@ final class LocalServer: ObservableObject {
         env["APP_SECRET"] = secret
         env["PLAYWRIGHT_BROWSERS_PATH"] = appSupport.appendingPathComponent("runtime/chromium").path
         env["CT_LOCAL"] = "1"
+        // what the server calls its owner until they type a name or their account gives one, never the account's "admin"
+        env["CT_OWNER_NAME"] = NSFullUserName()
         env["CT_APP_FOLDER"] = appSupport.path
         // the connect service, when this Mac has one set: the server starts "Add this Mac to the account" with it
         if let service = connectService { env["CT_CONNECT_URL"] = service.absoluteString }

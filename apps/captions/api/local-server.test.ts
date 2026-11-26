@@ -110,6 +110,37 @@ describe("a hosted server behind a CDN is not held to the own-computer password 
   });
 });
 
+describe("the owner of a server on this Mac made neither the account's name nor its password", () => {
+  const me = async (cookie: string) =>
+    ((await (await from("127.0.0.1", "/api/auth/check", { headers: { cookie } })).json()) as { user: { name: string; noPassword?: true } }).user;
+  const json = (cookie: string) => ({ "content-type": "application/json", cookie });
+
+  it("is called by the name their Creator Toolset account gave, then by the one they type; the app-made password is marked", async () => {
+    vi.stubEnv("CT_LOCAL", "1");
+    const cookie = cookieOf(await login("127.0.0.1", "local-sign-in-test-secret"));
+    // nobody chose this password: the pages show no password rows and no Sign out for it
+    expect(await me(cookie)).toMatchObject({ name: "admin", noPassword: true });
+    // the Mac app says whose Mac this is: that name before the account's made-up one
+    vi.stubEnv("CT_OWNER_NAME", "Sam Tiny");
+    expect((await me(cookie)).name).toBe("Sam Tiny");
+    // the Mac app's account signed in: its name is the owner's, with nothing typed
+    expect((await post("127.0.0.1", "/api/owner-profile", { name: "Tiny Sam", email: "sam@tinyacrobatics.com" }, cookie)).status).toBe(200);
+    expect((await me(cookie)).name).toBe("Tiny Sam");
+    // a name the person types wins, and taking it away gives the account's name back
+    await from("127.0.0.1", "/api/auth/account", { method: "PATCH", headers: json(cookie), body: JSON.stringify({ name: "Sam" }) });
+    expect((await me(cookie)).name).toBe("Sam");
+    await from("127.0.0.1", "/api/auth/account", { method: "PATCH", headers: json(cookie), body: JSON.stringify({ name: "" }) });
+    expect((await me(cookie)).name).toBe("Tiny Sam");
+  });
+
+  it("on a server that is not on a Mac the password is the person's own, and the app's account names nobody", async () => {
+    const cookie = cookieOf(await login("127.0.0.1", "local-sign-in-test-secret"));
+    const user = await me(cookie);
+    expect(user.name).toBe("admin");
+    expect(user.noPassword).toBeUndefined();
+  });
+});
+
 describe("a server on this Mac signs in from other devices only once a password is set", () => {
   it("refuses another address while the password is still APP_SECRET, and lets it in after one is chosen", async () => {
     vi.stubEnv("CT_LOCAL", "1");
@@ -138,6 +169,8 @@ describe("a server on this Mac signs in from other devices only once a password 
     const authed = async (c: string) => ((await (await from("127.0.0.1", "/api/auth/check", { headers: { cookie: c } })).json()) as { authed: boolean }).authed;
     expect(await authed(fresh)).toBe(true);
     expect(await authed(cookie)).toBe(false);
+    // a password the person chose is theirs: no longer marked as the app's
+    expect(((await (await from("127.0.0.1", "/api/auth/check", { headers: { cookie: fresh } })).json()) as { user: { noPassword?: true } }).user.noPassword).toBeUndefined();
 
     expect((await login(LAN, "tinyacrobatics1")).status).toBe(200);
     // with the password chosen, the code is made and another device signs in with it

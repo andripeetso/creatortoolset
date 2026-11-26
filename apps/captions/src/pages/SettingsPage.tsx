@@ -17,7 +17,7 @@ import { hasThisMac, useMacRecorder } from "@/components/settings/ThisMacSection
 import { useToolPages } from "@/components/settings/ToolsSection";
 import { TOOL_ICONS } from "@/components/setup/ToolNeeds";
 import { HOME_TILE_NAMES, isHomeTile } from "@contracts/tools";
-import { logout, hasTeam, useAuth, useMe } from "@/lib/auth";
+import { logout, hasTeam, signsIn, useAuth, useMe } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 import { lockPageScroll } from "@/lib/page-scroll-lock";
 
@@ -124,7 +124,7 @@ export default function SettingsPage({ onClose }: { onClose: () => void }) {
 
   const navList = withToolPages(navListFor(ctx), toolPages.map((t) => ({ id: t, title: HOME_TILE_NAMES[t], icon: t === "record" ? ScreenShare : TOOL_ICONS[t] })));
   const needle = query.trim();
-  const hits = needle ? searchSettings(needle, new Map(entries.map((s) => [s.id, s.title])), undefined, required, ctx.mac, macRecorder, ctx.team && ctx.admin) : [];
+  const hits = needle ? searchSettings(needle, new Map(entries.map((s) => [s.id, s.title])), undefined, signsIn(required, me), ctx.mac, macRecorder, ctx.team && ctx.admin) : [];
   const activeIdx = Math.min(active, Math.max(hits.length - 1, 0));
   const name = me?.name ?? me?.username ?? "";
   const initial = (name.trim()[0] ?? "?").toUpperCase();
@@ -315,14 +315,15 @@ export default function SettingsPage({ onClose }: { onClose: () => void }) {
                     <AccountAvatar picture={me?.picture} initial={initial} className="size-8 text-xs" />
                     <span className="min-w-0">
                       <span className="block truncate text-sm font-medium text-foreground">{name}</span>
-                      <span className="block truncate text-xs text-muted-foreground">{me?.username}</span>
+                      {/* the account's own name, for someone who signs in with it: never the one the Mac app made up */}
+                      {!me?.noPassword && <span className="block truncate text-xs text-muted-foreground">{me?.username}</span>}
                     </span>
                   </DropdownMenuLabel>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onSelect={() => navigate("/settings/account", { replace: true })} className="text-sm">
                     Manage account
                   </DropdownMenuItem>
-                  {required && (
+                  {signsIn(required, me) && (
                     <>
                       <DropdownMenuSeparator />
                       <DropdownMenuItem onSelect={() => void logout()} className="text-sm">

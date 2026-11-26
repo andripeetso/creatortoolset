@@ -13,7 +13,7 @@ import {
   Settings,
   UserRound,
 } from "lucide-react";
-import { logout, useAuth } from "@/lib/auth";
+import { logout, signsIn, useAuth } from "@/lib/auth";
 import { isPhoneHub, isPhonePath } from "@/lib/mobile";
 import { accountItemsFor } from "@/lib/plugin";
 import { AccountAvatar } from "@/components/settings/AccountSection";
@@ -132,7 +132,7 @@ export function UserMenu({ compact }: { /** The picture alone, where room is sho
             <LifeBuoy /> Report a problem
           </DropdownMenuItem>
 
-          {required && (
+          {signsIn(required, me) && (
             <>
               <DropdownMenuSeparator />
               <DropdownMenuItem

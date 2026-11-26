@@ -43,7 +43,7 @@
   "login, the app's secret from the LAN": {
     "status": 403,
     "body": {
-      "error": "This computer's password isn't set yet. In Creator Toolset on this computer, turn on Network access and choose it, then try again."
+      "error": "This computer's password isn't set yet. In Creator Toolset on this computer, open Settings → Computers and use Create link, then open that link here."
     },
     "cookie": null,
     "location": null,
@@ -60,6 +60,7 @@
         "cloud": true,
         "off": [],
         "read": [],
+        "noPassword": true,
         "logins": 1,
         "picture": null
       }
@@ -80,6 +81,7 @@
         "cloud": true,
         "off": [],
         "read": [],
+        "noPassword": true,
         "logins": 1,
         "picture": null
       },

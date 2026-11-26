@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Hono } from "hono";
@@ -26,6 +27,26 @@ export async function ownerProfile(): Promise<OwnerProfile | null> {
   }
 }
 
+// the profile as the file has it, by its path (a test swaps DATA_DIR); kept in step by the POST below
+let known: { file: string; name: string } | undefined;
+/**
+ * The owner's name as the Mac app's account gave it (Apple may give none: ""). On the server on a Mac it is what the app
+ * calls its owner until they type a name of their own (auth.ts sessionOf), so nobody is called by the account's
+ * made-up name. Read once from the file, so a sign-in from before this was used counts too.
+ */
+export function ownerName(): string {
+  if (known?.file !== FILE()) {
+    let name = "";
+    try {
+      name = String((JSON.parse(readFileSync(FILE(), "utf-8")) as Partial<OwnerProfile>).name ?? "");
+    } catch {
+      /* no profile yet */
+    }
+    known = { file: FILE(), name };
+  }
+  return known.name;
+}
+
 export const ownerProfileApp = new Hono<{ Variables: AuthVars }>()
   .use("*", async (c, next) => {
     if (c.get("user")?.role !== "admin") return c.json({ error: "Admins only" }, 403);
@@ -41,5 +62,6 @@ export const ownerProfileApp = new Hono<{ Variables: AuthVars }>()
     const profile: OwnerProfile = { name, email, at: Date.now() };
     await writeFile(`${FILE()}.tmp`, JSON.stringify(profile, null, 2), { mode: 0o600 });
     await rename(`${FILE()}.tmp`, FILE());
+    known = { file: FILE(), name };
     return c.json(profile);
   });

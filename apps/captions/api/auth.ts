@@ -5,6 +5,7 @@ import { createSocket } from "node:dgram";
 import { mkdirSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { env, keepsOverRestart, hasTeam, isCloud, serverKind } from "./lib/env";
+import { ownerName } from "./owner-profile";
 import { viewAsTarget } from "./lib/view-as";
 import { getConnInfo } from "@hono/node-server/conninfo";
 import type { Context } from "hono";
@@ -97,7 +98,9 @@ export function getSessionUser(
 
 export const sessionOf = (user: UserRecord): SessionUser => ({
   username: user.username,
-  name: user.displayName || user.username,
+  // on the server on a Mac the owner's account was made by the app ("admin"): their own name is the one they typed,
+  // else the one their Creator Toolset account gave (owner-profile.ts), else this Mac's own user's (the Mac app says it)
+  name: user.displayName || (user.role === "admin" && serverKind() === "mac" && (ownerName() || process.env.CT_OWNER_NAME?.trim().slice(0, 60))) || user.username,
   role: user.role,
   cloud: user.cloud,
   off: user.role === "admin" ? [] : user.off,
@@ -225,9 +228,23 @@ const toPublic = (u: SessionUser) => ({
   read: u.read ?? [],
 });
 
+const appMade = new Map<string, boolean>();
+/**
+ * On the server on a Mac: the account's password is still the one the Mac app made (APP_SECRET, shown to nobody). The
+ * person has no password to sign in with, change or protect with a code, and signing out would leave a sign-in page
+ * they can't pass. Kept per password hash: the check is a slow hash, and /api/auth/check asks on every page.
+ */
+export function passwordIsAppMade(user: UserRecord): boolean {
+  if (serverKind() !== "mac" || !env.appSecret) return false;
+  let made = appMade.get(user.hash);
+  if (made === undefined) appMade.set(user.hash, (made = verifyPassword(user, env.appSecret)));
+  return made;
+}
+
 /** Login count for real accounts — lets the client spot a first login. */
 const withLogins = (u: SessionUser) => ({
   ...toPublic(u),
+  ...(findUser(u.username) && passwordIsAppMade(findUser(u.username)!) ? { noPassword: true as const } : {}),
   logins: findUser(u.username)?.usage.logins ?? null,
   picture: findUser(u.username) ? pictureOf(findUser(u.username)!) : null,
   // a team member (an admin account too): the pages hide what deletes the owner's footage, which the server refuses them.
@@ -459,7 +476,7 @@ export const fromThisMac = (c: Context) =>
   !["forwarded", "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto", "x-real-ip", "via"].some((h) => c.req.header(h) !== undefined);
 const localOnly = (c: Context) => (serverKind() === "mac" && !isLoopback(c)) || (ownComputer() && viaTunnel(c));
 const remoteRefused = (c: Context, user: UserRecord) => localOnly(c) && !!env.appSecret && verifyPassword(user, env.appSecret);
-const NO_PASSWORD_YET = "This computer's password isn't set yet. In Creator Toolset on this computer, turn on Network access and choose it, then try again.";
+const NO_PASSWORD_YET = "This computer's password isn't set yet. In Creator Toolset on this computer, open Settings → Computers and use Create link, then open that link here.";
 
 /**
  * One-time sign-in links, for a phone (Setup → Add your phone, as a QR code) or another computer. POST mints one for
