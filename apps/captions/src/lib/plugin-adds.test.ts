@@ -15,7 +15,9 @@ const tiny = defineWebPlugin({
   tiles: [{ stage: "Tools", to: "/tiny", icon: Star, name: "Tiny", desc: "tile", gate: "tiny-gate" }],
   settings: [
     { id: "tiny-admin", title: "Tiny admin", icon: Star, adminTab: true, body: null },
-    { id: "tiny-section", title: "Tiny section", icon: Star, group: "AI", body: null },
+    { id: "tiny-section", title: "Tiny section", icon: Star, group: "Workspace", body: null },
+    // a block the sidebar no longer has: placed and named as a section with no group
+    { id: "tiny-old", title: "Tiny old", icon: Star, group: "AI", body: null },
   ],
   devices: [{ id: "tiny-drive", title: "Tiny drive", adminOnly: true, body: null }],
   replaces: { media: () => null },
@@ -39,7 +41,8 @@ describe("webPluginAdds", () => {
     expect(webPluginAdds(tiny, { me: admin, team: true })).toContainEqual({ text: "Settings → Tool settings: Tiny admin", to: "/settings/tiny-admin" });
     expect(webPluginAdds(tiny, { me: member(["tiny-gate"]), team: true }).map((a) => a.text)).not.toContain("Home: Tiny");
     const asMember = webPluginAdds(tiny, { me: member(), team: true }).map((a) => a.text);
-    expect(asMember).toContain("Settings → AI: Tiny section");
+    expect(asMember).toContain("Settings → Workspace: Tiny section");
+    expect(asMember).toContain("Settings: Tiny old");
     expect(asMember).not.toContain("Settings → Storage: Tiny drive");
     expect(asMember).not.toContain("Settings → Tool settings: Tiny admin");
   });

@@ -66,7 +66,7 @@ describe("Home tiles", () => {
 describe("Settings sections", () => {
   const builtin = [
     { id: "general", title: "General", icon: Hand },
-    { id: "providers", title: "AI providers", icon: Hand, group: "AI" },
+    { id: "providers", title: "Providers", icon: Hand, group: "You" },
     { id: "keys", title: "API keys", icon: Hand, adminOnly: true, group: "Server" },
   ];
 
@@ -82,7 +82,7 @@ describe("Settings sections", () => {
     const grouped = defineWebPlugin({
       id: "grouped",
       settings: [
-        { id: "ai-extra", title: "AI extra", icon: Hand, group: "AI", body: null },
+        { id: "ai-extra", title: "AI extra", icon: Hand, group: "You", body: null },
         { id: "footage", title: "Footage", icon: Hand, adminOnly: true, adminTab: true, body: null },
       ],
     });

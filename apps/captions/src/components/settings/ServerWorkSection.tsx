@@ -22,12 +22,18 @@ export async function call<T>(url: string, body?: unknown): Promise<T> {
 
 export const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
+/**
+ * What Off means, under a computer set to it: no work at all, even when no other computer could take it. Exported for
+ * a plug-in's own rows under the Computers card too: removing it breaks the build of a server with such a plug-in.
+ */
+export const OFF_LINE = "Off — takes no work";
 /** Sent on window when the Load balancing switch changes (detail: the saved Balance), so a plug-in's rows under the card follow it. */
 export const BALANCE_EVENT = "ct-balance";
 
 /**
  * Settings → Computers, Load balancing: no list of its own. `preference(ids, name)` is the select a computer's row in the
- * Computers card carries (all of one computer's records at once), shown while the switch is on. `rows` are the card's last
+ * Computers card carries, shown while the switch is on: it shows the first record's value and saves all of them, so the
+ * caller puts the record that speaks for the computer first. `off(ids)`: that row says OFF_LINE. `rows` are the card's last
  * rows: This server where it works for the person (Prefer sends work there first), then the switch. Saves at once.
  */
 export function useLoadBalancing() {
@@ -60,6 +66,7 @@ export function useLoadBalancing() {
         className="w-32 sm:w-32 sm:min-w-0"
       />
     ) : null;
+  const off = (ids: string[]) => !!balance?.on && ids.length > 0 && weightOf(ids[0]) === 0;
   const rows: ReactNode =
     error && !balance ? (
       <ErrorRow title="Could not load Load balancing" detail={error} retry={load} />
@@ -73,5 +80,5 @@ export function useLoadBalancing() {
         />
       </>
     ) : null;
-  return { preference, rows };
+  return { preference, off, rows };
 }

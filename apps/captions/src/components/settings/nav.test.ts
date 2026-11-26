@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { PLUGINS_GROUP, SETTINGS_GROUPS } from "@/lib/plugin";
 import { navBlocks, navListFor, resolveSection, withToolPages, type NavContext } from "./nav";
 
 const at = (team: boolean, admin: boolean, mac = false): NavContext => ({ team, admin, mac });
@@ -72,6 +73,8 @@ describe("the sidebar blocks", () => {
   it("a hosted admin's blocks, by whose setting it is: You, Workspace, Server, then Tool settings; no block of one page", () => {
     const blocks = navBlocks(navListFor(at(true, true, true), []));
     expect(blocks.map((b) => b.heading)).toEqual(["You", "Workspace", "Server", "Tool settings"]);
+    // the blocks a plug-in's section may join are these (lib/plugin.ts): a block added here is added there
+    expect(blocks.map((b) => b.heading)).toEqual([...SETTINGS_GROUPS, PLUGINS_GROUP]);
     expect(blocks[0].items.map((s) => s.id)).toEqual(["general", "appearance", "tools", "dictation", "devices", "servers", "providers", "own-ai"]);
     expect(blocks[1].items.map((s) => s.id)).toEqual(["workspace", "connectors", "folders", "automations", "memory"]);
     expect(blocks[2].items.map((s) => s.id)).toEqual(["policies", "team", "storage", "keys"]);

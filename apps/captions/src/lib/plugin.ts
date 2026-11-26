@@ -350,14 +350,18 @@ export function itemActionsFor(me: Me | null, plugins: WebPlugin[], kind: ItemKi
 
 /**
  * The built-in Settings sections with each plug-in's sidebar sections placed in them: a section with a `group` goes after
- * the last section of that group; one without, or one naming a group no built-in page is in (an older plug-in's "AI":
- * never a block of one page), goes in the Tool settings block at the end. A server-wide one (adminTab) is a
+ * the last section of that group; one without, or one naming a block the sidebar does not have (groupOf: never a block
+ * of one page), goes in the Tool settings block at the end. A server-wide one (adminTab) is a
  * section there too, for admins on a hosted server (nav.ts). A plug-in section may not reuse a built-in id (it would
  * hide that section): throws.
  */
 /** The sidebar block for a plug-in's section with no group, last (owner, 2026-11-11: "a setting submenu for like
  *  plug-ins… this should be all grouped up"). */
 export const PLUGINS_GROUP = "Tool settings";
+/** The sidebar's other blocks, the ones a plug-in's section may join (nav.ts; nav.test.ts keeps the two the same). */
+export const SETTINGS_GROUPS: readonly string[] = ["You", "Workspace", "Server"];
+/** The block a plug-in's section names, when the sidebar has it. Any other name is as none (an older plug-in's "AI"). */
+const groupOf = (s: { group?: string }): string | undefined => (s.group && (s.group === PLUGINS_GROUP || SETTINGS_GROUPS.includes(s.group)) ? s.group : undefined);
 
 export function settingsWithPlugins<T extends SettingsEntry>(
   builtin: ReadonlyArray<T>,
@@ -369,7 +373,7 @@ export function settingsWithPlugins<T extends SettingsEntry>(
   }
   const out: Array<T | PluginSettingsSection> = [...builtin];
   for (const section of extra) {
-    const s = section.group && builtin.some((b) => b.group === section.group) ? section : { ...section, group: PLUGINS_GROUP };
+    const s = { ...section, group: groupOf(section) ?? PLUGINS_GROUP };
     const last = out.map((x) => x.group).lastIndexOf(s.group);
     out.splice(last >= 0 ? last + 1 : out.length, 0, s);
   }
@@ -422,7 +426,7 @@ export function webPluginAdds(p: WebPlugin, ctx: { me: Me | null; team: boolean 
     if (s.adminOnly && !admin) continue;
     if (s.adminTab) {
       if (admin && ctx.team) out.push({ text: `Settings → ${PLUGINS_GROUP}: ${s.title}`, to: `/settings/${s.id}` });
-    } else out.push({ text: s.group ? `Settings → ${s.group}: ${s.title}` : `Settings: ${s.title}`, to: `/settings/${s.id}` });
+    } else out.push({ text: groupOf(s) ? `Settings → ${groupOf(s)}: ${s.title}` : `Settings: ${s.title}`, to: `/settings/${s.id}` });
   }
   for (const d of p.devices ?? []) if (!d.adminOnly || admin) {
     const computers = d.page === "computers";

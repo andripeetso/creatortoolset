@@ -28,7 +28,7 @@ import type { LibrarySummary } from "@contracts/library";
 
 const STORAGE_ALL = "/api/devices/storage?all=1";
 const DEVICES = "/api/devices";
-import { useLoadBalancing } from "./ServerWorkSection";
+import { OFF_LINE, useLoadBalancing } from "./ServerWorkSection";
 
 /** The Mac's hardware, as the subtitle's tail for an admin: "Apple M2 Max · 12 cores · 32 GB". */
 const hardware = (d: Listed): string | null => {
@@ -126,6 +126,8 @@ export function ComputersSection() {
   const names: ThisMacNames = inMac ? { computer: bridge?.computer, host: bridge?.host, device: bridge?.device || thisMacDevice() } : {};
   const withAi = new Set([...(view.own?.instances ?? []), ...(view.workspace?.settings.instances ?? [])].map((i) => i.device));
   const groups = groupComputers(computers, me.username, names, (id) => withAi.has(id));
+  // one computer's records that take work, the one that speaks for it first: its menu shows that one's value, saves all
+  const workIds = (g: ComputerGroup) => [g.primary, ...g.records.filter((r) => r !== g.primary)].filter((r) => r.owner === me.username && r.work).map((r) => r.id);
   const listed = groups.filter((g) => !g.old);
   const old = groups.filter((g) => g.old);
 
@@ -140,7 +142,8 @@ export function ComputersSection() {
               group={g}
               admin={me.role === "admin"}
               bridge={g.mine ? bridge : null}
-              preference={balancing.preference(g.records.filter((r) => r.owner === me.username && r.work).map((r) => r.id), g.primary.name)}
+              preference={balancing.preference(workIds(g), g.primary.name)}
+              off={balancing.off(workIds(g))}
               onChanged={load}
             />
           ))}
@@ -158,7 +161,7 @@ export function ComputersSection() {
         <Section title="Offline computers">
           <Card>
             {old.map((g) => (
-              <OfflineRow key={g.primary.id} group={g} onChanged={load} />
+              <OfflineRow key={g.primary.id} group={g} preference={balancing.preference(workIds(g), g.primary.name)} onChanged={load} />
             ))}
           </Card>
         </Section>
@@ -169,8 +172,8 @@ export function ComputersSection() {
   );
 }
 
-function ComputerRow({ group, admin, bridge, preference, onChanged }: {
-  group: ComputerGroup; admin: boolean; bridge: ThisMacState | null; preference: ReactNode; onChanged: () => void;
+function ComputerRow({ group, admin, bridge, preference, off, onChanged }: {
+  group: ComputerGroup; admin: boolean; bridge: ThisMacState | null; preference: ReactNode; off: boolean; onChanged: () => void;
 }) {
   const { primary, records, mine } = group;
   const Icon = primary.report?.machine?.os === "mac" || !primary.report?.machine ? Laptop : Monitor;
@@ -207,7 +210,7 @@ function ComputerRow({ group, admin, bridge, preference, onChanged }: {
   ) : null;
   const subtitle = (
     <>
-      {[mine ? "This Mac" : null, kind, state, hw ? <span className="hidden sm:inline">{hw}</span> : null].filter(Boolean).map((part, i) => (
+      {[mine ? "This Mac" : null, kind, off ? OFF_LINE : null, state, hw ? <span className="hidden sm:inline">{hw}</span> : null].filter(Boolean).map((part, i) => (
         <span key={i}>
           {i > 0 && " · "}
           {part}
@@ -288,7 +291,7 @@ function ThisMacSwitch({ bridge }: { bridge: ThisMacState | null }) {
 }
 
 /** A computer of this account that has been offline a day or more and has no AI on it: when it was last seen; Remove in its menu. */
-function OfflineRow({ group, onChanged }: { group: ComputerGroup; onChanged: () => void }) {
+function OfflineRow({ group, preference, onChanged }: { group: ComputerGroup; preference: ReactNode; onChanged: () => void }) {
   const { primary, records } = group;
   const lastSeen = Math.max(0, ...records.map((r) => r.lastSeen ?? 0));
   const remove = async () => {
@@ -301,17 +304,20 @@ function OfflineRow({ group, onChanged }: { group: ComputerGroup; onChanged: () 
       title={primary.name}
       subtitle={lastSeen ? `Last seen ${fmtAgo(lastSeen)}` : undefined}
       actions={
-        <RowMenu
-          label={`${primary.name} actions`}
-          items={[
-            {
-              label: "Remove",
-              destructive: true,
-              confirm: { title: `Remove ${primary.name}?`, ok: "Remove" },
-              onSelect: remove,
-            },
-          ]}
-        />
+        <span className="flex items-center gap-2">
+          {preference}
+          <RowMenu
+            label={`${primary.name} actions`}
+            items={[
+              {
+                label: "Remove",
+                destructive: true,
+                confirm: { title: `Remove ${primary.name}?`, ok: "Remove" },
+                onSelect: remove,
+              },
+            ]}
+          />
+        </span>
       }
     />
   );
