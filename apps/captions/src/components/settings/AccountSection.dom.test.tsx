@@ -113,6 +113,29 @@ it("in the Mac app, a server that takes the Creator Toolset account shows that a
   expect(accountWays("google", ["github"], ["google"])).toEqual({ ways: ["google", "github"], droppable: ["github"] });
 });
 
+const signOuts = () => [...document.querySelectorAll("button")].filter((b) => b.textContent === "Sign out").length;
+const ownOnAccountServer = () => {
+  useAuth.setState({ required: true, kind: "server", me: me({ username: "sam", name: "Sam" }) });
+  account = { username: "sam", name: "Sam", login: "sam", identities: [], signins: [], picture: null };
+  providers = { apple: true, google: true, github: true, account: true };
+};
+
+it("on a server that takes the account, signed out of it, someone with a password of their own keeps the server's Sign out", async () => {
+  ownOnAccountServer();
+  macApp({ state: "signedOut", providers: "google,apple,github" });
+  await show();
+  expect(text()).toContain("Session");
+  expect(signOuts()).toBe(1);
+});
+
+it("on a server that takes the account, signed in to it, Sign out is once: the account's, which ends both", async () => {
+  ownOnAccountServer();
+  macApp({ state: "signedIn", name: "Sam", email: "sam@tinyacrobatics.com", provider: "google", logins: "", providers: "google,apple,github" });
+  await show();
+  expect(text()).not.toContain("Session");
+  expect(signOuts()).toBe(1);
+});
+
 it("a server with sign-ins of its own (no account service) keeps its Sign-ins list beside the Mac app's account", async () => {
   useAuth.setState({ required: true, kind: "server", me: me({ username: "sam", name: "Sam" }) });
   account = { username: "sam", name: "Sam", login: "sam", identities: ["google"], signins: [{ provider: "google", email: "sam@tinyacrobatics.com", name: "Sam", picture: null }], picture: null };

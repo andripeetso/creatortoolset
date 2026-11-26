@@ -14,6 +14,23 @@ import { Card, EmptyRow, FormDialog, ListRow, LoadingRow, Row, RowMenu, Section 
 
 const PROVIDERS: Provider[] = ["google", "apple", "github"];
 
+const mark = (p: Provider) => (
+  <span className="text-foreground">
+    <ProviderMark provider={p} className="size-4" />
+  </span>
+);
+
+/** Session: ends this server's sign-in. */
+function ServerSession() {
+  return (
+    <Section title="Session">
+      <Card>
+        <Row id="sign-out" title="This server" control={<Button size="sm" variant="outline" onClick={() => void logout()}>Sign out</Button>} />
+      </Card>
+    </Section>
+  );
+}
+
 /** GET /api/auth/account: the names the app shows, the sign-ins linked here (with their address and picture URL). */
 interface SignIn {
   provider: Provider;
@@ -167,15 +184,9 @@ export function AccountSection() {
       </Section>
 
       {!one && <SignIns signins={signins} open={linkable.filter((p) => !account.signins.some((x) => x.provider === p))} unlink={unlink} />}
-      {hasAccountBridge() && <MacAppAccount here={one ? { linked: signins.map((s) => s.provider), unlink, signOut: logout } : undefined} />}
-      {/* one account: its Sign out ends this server's sign-in too, so no second Sign out */}
-      {own && !one && (
-        <Section title="Session">
-          <Card>
-            <Row id="sign-out" title="This server" control={<Button size="sm" variant="outline" onClick={() => void logout()}>Sign out</Button>} />
-          </Card>
-        </Section>
-      )}
+      {hasAccountBridge() && <MacAppAccount here={one ? { linked: signins.map((s) => s.provider), unlink, signOut: logout, own } : undefined} />}
+      {/* one account: its Sign out ends this server's sign-in too, so MacAppAccount draws Session only while signed out */}
+      {own && !one && <ServerSession />}
     </>
   );
 }
@@ -192,11 +203,6 @@ const isProvider = (p: string | undefined): p is Provider => !!p && (PROVIDERS a
  */
 function SignIns({ signins, open, unlink }: { signins: SignIn[]; open: Provider[]; unlink: (p: Provider) => Promise<void> }) {
   if (!signins.length && !open.length) return null;
-  const mark = (p: Provider) => (
-    <span className="text-foreground">
-      <ProviderMark provider={p} className="size-4" />
-    </span>
-  );
   return (
     <Section id="sign-in-with" title="Sign-ins">
       <Card>
@@ -252,7 +258,7 @@ export function accountWays(first: Provider | undefined, linked: Provider[], her
  * stops there) and then from the account, and Sign out signs the app out and then ends the window's sign-in, in that
  * order, so the sign-in page that follows does not sign the window straight back in through the account.
  */
-function MacAppAccount({ here }: { here?: { linked: Provider[]; unlink: (p: Provider) => Promise<void>; signOut: () => Promise<void> } }) {
+function MacAppAccount({ here }: { here?: { linked: Provider[]; unlink: (p: Provider) => Promise<void>; signOut: () => Promise<void>; own: boolean } }) {
   const mac = useMacAccount({ first: "offered" });
   const macIn = mac.account.state === "signedIn" ? mac.account : null;
   const linked = linkedOf(mac.account).map((l) => l.provider);
@@ -263,7 +269,9 @@ function MacAppAccount({ here }: { here?: { linked: Provider[]; unlink: (p: Prov
   useEffect(() => {
     if (failed) toast.error(failed);
   }, [failed]);
-  if (!macIn && !mac.providers.length) return null;
+  // signed out of the account (or an older Mac app), the account row has no Sign out: the server's own stays reachable
+  const session = here?.own && !macIn ? <ServerSession /> : null;
+  if (!macIn && !mac.providers.length) return session;
   const first = macIn && isProvider(macIn.provider) ? macIn.provider : undefined;
   const { ways, droppable } = accountWays(first, linked, here?.linked);
   const unlink = async (p: Provider) => {
@@ -274,67 +282,65 @@ function MacAppAccount({ here }: { here?: { linked: Provider[]; unlink: (p: Prov
     await mac.signOut();
     await here?.signOut();
   };
-  const mark = (p: Provider) => (
-    <span className="text-foreground">
-      <ProviderMark provider={p} className="size-4" />
-    </span>
-  );
   // signed in: the account on its own row with Sign out, then each sign-in on a row of its own (never all on one line)
   return (
-    <Section id="mac-account" title="Creator Toolset account">
-      <Card>
-        <ListRow
-          icon={<span className="text-foreground"><UserRound className="size-4" /></span>}
-          title={macIn ? macIn.name || macIn.email || "Signed in" : "Not signed in"}
-          subtitle={macIn && macIn.name ? macIn.email || undefined : undefined}
-          actions={
-            macIn ? (
-              <Button size="sm" variant="outline" onClick={() => void signOut()}>Sign out</Button>
-            ) : (
-              <span className="flex items-center gap-1.5">
-                {mac.providers.map((p) => (
-                  <Button key={p} size="sm" variant="outline" disabled={!!mac.busy} aria-label={`Sign in with ${PROVIDER_NAME[p]}`} onClick={() => mac.signIn(p)}>
-                    <ProviderMark provider={p} className="size-3.5" />
-                    {mac.busy === p ? "Signing in…" : PROVIDER_NAME[p]}
-                  </Button>
-                ))}
-              </span>
-            )
-          }
-        />
-        {macIn &&
-          ways.map((p) => (
-            <ListRow
-              key={p}
-              icon={mark(p)}
-              title={PROVIDER_NAME[p]}
-              actions={
-                droppable.includes(p) ? (
-                  <RowMenu
-                    label={`${PROVIDER_NAME[p]} actions`}
-                    items={[{ label: "Disconnect", destructive: true, confirm: { title: `Disconnect ${PROVIDER_NAME[p]}?`, ok: "Disconnect" }, onSelect: () => unlink(p) }]}
-                  />
-                ) : undefined
-              }
-            />
-          ))}
-        {macIn &&
-          mac.providers
-            .filter((p) => !ways.includes(p))
-            .map((p) => (
+    <>
+      <Section id="mac-account" title="Creator Toolset account">
+        <Card>
+          <ListRow
+            icon={<span className="text-foreground"><UserRound className="size-4" /></span>}
+            title={macIn ? macIn.name || macIn.email || "Signed in" : "Not signed in"}
+            subtitle={macIn && macIn.name ? macIn.email || undefined : undefined}
+            actions={
+              macIn ? (
+                <Button size="sm" variant="outline" onClick={() => void signOut()}>Sign out</Button>
+              ) : (
+                <span className="flex items-center gap-1.5">
+                  {mac.providers.map((p) => (
+                    <Button key={p} size="sm" variant="outline" disabled={!!mac.busy} aria-label={`Sign in with ${PROVIDER_NAME[p]}`} onClick={() => mac.signIn(p)}>
+                      <ProviderMark provider={p} className="size-3.5" />
+                      {mac.busy === p ? "Signing in…" : PROVIDER_NAME[p]}
+                    </Button>
+                  ))}
+                </span>
+              )
+            }
+          />
+          {macIn &&
+            ways.map((p) => (
               <ListRow
-                key={`add-${p}`}
+                key={p}
                 icon={mark(p)}
                 title={PROVIDER_NAME[p]}
                 actions={
-                  <Button size="sm" variant="outline" aria-label={`Add ${PROVIDER_NAME[p]}`} onClick={() => mac.link(p)}>
-                    Add
-                  </Button>
+                  droppable.includes(p) ? (
+                    <RowMenu
+                      label={`${PROVIDER_NAME[p]} actions`}
+                      items={[{ label: "Disconnect", destructive: true, confirm: { title: `Disconnect ${PROVIDER_NAME[p]}?`, ok: "Disconnect" }, onSelect: () => unlink(p) }]}
+                    />
+                  ) : undefined
                 }
               />
             ))}
-      </Card>
-    </Section>
+          {macIn &&
+            mac.providers
+              .filter((p) => !ways.includes(p))
+              .map((p) => (
+                <ListRow
+                  key={`add-${p}`}
+                  icon={mark(p)}
+                  title={PROVIDER_NAME[p]}
+                  actions={
+                    <Button size="sm" variant="outline" aria-label={`Add ${PROVIDER_NAME[p]}`} onClick={() => mac.link(p)}>
+                      Add
+                    </Button>
+                  }
+                />
+              ))}
+        </Card>
+      </Section>
+      {session}
+    </>
   );
 }
 
