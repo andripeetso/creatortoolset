@@ -10,7 +10,9 @@ import { hasThisMac, tell, type ThisMacState } from "@/components/settings/ThisM
  * until it restarts into the update, instead of showing a feature that does nothing. "0.0.0" = every Mac app works.
  */
 // 0.22.0: Face Blur at intake runs as the device job "faceblur-intake", which older Mac apps never claim
-export const MIN_MAC_APP: string = "0.22.0";
+// 0.29.0: its worker says when the Download location's disk is not connected and then makes no proxy; an older one keeps
+// writing proxies to the internal disk in its place. It also answers where a clip's kept proxy is (Show proxy in Finder)
+export const MIN_MAC_APP: string = "0.29.0";
 
 /** a < b for dotted versions ("0.9.1" < "0.15.0"). A Mac app from before it reported its version counts as "0"; "dev" builds are never old. */
 export function olderThan(a: string | undefined, b: string): boolean {
