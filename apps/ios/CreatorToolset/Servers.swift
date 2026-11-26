@@ -121,6 +121,8 @@ struct CodedRefusal: LocalizedError, Equatable {
     let status: Int
     let code: String
     let line: String
+    /// The server's `reason` for a speech refusal (contracts/voice.ts SPEECH_REASONS), when it sent one.
+    var reason: String? = nil
     var errorDescription: String? { line }
 }
 
@@ -231,8 +233,8 @@ struct API {
             throw APIError.signedOut
         }
         guard (200..<300).contains(status) else {
-            if let code = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["code"] as? String, coded {
-                throw CodedRefusal(status: status, code: code, line: Self.message(data, status: status))
+            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any], let code = json["code"] as? String, coded {
+                throw CodedRefusal(status: status, code: code, line: Self.message(data, status: status), reason: json["reason"] as? String)
             }
             if let line = APIError.refusal(status, try? JSONSerialization.jsonObject(with: data) as? [String: Any]) {
                 throw APIError.refused(line)

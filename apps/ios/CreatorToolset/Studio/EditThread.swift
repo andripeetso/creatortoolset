@@ -585,10 +585,10 @@ struct EditThreadView: View {
                 }
                 WorkingCapsule(label: turn.claimed ? "Answering" : "Waiting for the Mac", since: turn.at.map { date(ms: $0) })
             }
-            if let notice = voice.notice { QuietNotice(text: notice).padding(.horizontal, 20) }
+            if let notice = voice.notice { QuietNotice(text: notice, fix: voice.fix).padding(.horizontal, 20) }
             ChatComposer(text: $text, placeholder: model.edit?.drafts.last.map { "Notes for \(name($0))" } ?? "Say what to change",
                          working: model.turn != nil, sending: model.sending || model.busy, autofocus: focus > 0,
-                         mic: ComposerMic(phase: voice.phase) {
+                         mic: ComposerMic(phase: voice.phase, status: voice.status) {
                              // the cut waits, and the note says the moment it was spoken at
                              let at = CutCard.playing.flatMap { player -> Double? in
                                  player.pause()

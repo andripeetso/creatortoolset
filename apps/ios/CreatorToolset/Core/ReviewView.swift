@@ -362,7 +362,7 @@ struct ReviewAssetView: View {
     private var box: some View {
         VStack(alignment: .leading, spacing: 6) {
             if let writeError { QuietNotice(text: writeError).padding(.horizontal, 26) }
-            if let notice = voice.notice { QuietNotice(text: notice).padding(.horizontal, 26) }
+            if let notice = voice.notice { QuietNotice(text: notice, fix: voice.fix).padding(.horizontal, 26) }
             if let replyTo {
                 HStack(spacing: 6) {
                     Image(systemName: "arrowshape.turn.up.left.fill").font(.caption)
@@ -382,7 +382,7 @@ struct ReviewAssetView: View {
             }
             ChatComposer(text: $draft, placeholder: asking ? "What should change in \(asset?.label(version) ?? "v\(version)")?" : "Comment", sending: sending,
                          autofocus: focus > 0,
-                         mic: ComposerMic(phase: voice.phase) {
+                         mic: ComposerMic(phase: voice.phase, status: voice.status) {
                              // the video waits, and the note stays at this moment while it is spoken
                              if case .idle = voice.phase, replyTo == nil, player != nil {
                                  player?.pause()

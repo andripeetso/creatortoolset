@@ -138,11 +138,16 @@ extension ChatListRow where Leading == EmptyView {
 /// ("MacBook is asleep", "No connection").
 struct QuietNotice: View {
     let text: String
+    /// The next step, its button opening the page it names (a speech refusal's Settings page).
+    var fix: VoiceInput.Fix?
 
     var body: some View {
         HStack(spacing: 7) {
             Circle().fill(.orange).frame(width: 7, height: 7)
             Text(text).font(.footnote).foregroundStyle(.secondary)
+            if let fix {
+                Button(fix.label) { AppNavigator.shared.open(href: fix.href) }.font(.footnote)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -361,7 +366,7 @@ struct ChatComposer<Leading: View>: View {
                 .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                 .accessibilityLabel("Recording")
             case .writing?:
-                Text("Writing it down…")
+                Text(mic?.status ?? "Writing it down…")
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
             default:
@@ -392,8 +397,7 @@ struct ChatComposer<Leading: View>: View {
             switch kind {
             case .send: send()
             case .stopReply: onStop?()
-            case .mic, .stopRecording: mic?.toggle()
-            case .writing: break
+            case .mic, .stopRecording, .writing: mic?.toggle()
             }
         } label: {
             Group {
@@ -410,7 +414,7 @@ struct ChatComposer<Leading: View>: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .disabled(kind == .writing || (kind == .send && (sending || empty)) || (kind == .stopReply && sending))
+        .disabled((kind == .send && (sending || empty)) || (kind == .stopReply && sending))
         .accessibilityLabel(kind.label)
     }
 }
@@ -418,6 +422,9 @@ struct ChatComposer<Leading: View>: View {
 /// The message box's mic, as its screen keeps it (`VoiceInput`).
 struct ComposerMic {
     var phase: VoiceInput.Phase
+    /// While the words are written down: what the wait is for.
+    var status: String?
+    /// Record, stop, or (while the words are written down) stop writing them down.
     let toggle: () -> Void
 }
 
@@ -445,7 +452,7 @@ struct ComposerButtons: Equatable {
             case .stopReply: "Stop"
             case .mic: "Speak your message"
             case .stopRecording: "Stop recording"
-            case .writing: "Writing it down"
+            case .writing: "Stop"
             }
         }
     }

@@ -13,6 +13,12 @@ final class VoiceInput: ObservableObject {
         case writing
     }
 
+    /// The next step for a speech refusal: its button opens that page of the website.
+    struct Fix: Equatable {
+        let label: String
+        let href: String
+    }
+
     /// The microphone: start, and stop with the recording's file (nil when nothing was recorded).
     struct Mic {
         var start: @MainActor () async throws -> Void
@@ -22,24 +28,31 @@ final class VoiceInput: ObservableObject {
     @Published private(set) var phase = Phase.idle
     /// What went wrong, said once above the box.
     @Published var notice: String?
+    /// The next step for `notice`, if there is one.
+    @Published private(set) var fix: Fix?
+    /// While the words are written down: what the wait is for ("Getting the speech model ready").
+    @Published private(set) var status: String?
 
     /// The longest message spoken in one go, as on the computer.
     static let maxSeconds = 120
 
     private let mic: Mic
-    private let writeDown: (URL) async throws -> String
+    private let writeDown: (URL, @escaping () -> Void) async throws -> String
     private var starting = false
     /// The chat was left while the microphone was starting.
     private var left = false
     private var limit: Task<Void, Never>?
     private var put: (String) -> Void = { _ in }
+    /// Counts each write-down: a stopped one's late answer is thrown away.
+    private var writes = 0
 
-    init(mic: Mic = .phone(), writeDown: @escaping (URL) async throws -> String = VoiceInput.writeDown) {
+    init(mic: Mic = .phone(), writeDown: @escaping (URL, @escaping () -> Void) async throws -> String = VoiceInput.writeDown) {
         self.mic = mic
         self.writeDown = writeDown
     }
 
-    /// The mic button: start recording (the words then go to `put`), or stop and have it written down.
+    /// The mic button: start recording (the words then go to `put`), or stop and have it written down. Stop while the words
+    /// are being written down gives up on them.
     func toggle(_ put: @escaping (String) -> Void) {
         switch phase {
         case .idle:
@@ -48,7 +61,7 @@ final class VoiceInput: ObservableObject {
         case .recording:
             Task { await finish() }
         case .writing:
-            break
+            cancel()
         }
     }
 
@@ -58,10 +71,11 @@ final class VoiceInput: ObservableObject {
         left = false
         defer { starting = false }
         notice = nil
+        fix = nil
         do {
             try await mic.start()
         } catch {
-            notice = Self.say(error)
+            fail(error)
             return
         }
         guard !left else {   // as cancel does while recording
@@ -80,25 +94,38 @@ final class VoiceInput: ObservableObject {
         limit?.cancel()
         guard let file = mic.stop() else { phase = .idle; return }
         phase = .writing
-        defer {
-            try? FileManager.default.removeItem(at: file)
-            phase = .idle
-        }
+        writes += 1
+        let mine = writes
+        defer { try? FileManager.default.removeItem(at: file) }
         do {
-            let text = try await writeDown(file).trimmingCharacters(in: .whitespacesAndNewlines)
+            let text = try await writeDown(file) { [weak self] in
+                if self?.writes == mine { self?.status = "Getting the speech model ready" }
+            }.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard writes == mine else { return }   // stopped while being written: nothing goes in the box
+            done()
             if text.isEmpty { notice = "Didn't catch anything. Try again a little closer to the mic." } else { put(text) }
         } catch {
-            notice = Self.say(error)
+            guard writes == mine else { return }
+            done()
+            fail(error)
         }
     }
 
-    /// Leaving the chat while recording: the recording is thrown away and the mic let go.
+    /// Leaving the chat, or Stop while the words are written down: a recording is thrown away and the mic let go; the
+    /// words still being written down are dropped when they come.
     func cancel() {
         left = starting   // the microphone is still starting: record() throws it away once it has
-        guard case .recording = phase else { return }
-        limit?.cancel()
-        if let file = mic.stop() { try? FileManager.default.removeItem(at: file) }
-        phase = .idle
+        switch phase {
+        case .idle:
+            return
+        case .writing:
+            writes += 1
+            done()
+        case .recording:
+            limit?.cancel()
+            if let file = mic.stop() { try? FileManager.default.removeItem(at: file) }
+            phase = .idle
+        }
     }
 
     /// Spoken words added to what is in the box, after a space.
@@ -112,13 +139,34 @@ final class VoiceInput: ObservableObject {
         "\(seconds / 60):\(String(format: "%02d", seconds % 60))"
     }
 
+    /// The next step for a speech refusal (the server's `reason`, contracts/voice.ts), or nil.
+    static func fix(for error: Error) -> Fix? {
+        guard let refusal = error as? CodedRefusal, refusal.code == "SPEECH" else { return nil }
+        switch refusal.reason {
+        case "missing-key", "rejected-key": return Fix(label: "Open API keys", href: "/settings/keys")
+        case "model-unavailable", "computer-off", "unavailable": return Fix(label: "Open Voice settings", href: "/settings/voice")
+        default: return nil
+        }
+    }
+
+    private func done() {
+        phase = .idle
+        status = nil
+    }
+
+    private func fail(_ error: Error) {
+        notice = Self.say(error)
+        fix = Self.fix(for: error)
+    }
+
     private static func say(_ error: Error) -> String {
         (error as? LocalizedError)?.errorDescription ?? "Couldn't write that down"
     }
 
     /// Written down on the phone when it can, else on the signed-in server.
-    nonisolated static func writeDown(_ file: URL) async throws -> String {
-        if let words = await PhoneSpeech.transcribe(file) { return words }
+    @MainActor
+    static func writeDown(_ file: URL, preparing: @escaping () -> Void) async throws -> String {
+        if let words = await PhoneSpeech.transcribe(file, preparing: preparing) { return words }
         return try await upload(file)
     }
 
@@ -128,7 +176,7 @@ final class VoiceInput: ObservableObject {
         var request = api.request("/api/transcribe/mic", method: "POST")
         request.setValue("audio/mp4", forHTTPHeaderField: "Content-Type")
         request.httpBody = try Data(contentsOf: file)
-        let answer = try await api.data(request, session: ToolsetAPI.slow)
+        let answer = try await api.data(request, session: ToolsetAPI.slow, coded: true)
         struct Heard: Decodable { let text: String }
         return try JSONDecoder().decode(Heard.self, from: answer).text
     }
@@ -139,13 +187,17 @@ private struct MicProblem: LocalizedError {
 }
 
 extension VoiceInput.Mic {
-    /// The phone's microphone: AAC in m4a, 16 kHz mono (what speech engines take, and small to send).
+    /// The phone's microphone: AAC in m4a, 16 kHz mono (what speech engines take, and small to send). Nothing is recorded
+    /// when the server would have to write it down and can't yet (its answer says what it needs).
     static func phone() -> Self {
         var recorder: AVAudioRecorder?
         return .init(start: {
             guard await AVAudioApplication.requestRecordPermission() else {
                 throw MicProblem(errorDescription: "The microphone is off for Creator Toolset: turn it on in Settings → Privacy & Security → Microphone")
             }
+            let prefs = await PhoneSpeech.prefs()
+            let phone = await PhoneSpeech.warm(prefs)
+            if !phone, let need = PhoneSpeech.needs(prefs) { throw MicProblem(errorDescription: need) }
             ReadAloud.shared.stop()
             let session = AVAudioSession.sharedInstance()
             try session.setCategory(.record, mode: .default)
@@ -159,7 +211,6 @@ extension VoiceInput.Mic {
                 throw MicProblem(errorDescription: "The microphone could not start")
             }
             recorder = made
-            PhoneSpeech.warm()
         }, stop: {
             guard let made = recorder else { return nil }
             made.stop()

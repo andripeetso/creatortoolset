@@ -216,7 +216,7 @@ struct AssistantChatView: View {
             }
             if model.offline { ConnectionHeaderStatus(fallback: "No connection").padding(.horizontal, 12) }
             if let notice = draft.notice { QuietNotice(text: notice).padding(.horizontal, 22) }
-            if let notice = voice.notice { QuietNotice(text: notice).padding(.horizontal, 22) }
+            if let notice = voice.notice { QuietNotice(text: notice, fix: voice.fix).padding(.horizontal, 22) }
             if let thinking {
                 // a reply held until its videos are in, or behind another: no clock until it is being written
                 WorkingCapsule(label: thinking.wait == nil ? "Working" : "Waiting",
@@ -228,7 +228,7 @@ struct AssistantChatView: View {
                          hasAttachment: draft.hasAttachment,
                          autofocus: autofocus || draft.ask != nil,
                          attachments: draft.hasAttachment ? AnyView(AssistantAttachmentChips(draft: draft)) : nil,
-                         mic: ComposerMic(phase: voice.phase) { [draft] in
+                         mic: ComposerMic(phase: voice.phase, status: voice.status) { [draft] in
                              voice.toggle { draft.text = VoiceInput.appended($0, to: draft.text) }
                          },
                          onSend: sendDraft, onStop: { Task { await model.stop() } }) {

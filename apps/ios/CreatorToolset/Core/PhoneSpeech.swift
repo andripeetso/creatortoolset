@@ -3,67 +3,117 @@ import Foundation
 import Speech
 
 /// The phone writing down what is said to it (Apple's speech engine, iOS 26), so a spoken message needs neither the server
-/// nor a computer. Only while the person's mic is on Automatic (Settings → AI → Voice) and they speak one language the
-/// engine hears; a chosen engine, several languages or one it doesn't hear (Estonian) go to the server as before.
-/// The engine's model is the system's own: the first message in a language goes to the server while the system downloads
-/// it in the background, and every one after is written down here.
+/// nor a computer and no API key. Used whenever the person's mic is not set to Deepgram or OpenAI (Settings → AI → Voice),
+/// in the first of their Voice languages the engine hears; one it doesn't hear (Estonian) goes to the server, never written
+/// down as another language. The engine's model is the system's own: it is made ready when recording starts, and the
+/// person waits for it at the stop (only while it is still downloading) before anything goes to the server.
 @MainActor
 enum PhoneSpeech {
-    /// The language for the recording being made, nil when the server writes it down.
-    private static var pick: Task<Locale?, Never>?
-    private static var downloading: Set<String> = []
-
-    /// Recording started: read the person's Voice settings while they speak.
-    static func warm() { pick = Task { await choose() } }
-
-    /// The words, or nil when the phone doesn't write this one down.
-    static func transcribe(_ file: URL) async -> String? {
-        guard #available(iOS 26, *), let locale = await pick?.value,
-              let words = try? await Engine.transcribe(file, locale: locale), !words.isEmpty else { return nil }
-        return words
-    }
-
     struct Prefs: Decodable {
         struct Choice: Decodable { let engine: String }
         struct Stt: Decodable {
             let `default`: Choice
             let per: [String: Choice]
         }
+        struct Word: Decodable {
+            let term: String
+            let soundsLike: [String]
+        }
+        /// What one use runs on now; `needs` is why it can't (a key, a model), `key` the key it needs.
+        struct Resolved: Decodable {
+            let use: String
+            let needs: String?
+            let key: String?
+        }
         let languages: [String]
         let stt: Stt
+        let words: [Word]?
+        let resolved: [Resolved]?
     }
 
-    /// The language the phone writes the mic down in (a BCP 47 id), or nil for the server. No settings (the server not
-    /// reached, an older one) is Automatic in the phone's own language.
+    /// The recording being made: the engine's language, and the words it listens for.
+    private struct Session {
+        let locale: Locale
+        let words: [Prefs.Word]
+    }
+
+    /// The model for the recording being made, ready when the task answers; nil when the phone's attempt can't go on.
+    private static var pick: Task<Session?, Never>?
+    /// A model is being downloaded for the recording being made.
+    private static var installing = false
+
+    /// Recording is about to start: the model for the person's language is made ready in the background. False when the
+    /// phone can't write this language down at all (the server does).
+    static func warm(_ prefs: Prefs?) async -> Bool {
+        pick = nil
+        guard #available(iOS 26, *), SpeechTranscriber.isAvailable,
+              let id = language(prefs, phone: Locale.preferredLanguages),
+              let locale = await SpeechTranscriber.supportedLocale(equivalentTo: Locale(identifier: id)) else { return false }
+        let session = Session(locale: locale, words: prefs?.words ?? [])
+        switch await AssetInventory.status(forModules: [Engine.transcriber(locale)]) {
+        case .installed:
+            pick = Task<Session?, Never> { session }
+        case .unsupported:
+            return false
+        default:
+            installing = true
+            pick = Task<Session?, Never> {
+                defer { installing = false }
+                do {
+                    try await Engine.install(locale)
+                    return session
+                } catch {
+                    return nil
+                }
+            }
+        }
+        return true
+    }
+
+    /// The words, or nil when the phone doesn't write this one down (the server does). `preparing` is called first when the
+    /// model is still downloading, so the person sees why the wait is long.
+    static func transcribe(_ file: URL, preparing: @escaping () -> Void) async -> String? {
+        guard #available(iOS 26, *), let task = pick else { return nil }
+        if installing { preparing() }
+        guard let session = await task.value,
+              let said = try? await Engine.transcribe(file, session.locale, terms: session.words.map(\.term)),
+              !said.isEmpty else { return nil }
+        return rewrite(said, session.words)
+    }
+
+    /// Each misheard spelling (`soundsLike`) in what was heard becomes its term: whole words, any capitals.
+    nonisolated static func rewrite(_ text: String, _ words: [Prefs.Word]) -> String {
+        words.reduce(text) { said, word in
+            word.soundsLike.reduce(said) { out, heard in
+                let edge = #"[\p{L}\p{N}]"#
+                let pattern = "(?<!\(edge))" + NSRegularExpression.escapedPattern(for: heard) + "(?!\(edge))"
+                guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else { return out }
+                return regex.stringByReplacingMatches(in: out, range: NSRange(out.startIndex..., in: out),
+                                                      withTemplate: NSRegularExpression.escapedTemplate(for: word.term))
+            }
+        }
+    }
+
+    /// The language the phone writes the mic down in (a BCP 47 id), or nil for the server when the mic is set to Deepgram or
+    /// OpenAI. The first of the person's Voice languages, else the phone's own.
     nonisolated static func language(_ prefs: Prefs?, phone: [String]) -> String? {
-        if let p = prefs, (p.stt.per["mic"] ?? p.stt.default).engine != "auto" { return nil }
-        let spoken = prefs?.languages ?? []
-        guard spoken.count <= 1 else { return nil }  // the engine hears one language; the server's hear several at once
-        guard let code = spoken.first else { return phone.first }
+        if let p = prefs, ["deepgram", "openai"].contains((p.stt.per["mic"] ?? p.stt.default).engine) { return nil }
+        guard let code = prefs?.languages.first else { return phone.first }
         // the phone's own variant of it (en-GB, not the engine's first English)
         return phone.first { Locale(identifier: $0).language.languageCode?.identifier == code } ?? code
     }
 
-    private static func choose() async -> Locale? {
-        guard #available(iOS 26, *), SpeechTranscriber.isAvailable,
-              let id = language(await prefs(), phone: Locale.preferredLanguages),
-              let locale = await SpeechTranscriber.supportedLocale(equivalentTo: Locale(identifier: id)) else { return nil }
-        switch await AssetInventory.status(forModules: [Engine.transcriber(locale)]) {
-        case .installed: return locale
-        case .unsupported: return nil
-        default:
-            let key = locale.identifier(.bcp47)
-            if downloading.insert(key).inserted {
-                Task {
-                    try? await Engine.install(locale)
-                    downloading.remove(key)
-                }
-            }
-            return nil
+    /// Why the server can't write the mic down, as one line ("Needs a Deepgram key"), or nil when it can or doesn't say.
+    static func needs(_ prefs: Prefs?) -> String? {
+        guard let mic = prefs?.resolved?.first(where: { $0.use == "mic" }), let need = mic.needs else { return nil }
+        switch mic.key {
+        case "OPENAI_API_KEY": return "Needs an OpenAI key"
+        case "DEEPGRAM_API_KEY": return "Needs a Deepgram key"
+        default: return need
         }
     }
 
-    private static func prefs() async -> Prefs? {
+    static func prefs() async -> Prefs? {
         guard let api = ToolsetAPI.current else { return nil }
         var request = api.request("/api/voice-prefs")
         request.timeoutInterval = 4
@@ -82,7 +132,7 @@ private enum Engine {
         }
     }
 
-    static func transcribe(_ file: URL, locale: Locale) async throws -> String {
+    static func transcribe(_ file: URL, _ locale: Locale, terms: [String]) async throws -> String {
         let audio = try AVAudioFile(forReading: file)
         let transcriber = transcriber(locale)
         let analyzer = SpeechAnalyzer(modules: [transcriber])
@@ -95,6 +145,11 @@ private enum Engine {
             return out
         }
         do {
+            if !terms.isEmpty {
+                let context = AnalysisContext()
+                context.contextualStrings[.general] = terms   // the person's own names, listened for
+                try await analyzer.setContext(context)
+            }
             if let end = try await analyzer.analyzeSequence(from: audio) {
                 try await analyzer.finalizeAndFinish(through: end)
             } else {
