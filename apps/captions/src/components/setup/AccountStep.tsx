@@ -172,8 +172,10 @@ export const offersAccount = (a: Pick<MacAccount, "account" | "providers">) =>
  * "Continue with …" (the system's sign-in sheet opens; the button it came from says Signing in… meanwhile). Signing in
  * finishes setup (SetupDialog), so "You're signed in" with who it is shows only for the moment that takes, or when the
  * screen is opened by someone already signed in. A sheet that was closed is nothing to report; a sign-in that failed
- * says so in one line and the buttons stay. The line says what the account is and never what is or is not read from
- * the Apple or Google account (the owner, 2026-11-11: such a promise was untrue). Pure, for tests.
+ * says so in one line and the buttons stay. The line says what the account is for, each part true today (this Mac,
+ * the phone app, the servers that take the account), never that it is optional (owner, 2026-11-26: a line that says so
+ * gets it skipped; Skip is still there) and never what is or is not read from the Apple or Google account (the owner,
+ * 2026-11-11: such a promise was untrue). Pure, for tests.
  */
 export function AccountSetupView({ account, providers, busy, onSignIn }: Pick<MacAccount, "account" | "providers" | "busy"> & { onSignIn: (p: Provider) => void }) {
   const signedIn = account.state === "signedIn";
@@ -189,7 +191,7 @@ export function AccountSetupView({ account, providers, busy, onSignIn }: Pick<Ma
         <div className="space-y-6 p-8">
           <div className="space-y-1">
             <h3 className="text-xl font-semibold tracking-tight text-foreground">{signedIn ? "Signed in" : "Sign in to Creator Toolset"}</h3>
-            {!signedIn && <p className="text-sm text-muted-foreground">An optional account for this app and creatortoolset.com.</p>}
+            {!signedIn && <p className="text-sm text-muted-foreground">One sign-in for this Mac, your phone and your servers.</p>}
           </div>
           {signedIn ? (
             <div className="flex items-center gap-3">

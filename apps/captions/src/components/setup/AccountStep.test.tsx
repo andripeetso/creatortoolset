@@ -71,10 +71,12 @@ it("the account screen is a sign-in screen: one button for each sign-in offered,
   expect(buttons(html)).toEqual(["Continue with Google", "Continue with Apple"]); // Google first
   expect(html.match(/<svg/g)).toHaveLength(2); // each carries its provider's mark
   expect(html).toContain("#4285F4"); // Google's, in its own colours
-  expect(html).not.toMatch(/GitHub|phone|settings|sync/i);
-  // a sign-in card: its own title and one line, and only what a sign-in does today
+  expect(html).not.toMatch(/GitHub|settings|sync/i);
+  // a sign-in card: its own title and one line, and only what a sign-in does today: this Mac, the phone app and the
+  // servers that take the account. Never the word optional: Skip says that
   expect(html).toContain("Sign in to Creator Toolset");
-  expect(html).toContain("An optional account for this app and creatortoolset.com.");
+  expect(html).toContain("One sign-in for this Mac, your phone and your servers.");
+  expect(html).not.toMatch(/optional/i);
   // never a promise about what is or is not read from the Apple or Google account
   expect(html + setup({ state: "signedIn", name: "Ana", email: "ana@tinyacrobatics.example" })).not.toMatch(/nothing else|is read|only your name/i);
   // while the system's sheet is up: that button says so, and no second sign-in can be started
