@@ -230,8 +230,11 @@ function SignIns({ signins, open, unlink }: { signins: SignIn[]; open: Provider[
   );
 }
 
-/** What the Mac app's account row's menu offers: one more sign-in for the account, dropping one it has, and signing the app out. */
-export function macAccountItems(o: { linked: Provider[]; open: Provider[]; link: (p: Provider) => void; unlink: (p: Provider) => void | Promise<void>; signOut: () => void | Promise<void> }): RowMenuItem[] {
+/**
+ * What the Mac app's account row's menu offers: one more sign-in for the account, dropping one it has, and signing the
+ * app out. `unlink` and `signOut` may answer later (a promise): the menu waits on it and shows its failure.
+ */
+export function macAccountItems(o: { linked: Provider[]; open: Provider[]; link: (p: Provider) => void; unlink: (p: Provider) => void; signOut: () => void }): RowMenuItem[] {
   return [
     ...o.open.map((p) => ({ label: `Add ${PROVIDER_NAME[p]}`, onSelect: async () => o.link(p) })),
     { label: "Sign out", onSelect: async () => o.signOut() },
