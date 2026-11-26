@@ -19,7 +19,9 @@ const { pairDevice } = await import("../lib/devices");
 const { jobsOf } = await import("./store");
 
 // its server may still be writing as the file ends: a few tries (the run removes its whole temp folder anyway)
-afterAll(() => rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }));
+afterAll(() => {
+  try { rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch { /* still written to: left for the run's own cleanup */ }
+});
 
 const add = (version: string, kind: string, state: string, device: string | null = null) =>
   Number(
