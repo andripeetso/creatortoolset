@@ -52,6 +52,9 @@ import { libraryWorkspace, serverWorks } from "../work/server-work";
  */
 
 const IDLE_MS = 2000;
+/** The pause after a background chore (a backfill, a sweep): one that says "did one" while doing next to nothing (a read
+ *  that fails at once) would otherwise run again with no pause and hold the server's only thread. */
+export const CHORE_MS = 250;
 const LEASE_S = 300;
 
 /**
@@ -364,6 +367,9 @@ export async function tick(now = Date.now(), kinds: readonly string[] = LANES.fl
   return true;
 }
 
+/** How long a lane waits before its next turn: none after a queued job, CHORE_MS after a chore, IDLE_MS when there was nothing. */
+export const nextTurnMs = (busy: boolean, chore: boolean): number => (!busy ? IDLE_MS : chore ? CHORE_MS : 0);
+
 /** Starts every lane's loops; the returned function stops them after their current jobs. */
 export function startLibraryWorker(): () => void {
   let stopped = false;
@@ -378,19 +384,20 @@ export function startLibraryWorker(): () => void {
     for (let i = 0; i < lane.size; i++) {
       const loop = async () => {
         let busy = false;
+        let chore = false;
         try {
           // an update waits for the jobs running here: no new one starts until it is done (server-update.ts)
           if (!draining()) {
             busy = await tick(Date.now(), lane.kinds);
-            if (!busy && lane.name === "files") busy = (await backfillSprite()) || (await backfillThumb()) || (await backfillQuick()) || backfillRoots() || (await backfillSoundKinds());
+            if (!busy && lane.name === "files") chore = busy = (await backfillSprite()) || (await backfillThumb()) || (await backfillQuick()) || backfillRoots() || (await backfillSoundKinds());
             // shot descriptions as a constant index: a video that has none and no look queued gets one (shots.ts sweepLook);
             // then the timelines (timeline.ts sweepWatch): a done look that wants one is queued again
-            if (!busy && lane.name === "looks") busy = (await sweepLook(libraryDb())) || sweepWatch(libraryDb(), (id, actor) => queueLook(libraryDb(), id, actor, true));
+            if (!busy && lane.name === "looks") chore = busy = (await sweepLook(libraryDb())) || sweepWatch(libraryDb(), (id, actor) => queueLook(libraryDb(), id, actor, true));
           }
         } catch (e) {
           console.error("[library] worker:", e);
         }
-        if (!stopped) setTimeout(loop, busy ? 0 : IDLE_MS).unref();
+        if (!stopped) setTimeout(loop, nextTurnMs(busy, chore)).unref();
       };
       void loop();
     }

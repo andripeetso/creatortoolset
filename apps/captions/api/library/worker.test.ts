@@ -9,7 +9,7 @@ const dir = mkdtempSync(path.join(scratch, "library-worker-"));
 process.env.DATA_DIR = dir;
 const { libraryDb } = await import("./db");
 const { claimJob, enqueueJob, finishJob, prepareFirst, takingClips } = await import("./jobs");
-const { LANES, nextJob, tick } = await import("./worker");
+const { LANES, nextJob, nextTurnMs, tick } = await import("./worker");
 const { blobs } = await import("./db");
 const { ffmpegSlot } = await import("./media/run");
 
@@ -431,4 +431,10 @@ describe("a clip hidden while it waits on Folders left out (report.ts)", () => {
     d.prepare("UPDATE assets SET left_hidden_at = NULL WHERE id = 'ast_hid'").run();
     expect(nextJob(d, Date.now() + 1000, ["describe"])).not.toBeNull();
   });
+});
+
+it("gives the server a pause after a background chore, none after a queued job", () => {
+  expect(nextTurnMs(true, false)).toBe(0);
+  expect(nextTurnMs(true, true)).toBeGreaterThan(0);
+  expect(nextTurnMs(false, false)).toBeGreaterThan(nextTurnMs(true, true));
 });

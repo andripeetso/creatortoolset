@@ -9,6 +9,7 @@ import { addMember, forgetAccount, ownedTeamWithMembers, workspaceOf } from "./l
 import { forgetGrants } from "./library/grants";
 import { deleteUserContent, keepDaysFor } from "./retention";
 import { dirBytes, keptView, type Stores } from "./kept";
+import { cpuProfile } from "./lib/cpu-profile";
 import type { KeptKind } from "../contracts/storage";
 import { clearTries, codeRequired, lockedAnywhere, setCodeRequired } from "./lib/sign-in-code";
 import { isPluginGateId, isRetiredAppId, isTool } from "../contracts/tools";
@@ -94,6 +95,16 @@ async function scanProjects(): Promise<AdminProject[]> {
   ]);
   return [...captions, ...enhance];
 }
+
+/**
+ * What keeps this server's own thread busy (a slow server with an idle machine): the busiest call paths over
+ * `seconds` (1–30, default 10). Code only, nobody's data; not on Creator Toolset Cloud, whose admins are its tenants'.
+ */
+adminApp.get("/cpu-profile", async (c) => {
+  if (isCloud()) return c.json({ error: "Not available on Creator Toolset Cloud" }, 404);
+  const seconds = Math.min(30, Math.max(1, Number(c.req.query("seconds")) || 10));
+  return c.json(await cpuProfile(seconds * 1000));
+});
 
 /* every project on the server, newest first — the admin Projects tab */
 adminApp.get("/projects", async (c) => {
