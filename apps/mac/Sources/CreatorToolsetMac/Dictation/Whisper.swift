@@ -587,9 +587,18 @@ enum ModelRegistry {
         !languages.isEmpty && languages.allSatisfy { $0 == "en" } ? englishID : standardID
     }
 
+    /// The Large v3 Turbo files this Mac's chip runs (WhisperKit's own table): the full ones on M2 and later, the
+    /// 626 MB ones on M1, where the full ones never finish loading.
+    static func turbo(supported: [String]) -> (variant: String, sizeMB: Int) {
+        let full = "openai_whisper-large-v3-v20240930_turbo"
+        return supported.contains(full) ? (full, 1620) : ("openai_whisper-large-v3-v20240930_626MB", 626)
+    }
+
+    private static let turboHere = turbo(supported: WhisperKit.recommendedModels().supported)
+
     static let shared: [TranscriptionModel] = [
         TranscriptionModel(id: "whisper-large-v3-turbo", displayName: "Whisper Large v3 Turbo",
-                           whisperKitID: "openai_whisper-large-v3-v20240930_turbo", sizeMB: 1620, languages: ["multi"]),
+                           whisperKitID: turboHere.variant, sizeMB: turboHere.sizeMB, languages: ["multi"]),
         TranscriptionModel(id: "parakeet-tdt-0.6b-v3", displayName: "Parakeet v3",
                            whisperKitID: nil, sizeMB: 494, languages: ["en"], parakeet: "FluidInference/parakeet-tdt-0.6b-v3-coreml"),
         TranscriptionModel(id: "parakeet-tdt-0.6b-v2", displayName: "Parakeet v2 (English)",
