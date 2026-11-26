@@ -57,13 +57,14 @@ const LEASE_S = 300;
 
 /**
  * Jobs at once, per lane. Pictures: one, apart from the files, so a card's picture never waits for a proxy that already
- * started (its decoder runs in a line of its own, media/run.ts). Files: one, since the decoder has its own server-wide limit. Transcripts: a key's
- * service takes many, and on this computer they never overlap anyway (device-transcribe.ts). AI: the Mac relay runs
- * two library calls at once per computer (background slots, mac-claude.ts) and queues the rest; an API key takes all six.
- * Shot descriptions: three videos at a time, apart from the descriptions, so a long video's calls never hold a clip's
- * description back; their AI calls run side by side, at most two at once per account on an AI provider (the background
- * requests its computer runs; more only queue there) and six on the account's own key, as its descriptions
- * (shots.ts callsAtOnce). A look waiting for a Mac to read its file holds no place here (mac-look.ts). Its picture read takes the one decoder slot in one go, a twentieth of a proxy's time or less: a
+ * started (its decoder runs in a line of its own, media/run.ts). Files: one, since the decoder has its own server-wide limit.
+ * The other lanes mostly wait on someone else's service, so they are wide: a big library on a key would otherwise take
+ * days. Transcripts: a key's service takes many, and on this computer they never overlap anyway (device-transcribe.ts).
+ * AI: on an AI provider the descriptions take its background slots (describe.ts describeSlot) and the rest wait in the
+ * queue; an API key takes all sixteen. Shot descriptions: eight videos at a time, apart from the descriptions, so a long
+ * video's calls never hold a clip's description back; their AI calls run side by side, at most BACKGROUND_SLOTS at once
+ * per account on an AI provider (the background requests its computer runs; more only queue there) and LOOK_KEY_CALLS
+ * on the account's own key (shots.ts callsAtOnce). A look waiting for a Mac to read its file holds no place here (mac-look.ts). Its picture read takes the one decoder slot in one go, a twentieth of a proxy's time or less: a
  * 20-minute 720p file in 8 to 48 s (the computer idle to busy; 59 s for 1080p at 60 fps), a real 45-minute one in 41 s
  * (171 s on one thread). Its sheets are runs of under 2 s each (7.8 s a sheet on a heavy 720p file), so other work
  * gets the slot in between.
@@ -73,9 +74,9 @@ const LEASE_S = 300;
 export const LANES = [
   { name: "pictures", kinds: ["probe", "thumb", "wave"], size: 1 },
   { name: "files", kinds: ["proxy", "sprite", "fingerprint"], size: 1 },
-  { name: "transcripts", kinds: ["transcribe"], size: 4 },
-  { name: "ai", kinds: ["describe", "embed"], size: 6 },
-  { name: "looks", kinds: ["look"], size: 3 },
+  { name: "transcripts", kinds: ["transcribe"], size: 8 },
+  { name: "ai", kinds: ["describe", "embed"], size: 16 },
+  { name: "looks", kinds: ["look"], size: 8 },
 ] as const;
 
 /** A card's own steps: they run before anything else, in any library. */

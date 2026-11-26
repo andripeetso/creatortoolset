@@ -63,8 +63,8 @@ export async function lookAllowed(db: DatabaseSync, versionId: string, actor: st
   return !!r && (await mayRead(actor, r.library_id, r.id, versionId));
 }
 
-/** The calls one account's shot descriptions make at once on its own Anthropic key (as the library's descriptions: worker.ts LANES ai). */
-export const LOOK_KEY_CALLS = 6;
+/** The calls one account's shot descriptions make at once on its own key, every video together (as the library's descriptions: worker.ts LANES ai); a 429 backs off and retries. */
+export const LOOK_KEY_CALLS = 16;
 
 /**
  * The look prompt's version for a level, in the stamp: Standard keeps LOOK_VERSION, so the lines written before levels
