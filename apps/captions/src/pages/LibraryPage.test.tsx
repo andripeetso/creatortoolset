@@ -332,13 +332,15 @@ describe("Media Library page", () => {
     expect(dialog.textContent).toContain("1 file failed · 2 of 4 made");
     await act(async () => [...dialog.querySelectorAll("button")].find((b) => b.textContent === "Retry")!.click());
     expect(server.retried).toEqual(["transcribe"]);
-    // the missing are B-roll: Skip B-roll beside Make saves the library's choice; the switches are Settings' alone
-    expect(dialog.querySelector('[role="switch"]')).toBeNull();
-    await act(async () => [...dialog.querySelectorAll("button")].find((b) => b.textContent === "Skip B-roll")!.click());
+    // Include B-roll, the one switch here (the New files switches are Settings'): off and on again saves the library's choice
+    const broll = () => dialog.querySelector<HTMLButtonElement>('[role="switch"][aria-label="Include B-roll"]')!;
+    expect(dialog.querySelectorAll('[role="switch"]')).toHaveLength(1);
+    expect(broll().getAttribute("aria-checked")).toBe("true");
+    await act(async () => broll().click());
     expect(server.patched.at(-1)).toEqual({ settings: { transcribeBroll: false } });
-    // skipped, the same place takes it back: Include B-roll is the only control for it
     await settle();
-    await act(async () => [...dialog.querySelectorAll("button")].find((b) => b.textContent === "Include B-roll")!.click());
+    expect(broll().getAttribute("aria-checked")).toBe("false");
+    await act(async () => broll().click());
     expect(server.patched.at(-1)).toEqual({ settings: { transcribeBroll: true } });
     await act(async () => {
       dialog.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));

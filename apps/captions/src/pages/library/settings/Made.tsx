@@ -164,13 +164,13 @@ export function Made({ library, onSettings, onBroll }: { library: LibrarySummary
           const total = m.have + m.missing + m.queued + (m.failed ?? 0) + (m.stopped ?? 0);
           const rest = total && state.tone !== "done" ? `${n(m.have)} of ${n(total)} made` : "";
           const runs = engineLine(m);
-          const why = missingWhy(m);
           // off: stopped or failed jobs are not wanted (no Retry); proxies and blurred copies off are not made at all (no Make)
           const retry = on && !!(m.failed || m.stopped);
           const makes = m.missing > 0 && !k.auto && (on || (k.kind !== "proxy" && !blur));
-          const broll = k.kind === "transcribe" && onBroll ? library.settings.transcribeBroll !== false : undefined;
-          // off: Make leaves clips sorted as B-roll out and the queued ones stop (made.ts); offered while some of the missing or queued are B-roll, or while off
-          const brollButton = broll === true ? !!m.broll : broll === false;
+          // Include B-roll, the Transcripts row's one switch: off, Make leaves clips sorted as B-roll out and the queued ones stop (made.ts).
+          // It shows the saved choice flipped while its save runs, and the B-roll count beside it instead of a line of its own
+          const broll = k.kind === "transcribe" && onBroll ? (library.settings.transcribeBroll !== false) !== (busy === "broll") : undefined;
+          const why = missingWhy(broll === undefined ? m : { ...m, broll: undefined });
           return (
             <Row
               key={m.kind}
@@ -184,7 +184,7 @@ export function Made({ library, onSettings, onBroll }: { library: LibrarySummary
                 </span>
               }
             >
-              {(retry || (m.queued > 0 && ((m.why && m.href) || (!k.auto && !k.ready && !blur))) || makes || brollButton) && (
+              {(retry || (m.queued > 0 && ((m.why && m.href) || (!k.auto && !k.ready && !blur))) || makes || broll !== undefined) && (
                 <span className="flex flex-wrap items-center gap-2">
                   {retry && (
                     <Button variant="outline" size="sm" disabled={busy !== null} onClick={() => void run(`retry-${m.kind}`, "retry", () => retryFailed(library.id, m.kind))}>
@@ -207,10 +207,12 @@ export function Made({ library, onSettings, onBroll }: { library: LibrarySummary
                       {busy === `make-${m.kind}` ? "Queueing" : `Make ${n(m.missing)} missing`}
                     </Button>
                   )}
-                  {brollButton && (
-                    <Button variant="outline" size="sm" disabled={busy !== null} onClick={() => void run("broll", broll ? "skip B-roll" : "include B-roll", () => onBroll!(!broll))}>
-                      {broll ? "Skip B-roll" : "Include B-roll"}
-                    </Button>
+                  {broll !== undefined && (
+                    <label className="ml-2 flex items-center gap-2 text-sm">
+                      <Switch aria-label="Include B-roll" checked={broll} disabled={busy !== null} onCheckedChange={(v) => void run("broll", v ? "include B-roll" : "skip B-roll", () => onBroll!(v))} />
+                      Include B-roll
+                      {!!m.broll && <span className="text-muted-foreground">{n(m.broll)}</span>}
+                    </label>
                   )}
                 </span>
               )}
