@@ -116,8 +116,8 @@ const PRIMARY = "min-w-28 bg-[var(--tint)] text-white hover:bg-[var(--tint)] hov
 /**
  * First-run setup in one window, five screens for everyone: your look (the theme, set as Settings → Appearance sets it)
  * → connect your AI → what you make (ticks the tools; the first project is made on leaving setup) → what you want to do
- * first (and what that still needs) → how you work best (in the app, in your own AI, or both), then Home. "In my own AI" and
- * "Both" get one more screen first, where Creator Toolset is installed in the AI apps on this computer. Leaving the
+ * first (the choice alone) → how you work best (in the app, or with an AI app too), then Home. "With an AI app" gets
+ * one more screen first, where Creator Toolset is installed in the AI apps on this computer. Leaving the
  * last screen saves `done`; no job to do is asked of her. Not now (the X, the footer link, Escape) hides it for this
  * browser and remembers the screen; Home's card brings it back. A click outside never closes it. Never shown on a
  * phone. The other screens (`?setup=connect`, `folders`, `own`) open alone and close with Done, and so does any path
@@ -294,15 +294,13 @@ export function SetupDialog() {
   const closeLabel = "Close";
   const { hint } = STEP[step];
   // "What do you want to do first?" with nothing picked has Skip for now in place of Continue, as Connect your AI has
-  const skips = !side && ((step === "agents" && !connected) || (step === "job" && !prefs.job) || (step === "folders" && !view.have.includes("library")) || (step === "social" && !view.have.includes("instagram")) || (at >= 0 && step === "account" && account.account.state !== "signedIn"));
+  const skips = !side && ((step === "agents" && !connected) || (step === "job" && !prefs.job) || (step === "social" && !view.have.includes("instagram")) || (at >= 0 && step === "account" && account.account.state !== "signedIn"));
 
-  // "Where are your videos?" is the Media Library's own setup, in place of this window: its Done goes on (and ticks the
-  // row), its Finish later skips. Nothing while it loads; with none to set up (not the owner) the window's own screen says Skip
+  // "Where are your videos?" is never on the first run's path (lib/setup.ts stepsFor): opened alone (the assistant's
+  // next steps, a link) it is the Media Library's own setup, in place of this window. Nothing while it loads; with
+  // none to set up (not the owner) the window's own screen shows
   if (step === "folders" && library === undefined) return null;
-  if (step === "folders" && library) {
-    const on = () => (side ? leave() : void next());
-    return <LibrarySetup library={library} onDone={() => (void load(), on())} onClose={on} stay={!side} />;
-  }
+  if (step === "folders" && library) return <LibrarySetup library={library} onDone={() => (void load(), leave())} onClose={leave} />;
 
   return (
     <Dialog open onOpenChange={(o) => !o && close()}>
@@ -382,7 +380,7 @@ export function SetupDialog() {
           ))}
 
           {step === "job" && (
-            <JobStep mine={mine} have={view.have} job={prefs.job ?? null} onPick={pickJob} ai={<AgentsStep picked={THIS_COMPUTER} onConnectedChange={onConnected} />} />
+            <JobStep mine={mine} job={prefs.job ?? null} onPick={pickJob} />
           )}
 
           {step === "social" && <SocialStep />}

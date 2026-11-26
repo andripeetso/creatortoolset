@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  dismissSetup, DOWNLOAD_URL, endIntro, firstProjectName, introPlays, introSeen, jobNeeds, openSetupAt, jobsFor, MAKE_NAMES, markIntroSeen, resumeStep, startIntro, toolsWithJob, useIntro, SETUP_PATH, SIDE_STEPS, setupDismissed, setupFinished, setupOpen, setupOpensItself,
+  dismissSetup, DOWNLOAD_URL, endIntro, firstProjectName, introPlays, introSeen, openSetupAt, jobsFor, MAKE_NAMES, markIntroSeen, resumeStep, startIntro, toolsWithJob, useIntro, SETUP_PATH, SIDE_STEPS, setupDismissed, setupFinished, setupOpen, setupOpensItself,
   hideReminders, remindLater, remindersOn, setupGapIds, setupAsked, setupGaps, setupLeft, useReminders, setupStepFromParam, shareDownload, stepsFor, toolForPath, toolsFor, seedSetup, useWorkPrefs,
 } from "./setup";
 import { useAuth } from "./auth";
 import { putCached, readCached } from "./local-cache";
-import { readiness, TOOLS, type Have, type Tool } from "@contracts/tools";
+import { TOOLS, type Have, type Tool } from "@contracts/tools";
 import { JOBS } from "@contracts/work-prefs";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -25,11 +25,13 @@ describe("setup steps", () => {
     expect(stepsFor("both", false)).not.toContain("account");
   });
 
-  it("puts the folders and the social accounts on the path after What do you make?, only when a tool picked needs them", () => {
-    expect(stepsFor("app", false, ["media"])).toEqual(["theme", "agents", "make", "folders", "job", "how"]);
-    expect(stepsFor("app", false, ["editor", "instagram"])).toEqual(["theme", "agents", "make", "folders", "social", "job", "how"]);
+  it("puts the social accounts on the path after What do you make? when the Content Analyzer is on, and never the Media Library's setup", () => {
+    // the Media Library's setup is its own window with its own steps: it opens in the Media Library, not in the first run
+    expect(stepsFor("app", false, ["media"])).toEqual(SETUP_PATH);
+    expect(stepsFor("app", false, ["editor", "instagram"])).toEqual(["theme", "agents", "make", "social", "job", "how"]);
     expect(stepsFor("both", true, ["instagram"])).toEqual(["theme", "agents", "make", "social", "job", "how", "own", "account"]);
     expect(stepsFor("app", false, ["captions", "workshop"])).toEqual(SETUP_PATH);
+    for (const tools of [["media"], ["editor"], ["media", "editor", "instagram"]] as const) expect(stepsFor("both", true, tools)).not.toContain("folders");
   });
 
   it("leaves the Media Library's own ?setup=1 to it, and still opens a setup screen asked for on its page", () => {
@@ -321,30 +323,6 @@ describe("What do you want to do first?", () => {
     expect(jobsFor(["workshop", "captions"])).toEqual(["write", "captions", "look"]);
     expect(jobsFor(["editor"])).toEqual(["edit", "look"]); // one of its two tools is enough
     expect(jobsFor([])).toEqual(["look"]);
-  });
-
-  it("lists a job's missing required rows from the tools' own list (readiness), each once, never an optional one", () => {
-    const have = ["deviceTranscripts", "library"] as const; // a fresh account on the Mac app
-    const edit = jobNeeds("edit", all, [...have]);
-    expect(edit.map((n) => n.anyOf)).toEqual([["ai"]]); // the library and transcripts are there; the AI Editor needs an AI
-    expect(edit).toEqual(readiness("editor", [...have]).missing); // the same rows as the AI Editor's card
-    expect(jobNeeds("ideas", all, [...have]).map((n) => n.form)).toEqual(["apify"]);
-    expect(jobNeeds("write", all, [...have]).map((n) => n.anyOf)).toEqual([["ownAi"]]);
-    for (const j of JOBS) expect(jobNeeds(j, all, []).some((n) => n.optional)).toBe(false);
-  });
-
-  it("counts the project as made (leaving setup makes it), and a job with nothing missing as ready", () => {
-    for (const j of JOBS) expect(jobNeeds(j, all, []).some((n) => n.anyOf.includes("project"))).toBe(false);
-    expect(jobNeeds("captions", all, [])).toEqual([]); // Caption Studio needs nothing it cannot do without
-    expect(jobNeeds("look", all, [])).toEqual([]);
-    expect(jobNeeds(null, all, [])).toEqual([]);
-    expect(jobNeeds("write", all, ["ownAi"])).toEqual([]);
-    // the Media Library and the AI Editor both need a library: one row
-    expect(jobNeeds("edit", all, []).filter((n) => n.anyOf.includes("library"))).toHaveLength(1);
-  });
-
-  it("leaves out the rows of a tool the account may not use", () => {
-    expect(jobNeeds("edit", ["media"], [])).toEqual(readiness("media", ["project"]).missing);
   });
 
   it("switches the job's tools on when setup is left", () => {

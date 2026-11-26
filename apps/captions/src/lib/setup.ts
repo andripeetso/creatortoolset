@@ -13,14 +13,14 @@ export type { SetupView };
 
 /**
  * First run: five screens for everyone (Pick your look, Connect your AI, What do you make?, What do you want to do
- * first?, How do you work best?), then Home. "In my own AI" and "Both" are followed by one more, `own`: Creator Toolset
- * is installed in her AI apps there, so the answer is carried out where she can see it. Questions and their installs
- * only: no job to do is asked of her.
+ * first?, How do you work best?), then Home. "With an AI app" is followed by one more, `own`: Creator Toolset is
+ * installed in her AI apps there, so the answer is carried out where she can see it. Questions and their installs
+ * only: no job to do is asked of her, and no tool's own setup opens in the middle (the assistant names those after).
  */
 export const SETUP_PATH = ["theme", "agents", "make", "job", "how"] as const;
 /**
- * Screens that open alone from a `?setup=` link and close with Done. `own` is also the path's last screen, and `folders`
- * and `social` join the path when a tool picked needs them (stepsFor). `check` is the whole checklist (Setup checklist).
+ * Screens that open alone from a `?setup=` link and close with Done. `own` is also the path's last screen, and `social`
+ * joins the path when the Content Analyzer is on (stepsFor). `check` is the whole checklist (Setup checklist).
  */
 export const SIDE_STEPS = ["connect", "folders", "own", "helper", "social", "check"] as const;
 /** The last screen of the path when the Mac app offers a sign-in (stepsFor): the person's Creator Toolset account, skippable. */
@@ -29,14 +29,14 @@ export const SETUP_STEPS = [...SETUP_PATH, ...SIDE_STEPS, ACCOUNT_STEP] as const
 export type SetupStep = (typeof SETUP_STEPS)[number];
 
 /**
- * The click path: the five screens, `own` after them when the answer to the last is "In my own AI" or "Both", and last
- * of all `account` when the Mac app offers a sign-in that works (`account`; today none does, so the path ends before it).
- * After "What do you make?": "Where are your videos?" when the Media Library or the AI Editor is on, and the social
- * accounts when the Content Analyzer is (new users got stuck when these were left for later: owner, 2026-11-23).
+ * The click path: the five screens, `own` after them when the answer to the last is "With an AI app" (`both`, or a
+ * saved `chat`), and last of all `account` when the Mac app offers a sign-in (`account`).
+ * After "What do you make?": the social accounts when the Content Analyzer is on. The Media Library's setup is never on
+ * the path (owner, 2026-11-26: it is another window with steps of its own, and it cut the first run in two): the
+ * Media Library asks for it when it is opened, and the assistant's next steps name it (setupLeft).
  */
 export const stepsFor = (talk?: string | null, account = false, tools: readonly Tool[] = []): readonly SetupStep[] => [
   ...SETUP_PATH.slice(0, 3),
-  ...(tools.includes("media") || tools.includes("editor") ? (["folders"] as const) : []),
   ...(tools.includes("instagram") ? (["social"] as const) : []),
   ...SETUP_PATH.slice(3),
   ...(talk === "chat" || talk === "both" ? (["own"] as const) : []),
@@ -394,28 +394,17 @@ export async function confirmHeavy(feature: Feature, count = 1): Promise<boolean
   return confirmDialog({ title: "This can use up your plan's limit", body: warning, ok: "Run it anyway" });
 }
 
-/**
- * "What do you want to do first?": each answer's words, the tools it is done with and the line that says it is ready.
- */
-export const JOB_SETUP: Record<Job, { name: string; tools: readonly Tool[]; ready: string }> = {
-  ideas: { name: "Find ideas in posts I like", tools: ["instagram"], ready: "You're ready to find ideas." },
-  write: { name: "Write scripts and posts", tools: ["workshop"], ready: "You're ready to write." },
-  edit: { name: "Edit my videos", tools: ["media", "editor"], ready: "You're ready to edit your videos." },
-  captions: { name: "Add captions to a video", tools: ["captions"], ready: "You're ready to add captions." },
-  look: { name: "Just look around", tools: [], ready: "" },
+/** "What do you want to do first?": each answer's words and the tools it is done with. */
+export const JOB_SETUP: Record<Job, { name: string; tools: readonly Tool[] }> = {
+  ideas: { name: "Find ideas in posts I like", tools: ["instagram"] },
+  write: { name: "Write scripts and posts", tools: ["workshop"] },
+  edit: { name: "Edit my videos", tools: ["media", "editor"] },
+  captions: { name: "Add captions to a video", tools: ["captions"] },
+  look: { name: "Just look around", tools: [] },
 };
 
 /** The answers this account is offered: those with a tool it may use (`mine`), and Just look around. */
 export const jobsFor = (mine: readonly Tool[]): Job[] => JOBS.filter((j) => j === "look" || JOB_SETUP[j].tools.some((t) => mine.includes(t)));
-
-/**
- * What a job still needs: the required rows (contracts/tools.ts readiness, the list Home's dots and a tool's card read)
- * of its tools this account may use, each once. The project counts as there: leaving setup makes it.
- */
-export function jobNeeds(job: Job | null | undefined, mine: readonly Tool[], have: readonly Have[]): Need[] {
-  if (!job) return [];
-  return missingFor(JOB_SETUP[job].tools.filter((t) => mine.includes(t)), [...have, "project"]);
-}
 
 /** The required rows still missing for these tools, each once. */
 function missingFor(tools: readonly Tool[], have: readonly Have[]): Need[] {

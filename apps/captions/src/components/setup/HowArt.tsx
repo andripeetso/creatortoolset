@@ -88,14 +88,6 @@ export function AppArt() {
   );
 }
 
-export function ChatArt() {
-  return (
-    <Frame>
-      <ChatInside x={0} />
-    </Frame>
-  );
-}
-
 /** Both: your AI's chat on the left, the app on the right, linked in the middle. */
 export function BothArt() {
   return (

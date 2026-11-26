@@ -91,8 +91,8 @@ export function NeedLine({ met, name, line, button, children }: { met: boolean; 
   );
 }
 
-/** A need's line. `form`: what Set up opens in place of the need's own form (setup opens its own Connect your AI). */
-export function NeedRow({ need, met, welcome, focus, form }: { need: Need; met: boolean; welcome?: boolean; focus?: boolean; form?: ReactNode }) {
+/** A need's line: its button opens the need's own form under it. */
+export function NeedRow({ need, met, welcome, focus }: { need: Need; met: boolean; welcome?: boolean; focus?: boolean }) {
   const [open, setOpen] = useState(false);
   return (
     <NeedLine
@@ -105,13 +105,12 @@ export function NeedRow({ need, met, welcome, focus, form }: { need: Need; met: 
         </Button>
       }
     >
-      {open &&
-        (form ?? (
-          <>
-            <NeedForm need={need} />
-            <WaySections need={need} />
-          </>
-        ))}
+      {open && (
+        <>
+          <NeedForm need={need} />
+          <WaySections need={need} />
+        </>
+      )}
     </NeedLine>
   );
 }

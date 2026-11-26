@@ -137,7 +137,7 @@ and opens `http://127.0.0.1:43128` once `/api/health` answers (polled every 200 
    (`SETUP_PATH` in `src/lib/setup.ts`): **Connect your AI** (a row per AI app on this Mac, whose one button is
    Install, Sign in or Connect, whichever is still missing: `AiPanel.tsx`), **What do you make?** (turns on the
    tools that fit and makes the first workspace when the account has none) and **How do you work best?** (in the
-   app, in your own AI, or both). After "In my own AI" or "Both", **Add Creator Toolset to your AI** follows. The
+   app, or with an AI app). After "With an AI app", **Add Creator Toolset to an AI app** follows. The
    AI screen looks again every 20 s and whenever the app comes to the front, so an AI app installed in Terminal
    shows up without a reload. Settings → Tools shows what each tool still needs, and after **Not now** Home keeps
    a **Finish setting up** card that opens setup again.

@@ -2,29 +2,20 @@ import type { ComponentType, ReactNode } from "react";
 import { Check } from "lucide-react";
 import type { WorkPrefs } from "@contracts/work-prefs";
 import { cn } from "@/lib/utils";
-import { AppArt, BothArt, ChatArt } from "./HowArt";
+import { AppArt, BothArt } from "./HowArt";
 
 type Talk = WorkPrefs["talk"];
 
+/**
+ * Two answers (owner, 2026-11-26: three cards nobody could tell apart, and two of them led to the same setup). The one
+ * thing setup needs to know is whether an AI app does the work too. No is `app`: setup is done. Yes is `both`: the next
+ * screen adds Creator Toolset to the AI apps on this computer, and the work still shows in the app. Each card's line
+ * says what picking it does next. `chat` (the AI app only, with the app's own assistant quiet) stays a saved answer an
+ * AI app can set (api/mcp.ts); here it shows as the second card.
+ */
 const WAYS: Array<{ talk: Talk; name: string; what: string; art: ComponentType }> = [
-  {
-    talk: "app",
-    name: "In the app",
-    what: "Plan, edit and review in the app.",
-    art: AppArt,
-  },
-  {
-    talk: "chat",
-    name: "In an AI app",
-    what: "Chat in Claude Code or Codex.",
-    art: ChatArt,
-  },
-  {
-    talk: "both",
-    name: "Both",
-    what: "Chat in an AI app, and see and edit the work in the app.",
-    art: BothArt,
-  },
+  { talk: "app", name: "In the app", what: "Nothing more to set up.", art: AppArt },
+  { talk: "both", name: "With an AI app", what: "Adds Creator Toolset to Claude Code or Codex on the next screen.", art: BothArt },
 ];
 
 /** Setup's picture card (How do you work best?, Pick your look): a picture of the answer, its name and (`what`) one line. */
@@ -66,12 +57,12 @@ export function PictureCard({ on, onClick, art, name, what }: { on: boolean; onC
   );
 }
 
-/** Setup's question about where they talk to the AI (work-prefs `talk`). Three cards side by side, each a picture of it. */
+/** Setup's question about where they talk to the AI (work-prefs `talk`). Two cards side by side, each a picture of it. */
 export function HowPicker({ value, onChange }: { value: Talk; onChange: (v: Talk) => void }) {
   return (
-    <div role="radiogroup" aria-label="How do you work best?" className="grid gap-4 sm:grid-cols-3">
+    <div role="radiogroup" aria-label="How do you work best?" className="grid gap-4 sm:grid-cols-2">
       {WAYS.map((w) => (
-        <PictureCard key={w.talk} on={w.talk === value} onClick={() => onChange(w.talk)} art={<w.art />} name={w.name} what={w.what} />
+        <PictureCard key={w.talk} on={w.talk === value || (w.talk === "both" && value === "chat")} onClick={() => onChange(w.talk)} art={<w.art />} name={w.name} what={w.what} />
       ))}
     </div>
   );

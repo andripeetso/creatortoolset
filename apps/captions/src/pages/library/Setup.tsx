@@ -253,7 +253,7 @@ function FolderRow({ title, tip, path, made, empty = LIBRARY_WORDS.notSet, tight
  * The setup. `onDone` gets the saved library.
  * `inline`: the Library page itself until the library is set up, with nothing to close it.
  */
-export function LibrarySetup({ library, inline = false, stay, onDone, onClose }: { library: LibrarySummary; inline?: boolean; stay?: boolean; onDone: (l: LibrarySummary) => void; onClose: () => void }) {
+export function LibrarySetup({ library, inline = false, onDone, onClose }: { library: LibrarySummary; inline?: boolean; onDone: (l: LibrarySummary) => void; onClose: () => void }) {
   const project = useWorkspace((s) => currentProject(s));
   const workspace = { id: project?.id ?? "", name: project?.name ?? "Media Library" };
   const kind: Kind = useAuth((s) => s.kind);
@@ -633,8 +633,7 @@ export function LibrarySetup({ library, inline = false, stay, onDone, onClose }:
   return (
     <Dialog open onOpenChange={(open) => !open && !busy && onClose()}>
       {/* no option focused on open: the first one showed a focus ring before anything was pressed */}
-      {/* `stay`: a step of first-run setup, where a press outside never moves on (only Finish later does) */}
-      <DialogContent onOpenAutoFocus={(e) => e.preventDefault()} onInteractOutside={stay ? (e) => e.preventDefault() : undefined} className="flex h-[min(38rem,calc(100dvh-2rem))] w-[min(36rem,calc(100vw-2rem))] max-w-none flex-col gap-0 overflow-hidden p-0 sm:max-w-none">
+      <DialogContent onOpenAutoFocus={(e) => e.preventDefault()} className="flex h-[min(38rem,calc(100dvh-2rem))] w-[min(36rem,calc(100vw-2rem))] max-w-none flex-col gap-0 overflow-hidden p-0 sm:max-w-none">
         {sheet}
       </DialogContent>
     </Dialog>
