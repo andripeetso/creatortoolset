@@ -41,7 +41,7 @@ const CRASHES_PER_HOUR = 20;
 const ID = /^[a-f0-9]{32}$/;
 /** The page names a check-in can carry: the app's own pages. Anything else (a plug-in's page, a typed URL) is "other". */
 const PAGES = new Set([
-  "home", "analyzer", "captions", "clips", "community", "documents", "editor", "enhance", "finals", "guides", "instagram",
+  "home", "analyzer", "captions", "clips", "community", "design", "documents", "editor", "enhance", "finals", "guides", "instagram",
   "library", "media", "projects", "record", "review", "settings", "stories", "video-notes", "workshop",
 ]);
 
