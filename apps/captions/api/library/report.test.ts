@@ -193,4 +193,8 @@ describe("location agents: the computers report, the server records", () => {
     expect(said.filter((x) => x === "BEGIN IMMEDIATE" || x === "COMMIT")).toEqual(["BEGIN IMMEDIATE", "COMMIT"]);
     expect(d.prepare("SELECT COUNT(*) AS n FROM version_places WHERE device = ? AND state = 'verified'").get(device.id)).toEqual({ n: 3 });
   });
+
+  it("opens the library database so a commit never waits for the disk (one flush a row stopped the whole server)", () => {
+    expect(libraryDb().prepare("PRAGMA synchronous").get()).toEqual({ synchronous: 1 }); // NORMAL
+  });
 });

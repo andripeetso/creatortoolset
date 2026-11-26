@@ -653,8 +653,10 @@ export async function applyReport(dev: Device, folders: ReportFolder[], now = Da
 /**
  * POST /api/devices/relay/filmed: when, where and by what a known file of a folder of computer `dev` was filmed, read
  * on that computer (the report's `filmed` answer). Every version at that path and size gets what its probe lacks
- * (on-mac.ts patchFilmed); one whose date or place is new leaves the shoot the app filed it in for its own (shoots.ts
- * reshoot). Returns how many versions it read for.
+ * (on-mac.ts patchFilmed), its clip's current one or not: the report asks for each (applyFolder `unread`), and an
+ * original behind its blurred copy whose answer was dropped was asked for again at every listing, with the 200 a report
+ * asks for never getting past it. A clip whose current version's date or place is new leaves the shoot the app filed it
+ * in for its own (shoots.ts reshoot). Returns how many versions it read for.
  */
 export async function filmedForDevice(dev: Device, folderId: string, x: { path: string; size: number } & Filmed): Promise<number | string> {
   if (dev.owner === "workspace") return "Not for this computer";
@@ -663,12 +665,15 @@ export async function filmedForDevice(dev: Device, folderId: string, x: { path: 
   const d = db();
   const rows = d
     .prepare(
-      `SELECT v.id AS version, a.id, a.library_id, a.kind, a.created_by FROM version_places p JOIN asset_versions v ON v.id = p.version_id JOIN assets a ON a.id = v.asset_id
-       WHERE p.device = ? AND p.folder_id = ? AND p.kind = 'original' AND p.path = ? AND v.bytes = ? AND a.current_version_id = v.id`,
+      `SELECT v.id AS version, a.id, a.library_id, a.kind, a.created_by, a.current_version_id = v.id AS current FROM version_places p JOIN asset_versions v ON v.id = p.version_id JOIN assets a ON a.id = v.asset_id
+       WHERE p.device = ? AND p.folder_id = ? AND p.kind = 'original' AND p.path = ? AND v.bytes = ?`,
     )
-    .all(dev.id, folderId, nfc(x.path), x.size) as { version: string; id: string; library_id: string; kind: string; created_by: string }[];
+    .all(dev.id, folderId, nfc(x.path), x.size) as { version: string; id: string; library_id: string; kind: string; created_by: string; current: number }[];
   for (const r of rows) {
-    if ((await patchFilmed(d, r.version, x)) && organizeOf(r.library_id, d) === "ai") reshoot(d, r);
+    const moved = await patchFilmed(d, r.version, x);
+    // only the current version is what the clip shows and is filed by
+    if (!r.current) continue;
+    if (moved && organizeOf(r.library_id, d) === "ai") reshoot(d, r);
     libraryChanged(r.library_id);
   }
   return rows.length;

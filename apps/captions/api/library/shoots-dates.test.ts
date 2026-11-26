@@ -13,6 +13,7 @@ const { createUser } = await import("../users");
 const app = (await import("../boot")).default;
 const { libraryDb } = await import("./db");
 const { refileShoots } = await import("./organize");
+const { indexOnMac } = await import("./on-mac");
 
 createUser("tiny", "password1");
 const login = await app.request("/api/auth/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ username: "tiny", password: "password1" }) });
@@ -106,5 +107,33 @@ describe("Smart folders: a date a Mac reads later", () => {
     const res = await app.request("/api/devices/relay/filmed", { method: "POST", headers: auth, body: JSON.stringify({ folder: id, path: f.path, size: f.bytes, capturedAt: FILMED, tz: -360, camera: false }) });
     expect(res.status).toBe(200);
     expect(JSON.parse(probed().probe)).toMatchObject({ capturedAt: FILMED, tz: -300, camera: false });
+  });
+
+  it("keeps what a computer read of an original behind its blurred copy, and never asks for it again", async () => {
+    const dir = path.join(process.env.DATA_DIR!, "Tiny Blurred");
+    mkdirSync(dir, { recursive: true });
+    const r = (await (await app.request("/api/devices", { method: "POST", headers: { ...json, cookie }, body: JSON.stringify({ name: "Tiny Mac", machineId: "mac-1234-abcd" }) })).json()) as { device: { id: string }; token: string };
+    const auth = { ...json, authorization: `Bearer ${r.token}` };
+    expect((await app.request("/api/devices/storage/folders", { method: "POST", headers: { ...json, cookie }, body: JSON.stringify({ role: "footage", host: r.device.id, path: dir }) })).status).toBe(200);
+    const { folders: listed } = (await (await app.request("/api/devices/relay/folders", { headers: auth })).json()) as { folders: { id: string; path: string }[] };
+    const id = listed.find((f) => f.path === dir)!.id;
+    const f = { path: path.join(dir, "IMG_7001.MOV"), bytes: 4321, mtime: COPIED, quick: "7".repeat(64) };
+    expect((await app.request("/api/devices/relay/index", { method: "POST", headers: auth, body: JSON.stringify({ folder: id, name: "IMG_7001.MOV", path: f.path, size: f.bytes, quick: f.quick, frames: [] }) })).status).toBe(200);
+    // its blurred copy becomes the clip's current version: the original stays in its folder, no longer current
+    const d = libraryDb();
+    const clip = assetOf("IMG_7001.MOV");
+    const original = (d.prepare("SELECT current_version_id AS v FROM assets WHERE id = ?").get(clip.id) as { v: string }).v;
+    d.prepare("UPDATE asset_versions SET full_sha256 = ? WHERE id = ?").run("a".repeat(64), original);
+    await indexOnMac(clip.library_id, "tiny", { name: "IMG_7001 blurred.mp4", path: path.join(dir, "Blurred", "IMG_7001 blurred.mp4"), size: 999, quick: "8".repeat(64), device: r.device.id, frames: [], blurredOf: "a".repeat(64) });
+    expect((d.prepare("SELECT current_version_id AS v FROM assets WHERE id = ?").get(clip.id) as { v: string }).v).not.toBe(original);
+    const report = async () =>
+      (await (
+        await app.request("/api/devices/relay/report", { method: "POST", headers: auth, body: JSON.stringify({ reportVersion: 2, machineId: "mac-1234-abcd", drivers: [], homes: [], filmed: true, folders: [{ id, state: "ok", scan: crypto.randomUUID(), complete: true, files: [f] }] }) })
+      ).json()) as { filmed?: { path: string }[] };
+    expect((await report()).filmed?.map((x) => x.path)).toEqual([f.path]);
+    const res = await app.request("/api/devices/relay/filmed", { method: "POST", headers: auth, body: JSON.stringify({ folder: id, path: f.path, size: f.bytes, capturedAt: FILMED, tz: -360, camera: false }) });
+    expect(await res.json()).toEqual({ versions: 1 });
+    expect(JSON.parse((d.prepare("SELECT probe FROM asset_versions WHERE id = ?").get(original) as { probe: string }).probe)).toMatchObject({ capturedAt: FILMED, camera: false });
+    expect((await report()).filmed).toBeUndefined();
   });
 });

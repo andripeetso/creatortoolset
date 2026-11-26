@@ -21,7 +21,10 @@ export function openLibraryDb(file: string): DatabaseSync {
   const db = new DatabaseSync(file);
   if (file !== ":memory:") chmodSync(file, 0o600); // it holds libraries' own bucket keys (storage_config); the -wal and -shm files follow its mode
   // foreign keys (node:sqlite's default is on) are off while migrations run: a table rebuild (migration 3) drops a parent table
-  db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = OFF; PRAGMA busy_timeout = 5000;");
+  // synchronous NORMAL: a commit no longer waits for the disk. node:sqlite stops every request while a statement runs, and
+  // a flush a write (FULL, the default) made 600 one-row writes a 7 s stop of the whole server. The file stays whole
+  // either way; what a power cut can lose is the last moments of writes, never a stop or a restart of the app
+  db.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = OFF; PRAGMA busy_timeout = 5000;");
   const done = Number((db.prepare("PRAGMA user_version").get() as { user_version: number }).user_version);
   for (let i = done; i < MIGRATIONS.length; i++) {
     db.exec("BEGIN");
