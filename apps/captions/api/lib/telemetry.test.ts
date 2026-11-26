@@ -56,7 +56,8 @@ describe("usage and crash reports", () => {
 
   it("names the AI programs a person set up under their own account, not only the server's", async () => {
     process.env.CT_CHANNEL = "release";
-    const { saveSettings, DEFAULT_SETTINGS } = await import("./providers");
+    const { saveSettings } = await import("./providers");
+    const { DEFAULT_SETTINGS } = await import("../../contracts/providers");
     await saveSettings({ ...structuredClone(DEFAULT_SETTINGS), instances: [{ id: "codex", driver: "codex", name: "Codex", enabled: true }] }, "ana");
     await t.sendCheckin();
     expect(sent[0].body.ai).toContain("codex");
