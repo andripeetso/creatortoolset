@@ -77,9 +77,7 @@ const STATIC_ROWS = [
   { section: "library", id: "library-search", title: "Search", keywords: ["media library", "search", "meaning", "picture", "embeddings"] },
   { section: "library", id: "library-shot-detail", title: "Shot detail", keywords: ["media library", "shot descriptions", "light", "standard", "detailed", "frames", "density"] },
   { section: "library", id: "library-shot-budget", title: "Monthly budget", keywords: ["media library", "shot descriptions", "budget", "cost", "spending", "cap", "limit"] },
-  { section: "sound-effects", id: "sfx-library", title: "Your library", keywords: ["sound effects", "sfx", "sounds", "folder", "library"] },
-  { section: "sound-effects", id: "sfx-starter", title: "Starter set", keywords: ["sound effects", "sfx", "install", "remove", "starter", "kenney", "cc0", "sounds"] },
-  { section: "sound-effects", id: "sfx-sources", title: "Sources", keywords: ["sound effects", "sfx", "licence", "license", "cc0", "kenney", "source", "credit"] },
+  { section: "library", id: "sfx", title: "Sound effects", keywords: ["sfx", "sounds", "folder", "starter set", "install", "remove", "kenney", "cc0", "licence", "license", "source", "credit"] },
   // Providers: the AI tools that do the work, per computer
   { section: "providers", id: "default-ai", title: "Default", keywords: ["provider", "default ai", "which ai", "model", "thinking"] },
   { section: "providers", id: "tool-ai", title: "AI by job", keywords: ["provider", "tool", "job", "override", "different ai", "use default", "model", "thinking"] },

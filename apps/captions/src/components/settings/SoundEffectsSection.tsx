@@ -24,8 +24,9 @@ async function call<T>(url: string, method: string, workspace: string | null): P
 }
 
 /**
- * Settings → Sound effects (the Workspace group): the workspace's Sound effects folder, the starter set (the CC0 sounds the
- * app ships, Install and Remove) and where the sounds come from. Every request names the workspace shown.
+ * Settings → Media Library, Sound effects: the Sound effects folder of the library of the workspace shown, the starter set
+ * (the CC0 sounds the app ships, Install and Remove) and where its sounds come from. Every request names that workspace.
+ * The page's one workspace selector is the Media Library's or this one's, whichever is drawn first (workspace-pick.tsx).
  */
 export function SoundEffectsSection() {
   const own = useOwnWorkspaces();
@@ -54,7 +55,7 @@ export function SoundEffectsSection() {
     return (
       <>
         <WorkspacePick mode="one" only={own} />
-        <Section title="Sound effects">
+        <Section id="sfx" title="Sound effects">
           <Card>{state.error ? <ErrorRow title="Could not load sound effects" detail={state.error} retry={() => void state.refresh().catch(() => {})} /> : <LoadingRow />}</Card>
         </Section>
       </>
@@ -65,22 +66,14 @@ export function SoundEffectsSection() {
   return (
     <>
       <WorkspacePick mode="one" only={own} />
-      {error && (
+      <Section id="sfx" title="Sound effects">
         <Card>
-          <ErrorRow title="Could not change the starter set" detail={error} />
-        </Card>
-      )}
-      <Section title="Your library">
-        <Card>
+          {error && <ErrorRow title="Could not change the starter set" detail={error} />}
           <ListRow
-            title="Sound effects"
+            title="Folder"
             subtitle={s.library ? `${s.count} ${s.count === 1 ? "sound" : "sounds"}` : "No Media Library here"}
             actions={s.folder ? <Button asChild variant="outline" size="sm"><Link to={folderTo(s.folder)}>Open folder</Link></Button> : undefined}
           />
-        </Card>
-      </Section>
-      <Section title="Starter set">
-        <Card>
           <ListRow
             title="Starter set"
             subtitle={`${s.starter.total} CC0 sounds from the packs below`}
@@ -100,10 +93,6 @@ export function SoundEffectsSection() {
               </>
             }
           />
-        </Card>
-      </Section>
-      <Section title="Sources">
-        <Card>
           {s.packs.map((p) => (
             <ListRow
               key={p.name}

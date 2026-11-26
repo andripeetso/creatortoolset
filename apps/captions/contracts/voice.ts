@@ -165,7 +165,7 @@ export function speechReasonLine(reason: SpeechReason, engine?: string): string 
     case "rate-limit":
       return `${who} has no credit left or hit its limit. Check the account, or use a speech model on one of your computers.`;
     case "model-unavailable":
-      return "The speech model is not available. Choose another in Settings → AI → Voice.";
+      return "The speech model is not available. Choose another in Settings → Voice.";
     case "computer-off":
       return "Needs one of your computers with a speech model, turned on. Turn one on, or add a Deepgram or OpenAI key in Settings → API keys.";
     case "unavailable":

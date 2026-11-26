@@ -12,7 +12,7 @@ import { ProvidersSection } from "./ProvidersSection";
 import { WorkspaceSection } from "./WorkspaceSection";
 import { ComputersSection } from "./ComputersSection";
 import { FoldersSection, StorageSection } from "./FoldersSection";
-import { WorkspacePoliciesSection } from "./WorkspacePoliciesSection";
+import { VideoWorkSection } from "./VideoWorkSection";
 import { WorkspaceDetailsSection } from "./WorkspaceDetailsSection";
 import { MediaLibrarySection } from "./MediaLibrarySection";
 import { SoundEffectsSection } from "./SoundEffectsSection";
@@ -36,8 +36,12 @@ export const PAGE_BODIES: Record<SettingsPageId, PageBody> = {
   folders: FoldersSection,
   storage: StorageSection,
   workspace: WorkspaceDetailsSection,
-  library: MediaLibrarySection,
-  "sound-effects": SoundEffectsSection,
+  library: () => (
+    <>
+      <MediaLibrarySection />
+      <SoundEffectsSection />
+    </>
+  ),
   providers: ProvidersSection,
   voice: VoiceSection,
   dictation: DictationSection,
@@ -48,7 +52,7 @@ export const PAGE_BODIES: Record<SettingsPageId, PageBody> = {
   keys: ApiKeysSection,
   "own-ai": OwnAiSection,
   servers: ServersSection,
-  policies: WorkspacePoliciesSection,
+  policies: VideoWorkSection,
   team: WorkspaceSection,
   admin: AdminSection,
   account: AccountSection,

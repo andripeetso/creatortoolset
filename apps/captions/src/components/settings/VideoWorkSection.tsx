@@ -10,26 +10,26 @@ type Admin = NonNullable<ServerWorkView["admin"]>;
 const RENDERING_TIP = "On: this server does the video work (renders, proxies, transcripts, analysis). Off: everyone uses their own computer.";
 
 /**
- * Settings → Workspace policies (the Server group, admin): where each workspace's video work runs. On a server by
+ * Settings → Video work (the Server group, admin): whether this server does video work, and for which workspaces. On a server by
  * address the switch saves here; on This Mac and on Creator Toolset Cloud the master is shown read-only, and Cloud has no
  * per-workspace rows (they would list every customer's workspaces).
  */
-export function WorkspacePoliciesSection() {
+export function VideoWorkSection() {
   const [view, setView] = useState<ServerWorkView | null>(null);
   const [failed, setFailed] = useState(false);
   const load = useCallback(() => call<ServerWorkView>("/api/work/server-work").then(setView, () => setFailed(true)), []);
   useEffect(() => void load(), [load]);
   if (failed && !view)
     return (
-      <Section title="Workspace policies">
+      <Section title="Video work">
         <Card>
-          <ErrorRow title="Could not load workspace policies" retry={() => (setFailed(false), void load())} />
+          <ErrorRow title="Could not load video work" retry={() => (setFailed(false), void load())} />
         </Card>
       </Section>
     );
   if (!view)
     return (
-      <Section title="Workspace policies">
+      <Section title="Video work">
         <Card>
           <LoadingRow />
         </Card>
@@ -39,7 +39,7 @@ export function WorkspacePoliciesSection() {
   const save = (body: { on: boolean } | { all: true } | { only: string[] }) =>
     markSave(call<Admin>("/api/work/server-work", body)).then((next) => setView((v) => (v ? { ...v, admin: next } : v)), (e) => saveFailed(msg(e)));
   return (
-    <Section title="Workspace policies">
+    <Section title="Video work">
       <Card>
         {a ? (
           <Row

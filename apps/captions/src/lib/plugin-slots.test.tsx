@@ -89,6 +89,11 @@ describe("Settings sections", () => {
     expect(settingsWithPlugins(builtin, [grouped]).map((s) => s.id)).toEqual(["general", "providers", "ai-extra", "keys", "footage"]);
   });
 
+  it("a section naming a block the sidebar does not have joins Tool settings, never a block of its own", () => {
+    const old = defineWebPlugin({ id: "old", settings: [{ id: "old-ai", title: "Old", icon: Hand, group: "Hardware", body: null }] });
+    expect(settingsWithPlugins(builtin, [old]).at(-1)).toMatchObject({ id: "old-ai", group: "Tool settings" });
+  });
+
   it("keeps the built-in order when no plug-in adds one", () => {
     expect(settingsWithPlugins(builtin, []).map((s) => s.id)).toEqual(["general", "providers", "keys"]);
   });

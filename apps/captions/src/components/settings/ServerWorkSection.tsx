@@ -7,7 +7,7 @@ import { ErrorRow, ListRow, Row, saveFailed, SettingsSelect, markSave } from "./
 
 /**
  * Where video work runs (api/work/server-work.ts): the person's Load balancing over every place they may use (Settings →
- * Computers). The admin's switches are Settings → Workspace policies (WorkspacePoliciesSection.tsx).
+ * Computers). The admin's switches are Settings → Video work (VideoWorkSection.tsx).
  */
 
 /** The key the server's row saves under in Load balancing (api/work/server-work.ts SERVER_PLACE). */

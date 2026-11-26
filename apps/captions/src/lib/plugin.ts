@@ -28,7 +28,7 @@ export interface SettingsEntry {
   id: string;
   title: string;
   icon: LucideIcon;
-  /** The sidebar block it sits in ("AI", "Hardware", "Connections", "Tool settings", "People"); none = the top block (a plug-in's: Tool settings). */
+  /** The sidebar block it sits in ("You", "Workspace", "Server", "Tool settings"); none, or a block the sidebar does not have, = Tool settings. */
   group?: string;
   adminOnly?: boolean;
   body?: ReactNode;
@@ -350,7 +350,8 @@ export function itemActionsFor(me: Me | null, plugins: WebPlugin[], kind: ItemKi
 
 /**
  * The built-in Settings sections with each plug-in's sidebar sections placed in them: a section with a `group` goes after
- * the last section of that group; one without goes in the Plug-ins block at the end. A server-wide one (adminTab) is a
+ * the last section of that group; one without, or one naming a group no built-in page is in (an older plug-in's "AI":
+ * never a block of one page), goes in the Tool settings block at the end. A server-wide one (adminTab) is a
  * section there too, for admins on a hosted server (nav.ts). A plug-in section may not reuse a built-in id (it would
  * hide that section): throws.
  */
@@ -368,7 +369,7 @@ export function settingsWithPlugins<T extends SettingsEntry>(
   }
   const out: Array<T | PluginSettingsSection> = [...builtin];
   for (const section of extra) {
-    const s = section.group ? section : { ...section, group: PLUGINS_GROUP };
+    const s = section.group && builtin.some((b) => b.group === section.group) ? section : { ...section, group: PLUGINS_GROUP };
     const last = out.map((x) => x.group).lastIndexOf(s.group);
     out.splice(last >= 0 ? last + 1 : out.length, 0, s);
   }

@@ -1,4 +1,4 @@
-import { AudioLines, Bookmark, Bot, CalendarClock, Clapperboard, Cpu, FolderOpen, HardDrive, KeyRound, LayoutGrid, Mic, Monitor, Palette, Puzzle, Server, Settings2, Share2, ShieldCheck, SlidersHorizontal, Tag, UserRound, Users, Volume2 } from "lucide-react";
+import { AudioLines, Bookmark, Bot, CalendarClock, Clapperboard, Cpu, FolderOpen, HardDrive, KeyRound, LayoutGrid, Mic, Monitor, Palette, Puzzle, Server, Settings2, Share2, ShieldCheck, SlidersHorizontal, Tag, UserRound, Users } from "lucide-react";
 import { PLUGINS_GROUP, settingsWithPlugins, toolSectionsFor, visibleSettings, type PluginSettingsSection, type SettingsEntry } from "@/lib/plugin";
 import { webPlugins } from "@/plugins.gen";
 
@@ -11,7 +11,7 @@ type PluginList = ReadonlyArray<{ settings?: PluginSettingsSection[]; replaces?:
 
 /** Every page id a Settings route can open. Adding one: add it here, to BUILTIN, and to PAGE_BODIES (pages.tsx). */
 export const SETTINGS_PAGE_IDS = [
-  "general", "appearance", "tools", "folders", "storage", "library", "sound-effects", "providers", "voice", "dictation", "devices", "automations", "memory", "connectors", "keys", "own-ai",
+  "general", "appearance", "tools", "folders", "storage", "library", "providers", "voice", "dictation", "devices", "automations", "memory", "connectors", "keys", "own-ai",
   "servers", "policies", "team", "admin", "account", "plugin", "workspace",
 ] as const;
 export type SettingsPageId = (typeof SETTINGS_PAGE_IDS)[number];
@@ -35,11 +35,12 @@ interface BuiltinEntry extends SettingsEntry {
 
 /**
  * The built-in sections in sidebar order, grouped by whose setting it is: "You" (the person's, the same in every
- * workspace), "AI", "Workspace" (what belongs to one workspace: each of these pages carries the workspace selector,
- * workspace-pick.tsx, and shows every workspace's things or the chosen one's), "Server" (what is kept on this server
- * and who is on it; an admin sees everyone's, a member their own). A page with no selector is the same in every
- * workspace. What is added to one tool is on that tool's page (/settings/tools/<tile>); a plug-in's own section with
- * no group goes in a "Tool settings" block at the end (lib/plugin.ts PLUGINS_GROUP). There is no Admin page: its old
+ * workspace: their AI providers too), "Workspace" (what belongs to one workspace: each of these pages carries the
+ * workspace selector, workspace-pick.tsx, and shows every workspace's things or the chosen one's), "Server" (what this
+ * server does and keeps, and who is on it; an admin sees everyone's, a member their own). A page with no selector is the
+ * same in every workspace. A tool's own settings are in the "Tool settings" block at the end (lib/plugin.ts
+ * PLUGINS_GROUP): what is added to one tool on that tool's page (/settings/tools/<tile>), the Media Library's and Voice's
+ * own pages, then a plug-in's own section with no group. No group of one page: a page joins the group it belongs to. There is no Admin page: its old
  * addresses go to Team, Storage, API keys and the plug-ins' own pages (AdminSection.tsx).
  */
 const BUILTIN: ReadonlyArray<BuiltinEntry> = [
@@ -49,20 +50,20 @@ const BUILTIN: ReadonlyArray<BuiltinEntry> = [
   { id: "dictation", title: "Dictation", icon: Mic, group: "You", macOnly: true },
   { id: "devices", title: "Computers", icon: Monitor, group: "You" },
   { id: "servers", title: "Servers", icon: Server, group: "You", macOnly: true },
+  { id: "providers", title: "Providers", icon: Cpu, group: "You" },
   { id: "own-ai", title: "Headless access", icon: Bot, group: "You" },
-  { id: "providers", title: "Providers", icon: Cpu, group: "AI" },
   { id: "workspace", title: "Details", icon: Tag, group: "Workspace" },
   { id: "connectors", title: "Social accounts", icon: Share2, group: "Workspace" },
   { id: "folders", title: "Folders", icon: FolderOpen, group: "Workspace" },
-  { id: "library", title: "Media Library", icon: Clapperboard, group: "Workspace" },
-  { id: "sound-effects", title: "Sound effects", icon: Volume2, group: "Workspace" },
   { id: "automations", title: "Scheduled tasks", icon: CalendarClock, group: "Workspace" },
   { id: "memory", title: "Memory", icon: Bookmark, group: "Workspace" },
-  { id: "policies", title: "Workspace policies", icon: Settings2, group: "Server", adminOnly: true },
+  { id: "policies", title: "Video work", icon: Settings2, group: "Server", adminOnly: true },
   { id: "team", title: "Team", icon: Users, group: "Server", teamOnly: true },
   { id: "storage", title: "Storage", icon: HardDrive, group: "Server" },
   { id: "keys", title: "API keys", icon: KeyRound, group: "Server" },
-  // a tool, so with the tools' pages (withToolPages puts those first in this block)
+  // tools, so with the tools' pages (withToolPages puts those first in this block). The Media Library's page shows the
+  // chosen workspace's library and its sound effects
+  { id: "library", title: "Media Library", icon: Clapperboard, group: PLUGINS_GROUP },
   { id: "voice", title: "Voice", icon: AudioLines, group: PLUGINS_GROUP },
   { id: "account", title: "Account", icon: UserRound, listed: false },
   { id: "admin", title: "Admin", icon: ShieldCheck, listed: false },
@@ -79,6 +80,7 @@ export const RETIRED_PATHS: Readonly<Record<string, string>> = {
   packs: "/community/installed",
   editor: "/settings/tools/editor",
   skills: "/community/skills",
+  "sound-effects": "/settings/library#sfx",
   // a page of its own, not Settings (pages/UsagePage.tsx); the Plan row is on Providers
   usage: "/usage",
 };

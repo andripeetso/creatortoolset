@@ -3,9 +3,9 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vitest";
 import type { ServerWorkView } from "@contracts/work";
-import { WorkspacePoliciesSection } from "./WorkspacePoliciesSection";
+import { VideoWorkSection } from "./VideoWorkSection";
 
-// Settings → Workspace policies: the master switch, All workspaces and one switch per workspace, by server kind.
+// Settings → Video work: the master switch, All workspaces and one switch per workspace, by server kind.
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -14,7 +14,7 @@ const show = async (view: ServerWorkView) => {
   const host = document.createElement("div");
   document.body.append(host);
   const root = createRoot(host);
-  await act(async () => root.render(<WorkspacePoliciesSection />));
+  await act(async () => root.render(<VideoWorkSection />));
   const switches = () => [...host.querySelectorAll<HTMLButtonElement>('button[role="switch"]')];
   return { text: () => host.textContent ?? "", switches };
 };
@@ -77,7 +77,7 @@ it("each switch saves the list the page shows: a workspace off keeps the others 
   const host = document.createElement("div");
   document.body.append(host);
   const root = createRoot(host);
-  await act(async () => root.render(<WorkspacePoliciesSection />));
+  await act(async () => root.render(<VideoWorkSection />));
   const click = (label: string) => act(async () => host.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!.click());
   await click("Server rendering for Second Brand");
   await click("Server rendering for Tiny Acrobatics");

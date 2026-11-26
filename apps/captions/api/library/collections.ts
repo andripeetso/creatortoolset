@@ -181,7 +181,7 @@ async function libraryWorkspace(libraryId: string): Promise<string> {
   return ws ? workspaceContext(ws, 6000) : "";
 }
 
-const NO_JUDGE = "Smart folders need an AI to sort with: add one in Settings → AI, or a TypeSafe Jev key in Settings → Keys";
+const NO_JUDGE = "Smart folders need an AI to sort with: add one in Settings → Providers, or a TypeSafe Jev key in Settings → API keys";
 
 /** A smart folder's rule was saved: the library is sorted against it in the background, as `user`. */
 const startSort = (libraryId: string, folderId: string, user: Parameters<typeof sortFolder>[2]) =>

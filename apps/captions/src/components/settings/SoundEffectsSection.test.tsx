@@ -5,7 +5,7 @@ import { MemoryRouter } from "react-router";
 import { afterEach, expect, it, vi } from "vitest";
 import { SoundEffectsSection, type SfxState } from "./SoundEffectsSection";
 
-// Settings → Sound effects: the library's count and folder, the starter set's Install and Remove, and the sources.
+// Settings → Media Library, Sound effects: the library's count and folder, the starter set's Install and Remove, and the sources.
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 

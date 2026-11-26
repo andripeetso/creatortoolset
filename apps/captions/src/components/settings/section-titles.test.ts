@@ -19,7 +19,7 @@ const ALLOWED: Record<string, string[]> = {
   Packs: ["plugins/hosted/web/AdminBoard.tsx", "src/components/community/CatalogViews.tsx", "src/components/community/PacksInstalled.tsx", "src/components/settings/ToolsSection.tsx"],
   // Settings → Memory, and a plug-in's own page
   Workspaces: ["src/components/settings/MemorySection.tsx", "src/components/settings/PluginWorkspaces.tsx"],
-  // the studio Editor's design page, and Settings → Sound effects
+  // the studio Editor's design page, and Settings → Media Library's Sound effects
   Sources: ["plugins/baby-acrobatics/web/pages/EditorDesignPage.tsx", "src/components/settings/SoundEffectsSection.tsx"],
   // Community: installed, and the catalog
   "Plug-ins": ["src/components/community/PacksInstalled.tsx", "src/components/community/PluginsCatalog.tsx"],

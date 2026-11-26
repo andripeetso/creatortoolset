@@ -164,7 +164,7 @@ export async function libraryHasSounds(username: string, workspace?: string): Pr
 
 export const sfxApp = new Hono<{ Variables: AuthVars }>();
 
-// GET /api/sfx → what Settings → Sound effects shows: the library's count, its folder, the starter set's state, the packs
+// GET /api/sfx → what Settings → Media Library, Sound effects shows: the library's count, its folder, the starter set's state, the packs
 sfxApp.get("/", async (c) => {
   const user = c.get("user");
   const lib = (await ownLibrary(user.username))?.lib ?? null;

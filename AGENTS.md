@@ -245,11 +245,13 @@ and answers:
 - Where things live (the app's one system; put new work in the matching place):
   - **Home** = the tools you use (its groups are `TOOL_GROUPS` in `contracts/tools.ts`; `src/lib/tools.ts` is the
     top bar's tool menu and the plug-in tiles). **Settings** = how the app is set up, grouped by whose setting it
-    is: You (General, Appearance, Tools, Dictation, Computers, Servers, Headless access: the same in every workspace), AI
-    (Providers, Usage), Workspace (Details, Social accounts, Folders, Media Library, Scheduled tasks, Memory: what
-    belongs to one workspace), Server (Team, Storage, API keys: who is on this server and what it keeps; an admin
-    sees everyone's, a member their own), Tool settings. There is no Admin page: the server's own accounts are in
-    Team, its projects in Storage, its keys in API keys. **The account button** = you.
+    is: You (General, Appearance, Tools, Dictation, Computers, Servers, Providers, Headless access: the same in every
+    workspace), Workspace (Details, Social accounts, Folders, Scheduled tasks, Memory: what belongs to one
+    workspace), Server (Video work, Team, Storage, API keys: what this server does and keeps, and who is on it; an
+    admin sees everyone's, a member their own), Tool settings (a page per tool: the Media Library's, with its sound
+    effects, and Voice's are there). No group of one page: a page joins the group it belongs to, and a thing with
+    one or two rows is a section of the page it belongs to, never a page of its own. There is no Admin page: the
+    server's own accounts are in Team, its projects in Storage, its keys in API keys. **The account button** = you.
   - **Settings covers every workspace** (owner, 2026-11-16). It never follows the workspace the window is in without
     saying so. A page whose content belongs to a workspace draws the workspace selector in its header
     (`WorkspacePick`, `src/components/settings/workspace-pick.tsx`): a list page (`mode="list"`) starts on All
@@ -335,7 +337,7 @@ and answers:
     - **AI is the default here, so nothing is labelled as AI.** No "AI", "by AI", "AI-made", "smart" on an option, a
       button, a badge or a section: say what the thing does ("Automatic", "Descriptions", "Suggested"). No wand or
       sparkle icon: `CtMark` on what is made for the person, else the icon of what the button does. Allowed: the
-      names AI Editor, AI provider, AI apps, the Settings group AI, and a sentence that must name it to be true.
+      names AI Editor, AI provider, AI apps, and a sentence that must name it to be true.
     - A label is a noun of one to three words, or for an action a specific verb with its object ("Delete video",
       "Add folder"); never "OK", "Yes", "Got it". No full stop on any one-line label, badge, tab, status or option.
       A field's label says what goes in it; with a label there is no example placeholder.

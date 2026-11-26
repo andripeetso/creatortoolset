@@ -120,7 +120,7 @@ export function serverAllows(workspace: string | null | undefined, account: stri
   return s.on && (!s.projectIds || (!!workspace && s.projectIds.includes(workspace)));
 }
 
-/** Whether this server's loops may run video work for `workspace`, asked by `account`. The admin's Workspace policies is the only switch. */
+/** Whether this server's loops may run video work for `workspace`, asked by `account`. The admin's Settings → Video work is the only switch. */
 export const serverWorks = (workspace: string | null | undefined, account: string | null): boolean => serverAllows(workspace, account);
 
 /** The person's Load balancing weight for this server (DEFAULT_WEIGHT unless set; balancing off = Normal). This Mac has no row. */
