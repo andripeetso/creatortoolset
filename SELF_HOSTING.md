@@ -319,7 +319,7 @@ be 0, so the restart ends nothing. On an app older than this guide the fields ar
 ## 12. Limits and what is not in the kit
 
 - The Docker image is for x86_64 Linux only.
-- The native video fingerprint tools (PDQ and TMK) are not built into the image, and the Media Library's duplicate check
-  does not use them; `scripts/install-fingerprint-runtime.sh` in `apps/captions` builds them for a plug-in that does.
+- The native video fingerprint tools (PDQ and TMK) are not built into the image, and the Media Library's footage
+  fingerprints do not use them; `scripts/install-fingerprint-runtime.sh` in `apps/captions` builds them for a plug-in that does.
 - There is no database server to run. The account and settings are files under the data volume.
 - Keep the server patched (`apt upgrade`, Docker updates), and keep SSH on keys only.

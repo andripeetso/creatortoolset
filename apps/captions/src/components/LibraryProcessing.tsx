@@ -131,7 +131,7 @@ const remembered = () => {
 /**
  * While a library has work left: one line, "Preparing 10 clips · about 1 min left", over a bar that keeps moving, and
  * the folder's clips still to come among them. Opened (the person's choice is remembered), one line per step in the
- * order they run (pictures, proxies, duplicate checks, transcripts, descriptions), each counting up, and what waits.
+ * order they run (pictures, proxies, footage fingerprints, transcripts, descriptions), each counting up, and what waits.
  * When nothing runs, what waits for a key, an AI or the plan's limit is said by itself: it is why nothing moves.
  */
 type Waiting = LibraryProgress["waiting"][number];
@@ -222,9 +222,11 @@ export function LibraryProgressBar({ libraryId }: { libraryId: string }) {
             <MovingBar value={p.share} />
           </button>
           {stopping === "failed" && <span className="shrink-0 text-xs text-red-600 dark:text-red-400">Could not stop</span>}
-          <Button variant="outline" size="sm" className="h-7 shrink-0" disabled={stopping === "busy"} onClick={() => void stop()}>
-            {stopping === "busy" ? "Stopping" : "Stop"}
-          </Button>
+          {p.canStop !== false && (
+            <Button variant="outline" size="sm" className="h-7 shrink-0" disabled={stopping === "busy"} onClick={() => void stop()}>
+              {stopping === "busy" ? "Stopping" : "Stop"}
+            </Button>
+          )}
         </div>
       )}
       {moving && open && (

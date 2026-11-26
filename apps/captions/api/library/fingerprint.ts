@@ -4,8 +4,8 @@ import { spawnKillable } from "./media/run";
 /**
  * The library's `fingerprint` job (tasks/media-library-plan.md, sections 5 and 10): a 64-bit perceptual hash (DCT
  * pHash of a 32×32 grey frame, 16 hex) for every second of the video. Stored inline in `derivatives`, where the
- * duplicate check reads it (similar.ts). No AI, nothing leaves the server. Rows made before 2026-11-25 also carry a vPDQ
- * sample (`pdq`) that nothing reads; it took a second full decode of every video.
+ * duplicate check reads it (similar.ts). No AI, nothing leaves the server. Rows made before 2026-11-25 also carry a
+ * `pdq` sample (Meta's PDQ frame hashes) that nothing reads; it took a second full decode of every video.
  */
 
 export interface Fingerprint {

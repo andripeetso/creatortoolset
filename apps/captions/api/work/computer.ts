@@ -53,12 +53,13 @@ export interface WorkerOptions {
   /** wait after a claim that failed (server away) */
   retryMs?: number;
   /** tests: a claim's timeout, the first wait after a refused token (it doubles), how long refusals last before it stops,
-   *  the wait between low-disk claims, and how often a worker under the Mac says it is alive */
+   *  the wait between low-disk claims, how often a worker under the Mac says it is alive, and the library jobs run at once */
   claimTimeoutMs?: number;
   refusedWaitMs?: number;
   refusedMs?: number;
   lowDiskMs?: number;
   aliveMs?: number;
+  slots?: number;
 }
 
 /** The longest a claim may take: the server holds one CLAIM_POLL.holdMs (25 s, work/routes.ts) when nothing waits. */
@@ -153,10 +154,11 @@ export const libraryOnly = () => process.env.CT_WORKER_KINDS === "library";
 
 /**
  * How many library jobs this worker runs at once: a library-only worker one per 8 cores (a 4K HEVC decode keeps about 9
- * busy; a 32-core box runs 4), else one. One under a shared turn (CT_TURN_DIR: a Mac's servers take turns, turn.ts).
+ * busy) and per 8 GB of memory (one job at a time peaked there, file cache counted), so a 32-core box with 62 GB runs 4;
+ * any other worker one. One under a shared turn (CT_TURN_DIR: a Mac's servers take turns, turn.ts).
  */
-export const librarySlots = (cpus = os.cpus().length, only = libraryOnly(), turns = !!process.env.CT_TURN_DIR): number =>
-  only && !turns ? Math.max(1, Math.floor(cpus / 8)) : 1;
+export const librarySlots = (cpus = os.cpus().length, memGb = os.totalmem() / 2 ** 30, only = libraryOnly(), turns = !!process.env.CT_TURN_DIR): number =>
+  only && !turns ? Math.max(1, Math.floor(Math.min(cpus, memGb) / 8)) : 1;
 
 /**
  * Claims and runs steps until idleMs pass with none, the server asks for a newer app, or this computer's token has been
@@ -185,7 +187,7 @@ async function claimLoop(o: WorkerOptions, jobs: Set<Promise<unknown>>): Promise
   let idleSince = Date.now();
   let refusedSince: number | undefined;
   let refusedWait = 0;
-  const slots = librarySlots();
+  const slots = o.slots ?? librarySlots();
   // each ffmpeg of the jobs running beside the claims needs a slot of its own (media/run.ts ffmpegSlot)
   if (slots > 1) process.env.FFMPEG_CONCURRENCY ||= String(slots);
   while (Date.now() - idleSince < (o.idleMs ?? 10 * 60_000)) {

@@ -8,8 +8,6 @@ import { ffmpegCommand } from "../../ffmpeg-runtime";
 const jobSignal = new AsyncLocalStorage<AbortSignal>();
 /** Runs `work` with `signal` as its job's: a process it starts (ffmpeg, ffprobe) is killed when the signal aborts. */
 export const withSignal = <T>(signal: AbortSignal, work: () => Promise<T>): Promise<T> => jobSignal.run(signal, work);
-/** The signal of the job this call runs for, for a helper that kills its own processes (vpdq.ts). */
-export const currentJobSignal = (): AbortSignal | undefined => jobSignal.getStore();
 
 /** The processes spawnKillable started that are still alive. */
 const alive = new Set<ChildProcessWithoutNullStreams>();

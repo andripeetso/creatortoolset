@@ -254,11 +254,12 @@ describe("the claim loop never spins, hangs or loops for good (G4)", () => {
     expect(at[1]! - at[0]!).toBeLessThan(200);
   });
 
-  it("a library-only worker runs one library job per 8 cores; any other, or one under a shared turn, runs one", () => {
-    expect(librarySlots(32, true, false)).toBe(4);
-    expect(librarySlots(4, true, false)).toBe(1);
-    expect(librarySlots(32, false, false)).toBe(1);
-    expect(librarySlots(32, true, true)).toBe(1);
+  it("a library-only worker runs one library job per 8 cores and per 8 GB; any other, or one under a shared turn, runs one", () => {
+    expect(librarySlots(32, 62, true, false)).toBe(4);
+    expect(librarySlots(32, 16, true, false)).toBe(2);
+    expect(librarySlots(4, 62, true, false)).toBe(1);
+    expect(librarySlots(32, 62, false, false)).toBe(1);
+    expect(librarySlots(32, 62, true, true)).toBe(1);
   });
 
   it("PRD 26: idleFor is a day for a service and 10 min under the Mac; only under the Mac it says it is alive", async () => {

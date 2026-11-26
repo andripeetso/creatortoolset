@@ -1,5 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
-import { LOOK_LEVELS, WATCH_MODELS, type LibraryEstimate, type LibraryMade, type MadeKind, type LibraryProgress, type LibraryStage, type LibraryStatus, type LibraryStep, type LibraryStepEstimate, type LibraryStepRoute } from "../../contracts/library";
+import { LOOK_LEVELS, MADE_KINDS, WATCH_MODELS, type LibraryEstimate, type LibraryMade, type MadeKind, type LibraryProgress, type LibraryStage, type LibraryStatus, type LibraryStep, type LibraryStepEstimate, type LibraryStepRoute } from "../../contracts/library";
 import { aiFor, onApiKey } from "../ai-complete";
 import { BACKGROUND_SLOTS, macUsageSince } from "../lib/mac-claude";
 import { libraryDb, libraryLookLevel, librarySetting } from "./db";
@@ -440,6 +440,9 @@ export function libraryStatus(libraryId: string): LibraryStatus {
  * list all show these numbers, so they say the same. A step held back (for a key, an AI or the plan's limit) is not work
  * left: `waiting` says it, and a clip whose only step left is held is not being prepared.
  */
+// the job kinds the library's Stop takes off the queue: a job is named as its kind (made.ts SPEC)
+const STOPPED: ReadonlySet<string> = new Set(MADE_KINDS.filter((k) => !k.auto && !k.ready).map((k) => k.kind));
+
 export async function progress(libraryId: string, username: string): Promise<LibraryProgress> {
   const db = libraryDb();
   const snap = statusOf(libraryId);
@@ -466,6 +469,8 @@ export async function progress(libraryId: string, username: string): Promise<Lib
   );
   const coming = comingRows.map((r) => r.id);
   const left = pending.reduce((n, r) => n + r.n, 0) + toCome + coming.length;
+  // what the library's Stop reaches (made.ts stopQueued): a queued job of a kind with a Cancel, a file still on its way
+  const canStop = toCome > 0 || coming.length > 0 || pending.some((r) => r.state === "queued" && STOPPED.has(r.kind));
   const waiting: LibraryProgress["waiting"] = rows
     .filter((r) => r.state === "needs_key" && !r.ql && !r.cw)
     .map((r) => ({ step: STEP_OF[r.kind] ?? "files", count: r.n, missing: r.error ?? "", ...(r.mac ? { computer: true } : {}) }));
@@ -618,5 +623,5 @@ export async function progress(libraryId: string, username: string): Promise<Lib
     parts.push({ step, route, seconds: (p.seconds * n) / p.at });
   }
   // ponytail: a clip still to come adds no time until it is in; the time grows by its steps then
-  return { done, left, clips: clips + toCome, share, seconds: total(parts), waiting, stages };
+  return { done, left, clips: clips + toCome, share, seconds: total(parts), canStop, waiting, stages };
 }

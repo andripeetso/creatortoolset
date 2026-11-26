@@ -95,7 +95,12 @@ describe("estimate", () => {
     const p = await progress("lib_e", "local");
     expect(p).toMatchObject({ left: 1, clips: 1 });
     expect(p.seconds).toBeGreaterThan(0);
-    d.prepare("DELETE FROM jobs WHERE kind = 'thumb'").run();
+    // Stop leaves what is made as a file comes in (thumbnail, footage fingerprints): nothing to stop, so no Stop
+    enqueueJob(d, "lib_e", "v1", "fingerprint", "local");
+    expect((await progress("lib_e", "local")).canStop).toBe(false);
+    enqueueJob(d, "lib_e", "v1", "sprite", "local");
+    expect((await progress("lib_e", "local")).canStop).toBe(true);
+    d.prepare("DELETE FROM jobs WHERE kind IN ('thumb', 'fingerprint', 'sprite')").run();
   });
 
   it("a clip in the trash is never work left, even one trashed partway through a run: its jobs wait for it to come back", async () => {

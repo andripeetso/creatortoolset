@@ -219,7 +219,7 @@ export function appRows(w: AppWork): ActivityRow[] {
     const up = lib.uploading;
     if (up) add("upload", `Uploading ${count(up.files, "file")} · ${pct(up.received / Math.max(1, up.size))}`, { progress: up.received / Math.max(1, up.size) });
     const p = lib.progress;
-    if (p.left > 0) add("prepare", `Preparing ${count(p.clips, "clip")} · ${pct(p.share)}`, { progress: p.share, ...stopAt(`/api/library/${enc(lib.id)}/stop`) });
+    if (p.left > 0) add("prepare", `Preparing ${count(p.clips, "clip")} · ${pct(p.share)}`, { progress: p.share, ...(p.canStop === false ? {} : stopAt(`/api/library/${enc(lib.id)}/stop`)) });
     const ids = new Set<string>();
     for (const x of p.waiting) {
       const [one, many] = STEP[x.step] ?? ["file", "files"];

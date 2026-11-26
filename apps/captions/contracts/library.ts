@@ -544,7 +544,7 @@ export interface LibraryMade {
 
 /** One step of a library's preparing, as the person sees it go by: how many clips have it, of how many. */
 export interface LibraryStage {
-  /** blur = Face Blur's blurred copies, made on a Mac (progress only, no job of their own), thumb = pictures, proxy = lighter copies, fingerprint = duplicate checks, transcribe, describe, look = shot descriptions, timeline = Gemini's timelines (progress only, no job of their own), embed = search by meaning */
+  /** blur = Face Blur's blurred copies, made on a Mac (progress only, no job of their own), thumb = pictures, proxy = lighter copies, fingerprint = footage fingerprints, transcribe, describe, look = shot descriptions, timeline = Gemini's timelines (progress only, no job of their own), embed = search by meaning */
   kind: "blur" | "thumb" | "proxy" | "fingerprint" | "transcribe" | "describe" | "look" | "timeline" | "embed";
   done: number;
   /** done, failed and still to do since this run of the queue began: neither number goes down while it runs */
@@ -565,6 +565,8 @@ export interface LibraryProgress {
   share: number;
   /** time left at this server's pace */
   seconds: number;
+  /** false when the library's Stop would take nothing off (what is left is made as a file comes in, MADE_KINDS `ready`): no Stop then */
+  canStop?: boolean;
   /** jobs waiting for a key or an AI, with what to add */
   waiting: {
     step: LibraryStep;

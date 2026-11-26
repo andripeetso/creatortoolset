@@ -25,7 +25,6 @@ const DECODERS: Record<string, string> = {
   "api/library/transcribe.ts": "DECODES transcribe; a library file's sound is cut here only where serverWorks (ownSound); OPEN: the mic's dictation (api/transcribe.ts /mic) on a key",
   "api/library/describe.ts": "DECODES describe (cutStills); a computer cuts them otherwise",
   "api/library/look.ts": "DECODES look; a Mac reads its own file (mac-look.ts)",
-  "api/library/vpdq.ts": "DECODES fingerprint",
   "api/library/shots.ts": "DECODES look: sheetHashes of a sheet the server's own look made",
   "api/library/cuts.ts": "DECODES look: the cut model in a server look (look.ts)",
   "api/library/timeline.ts": "DECODES look: the watch-part encode only in a server look; a Mac's copy goes whole (askAntigravity)",
