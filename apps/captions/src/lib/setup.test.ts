@@ -293,18 +293,21 @@ describe("What do you want to do first?", () => {
     expect(jobsFor([])).toEqual(["look"]);
   });
 
-  it("lists every row of a job's tools from the tools' own list: required first, then optional, each once, never the workspace", () => {
+  it("lists every row of a job's tools from the tools' own list: the AI first in every job, then required, then optional, each once, never the workspace", () => {
     const edit = jobRows("edit", all);
     // the Media Library and the AI Editor share a library, an AI and a transcription key: one row each, the required one
     expect(edit.map((n) => [n.what, !!n.optional])).toEqual([
-      ["A Media Library", false],
       ["An AI provider", false],
+      ["A Media Library", false],
       ["A transcription key", false],
       ["An OpenAI key: search by meaning", true],
     ]);
     expect(jobRows("captions", all).every((n) => n.optional)).toBe(true); // Caption Studio needs nothing, and says what it can use
     expect(jobRows("write", all)[0]).toBe(TOOL_NEEDS.workshop[1]); // the same row as the Workshop's card
     for (const j of JOBS) expect(jobRows(j, all).some((n) => n.form === "project")).toBe(false); // setup makes the workspace
+    // the AI is the first row of every job that has one, also where it is optional and another row is required
+    for (const j of JOBS.filter((x) => x !== "look")) expect(jobRows(j, all)[0]!.form, j).toBe("ai");
+    expect(jobRows("ideas", all).map((n) => !!n.optional)).toEqual([true, false, true]);
     expect(jobRows("look", all)).toEqual([]);
     expect(jobRows(null, all)).toEqual([]);
     expect(jobRows("edit", ["media"]).map((n) => n.what)).not.toContain("An AI provider"); // only tools the account may use

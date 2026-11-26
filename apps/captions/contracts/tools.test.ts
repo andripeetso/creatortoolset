@@ -89,13 +89,14 @@ describe("home order and need copy", () => {
     expect(needsLine([TOOL_NEEDS.instagram[0], TOOL_NEEDS.instagram[1]])).toBe("Needs a workspace and an Apify key");
     expect(needsLine([TOOL_NEEDS.workshop[1]])).toBe("Needs an AI provider");
     // a list's row is the thing to do, in the words of the setup screens; an optional one says what it adds
-    const { needAction, optionalLine } = await import("./tools");
+    const { needAction, optionalAdds } = await import("./tools");
     expect(needAction(TOOL_NEEDS.workshop[1])).toEqual({ title: "Connect your AI", button: "Connect" });
     expect(needAction(TOOL_NEEDS.media[0])).toEqual({ title: "Set up the Media Library", button: "Set up" });
     expect(needAction(TOOL_NEEDS.editor[2])).toEqual({ title: "Add a transcription key", button: "Add key" });
     expect(needAction(TOOL_NEEDS.instagram[1]).title).toBe("Connect Instagram");
     expect(needAction({ what: "An OpenAI key: search by meaning", form: "keys" }).title).toBe("Add an OpenAI key");
-    expect(optionalLine({ what: "An OpenAI key: search by meaning" })).toBe("Optional: search by meaning.");
+    expect(optionalAdds({ what: "An OpenAI key: search by meaning" })).toBe("Search by meaning.");
+    expect(optionalAdds({ what: "An AI provider" })).toBeUndefined();
     for (const t of TOOLS) for (const n of TOOL_NEEDS[t]) expect(needAction(n).title, n.what).toMatch(/^(Connect|Set up|Add|Create) \S/);
   });
 });

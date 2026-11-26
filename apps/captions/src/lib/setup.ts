@@ -408,14 +408,16 @@ export const jobsFor = (mine: readonly Tool[]): Job[] => JOBS.filter((j) => j ==
 
 /**
  * A job's rows: every row (contracts/tools.ts TOOL_NEEDS, the list Home's dots and a tool's card read) of its tools this
- * account may use, the required ones first and then the optional, each once (a row two tools share is the required
- * one). The workspace is left out: setup makes it.
+ * account may use, each once (a row two tools share is the required one). The AI is the first row of every job,
+ * required there or not (owner, 2026-11-26: it moved with each job's own order), then the required rows, then the
+ * optional. The workspace is left out: setup makes it.
  */
 export function jobRows(job: Job | null | undefined, mine: readonly Tool[]): Need[] {
   if (!job) return [];
   const all = JOB_SETUP[job].tools.filter((t) => mine.includes(t)).flatMap((t) => TOOL_NEEDS[t]).filter((n) => n.form !== "project");
   const seen = new Set<string>();
-  return [...all.filter((n) => !n.optional), ...all.filter((n) => n.optional)].filter((n) => !seen.has(n.anyOf.join()) && !!seen.add(n.anyOf.join()));
+  const rows = [...all.filter((n) => !n.optional), ...all.filter((n) => n.optional)].filter((n) => !seen.has(n.anyOf.join()) && !!seen.add(n.anyOf.join()));
+  return [...rows.filter((n) => n.form === "ai"), ...rows.filter((n) => n.form !== "ai")];
 }
 
 /** The required rows still missing for these tools, each once. */

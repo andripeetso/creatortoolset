@@ -240,10 +240,10 @@ export function needAction(need: Pick<Need, "what" | "form">): { title: string; 
   }
 }
 
-/** What an optional row adds, as its line: "Optional: faster transcripts." */
-export const optionalLine = (need: Pick<Need, "what">): string => {
+/** What an optional row adds, as its line: "Faster transcripts." (its Optional badge says it is not needed). */
+export const optionalAdds = (need: Pick<Need, "what">): string | undefined => {
   const gives = need.what.split(": ")[1];
-  return gives ? `Optional: ${gives}.` : "Optional";
+  return gives ? `${gives.charAt(0).toUpperCase()}${gives.slice(1)}.` : undefined;
 };
 
 /**

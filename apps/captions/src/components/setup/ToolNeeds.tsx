@@ -6,8 +6,10 @@ import {
 } from "lucide-react";
 import { MY_KEYS, type MyKeyEnv } from "@contracts/service-keys";
 import { PLANS, type PlanId } from "@contracts/plans";
-import { NEED_SENTENCE, needAction, optionalLine, readiness, TOOL_NAMES, TOOL_NEEDS, type Have, type Need, type SetupView, type Tool } from "@contracts/tools";
+import { NEED_SENTENCE, needAction, optionalAdds, readiness, TOOL_NAMES, TOOL_NEEDS, type Have, type Need, type SetupView, type Tool } from "@contracts/tools";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ConnectorsSection } from "@/components/settings/ConnectorsSection";
 import { MyKeysSection } from "@/components/settings/MyKeysSection";
 import { ProvidersSection } from "@/components/settings/ProvidersSection";
@@ -90,10 +92,24 @@ export function NeedLine({ met, name, line, button, children }: { met: boolean; 
   );
 }
 
+/** The thin mark beside a row the tool works without (owner, 2026-11-26): on hover or focus, what that means. */
+function OptionalBadge() {
+  return (
+    <Tooltip delayDuration={350}>
+      <TooltipTrigger asChild>
+        <Badge variant="outline" tabIndex={0} className="ml-2 h-4 px-1.5 py-0 align-middle text-[10px] font-normal leading-none text-muted-foreground">
+          Optional
+        </Badge>
+      </TooltipTrigger>
+      <TooltipContent side="top">Works without it, and better with it.</TooltipContent>
+    </Tooltip>
+  );
+}
+
 /**
- * A need's line: the thing to do (needAction: "Connect your AI"), ticked once done. Under an open one: what an optional
- * row adds ("Optional: …"), and with `welcome` a required row's sentence. `form`: what its button opens in place of the
- * need's own form (setup opens its own Connect your AI).
+ * A need's line: the thing to do (needAction: "Connect your AI"), ticked once done. An open row the tool works without
+ * carries the Optional badge, with what it adds under it; with `welcome` a required row has its sentence. `form`: what
+ * its button opens in place of the need's own form (setup opens its own Connect your AI).
  */
 export function NeedRow({ need, met, welcome, focus, form }: { need: Need; met: boolean; welcome?: boolean; focus?: boolean; form?: ReactNode }) {
   const [open, setOpen] = useState(false);
@@ -101,8 +117,13 @@ export function NeedRow({ need, met, welcome, focus, form }: { need: Need; met: 
   return (
     <NeedLine
       met={met}
-      name={action.title}
-      line={met ? undefined : need.optional ? optionalLine(need) : welcome && (action.line ?? NEED_SENTENCE[need.anyOf[0]])}
+      name={
+        <>
+          {action.title}
+          {need.optional && !met && <OptionalBadge />}
+        </>
+      }
+      line={met ? undefined : need.optional ? optionalAdds(need) : welcome && (action.line ?? NEED_SENTENCE[need.anyOf[0]])}
       button={
         <Button size="sm" variant="outline" className="h-7" autoFocus={focus} onClick={() => setOpen(!open)}>
           {/* a row a plug-in's sign-in also meets is not only a key */}
