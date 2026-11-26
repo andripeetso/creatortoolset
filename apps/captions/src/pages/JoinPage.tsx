@@ -6,11 +6,10 @@ import { inviteInfo, joinWithInvite } from "@/lib/workspaces";
 import { DOWNLOAD_URL } from "@/lib/setup";
 
 /**
- * /join/<token>: an invite to a team (Settings → Team; hosted servers only). In the Mac app, signed in: join with that
- * account. Else make an account with your own username and password (signed in at once), or sign in first and come back
- * to the link. A plain browser signs nobody in, so there the page only hands over to the Mac app:
- * creatortoolset://join?link=<this page> adds this server there, makes it the one the window opens and opens this page
- * in it (apps/mac inviteLink).
+ * /join/<token>: an invite to a team (Settings → Team; hosted servers only). Signed in: join with that account. Else
+ * make an account with your own username and password (signed in at once), or sign in first and come back to the link.
+ * In a browser it also offers the Mac app: creatortoolset://join?link=<this page> adds this server there, makes it the
+ * one the window opens and opens this page in it (apps/mac inviteLink).
  */
 // the Mac app marks every page it opens (apps/mac TitleBar.swift)
 const inMacApp = typeof document !== "undefined" && document.documentElement.dataset.macLocalFiles !== undefined;
@@ -58,12 +57,12 @@ export function JoinPage({ token }: { token: string }) {
       <div className="flex min-h-[240px] w-72 flex-col gap-2">
         {!info && !error && <p className="text-sm text-zinc-500">Checking the invite…</p>}
         {info?.expired && <p className="text-sm text-zinc-400">This invite link has expired. Ask {info.invitedBy} for a new one.</p>}
-        {info && !info.expired && inMacApp && info.member && (
+        {info && !info.expired && info.member && (
           <a href="/" className={`${button} text-center`}>
             Already a member: open Creator Toolset
           </a>
         )}
-        {info && !info.expired && inMacApp && !info.member && info.signedInAs && (
+        {info && !info.expired && !info.member && info.signedInAs && (
           <>
             <button className={button} disabled={busy} onClick={() => void join()}>
               Join as {info.signedInAs}
@@ -71,7 +70,7 @@ export function JoinPage({ token }: { token: string }) {
             <p className="text-xs text-zinc-500">To join with another account, sign out and open the link again.</p>
           </>
         )}
-        {info && !info.expired && inMacApp && !info.member && !info.signedInAs && (
+        {info && !info.expired && !info.member && !info.signedInAs && (
           <form onSubmit={join} className="flex flex-col gap-2">
             <p className="text-xs text-zinc-500">The password needs 10 characters or more.</p>
             <div className={field}>
@@ -95,15 +94,17 @@ export function JoinPage({ token }: { token: string }) {
           </form>
         )}
         {error && <p className="text-xs text-red-400">{error}</p>}
-        {info && !info.expired && !inMacApp && (
-          <>
-            <a href={`creatortoolset://join?link=${encodeURIComponent(window.location.href)}`} className={`${button} text-center`}>
+        {info && !info.expired && !info.member && !inMacApp && (
+          <p className="mt-2 text-center text-xs text-zinc-500">
+            Mac app:{" "}
+            <a href={`creatortoolset://join?link=${encodeURIComponent(window.location.href)}`} className="text-zinc-300 hover:text-white">
               Open in the app
             </a>
-            <a href={DOWNLOAD_URL} className="text-center text-xs text-zinc-500 hover:text-zinc-300">
-              Download Mac app
+            {" · "}
+            <a href={DOWNLOAD_URL} className="text-zinc-300 hover:text-white">
+              Download
             </a>
-          </>
+          </p>
         )}
       </div>
     </div>

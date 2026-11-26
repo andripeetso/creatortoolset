@@ -670,7 +670,7 @@ const codeStep = (c: Context, user: UserRecord) => {
   return c.json(
     {
       error: setup
-        ? "This server asks for a code from an authenticator app. Set it up in the Mac app, then sign in here with a link from it."
+        ? "This server asks for a code from an authenticator app. Set it up in a browser, then sign in here with a link from it."
         : "This account asks for a code from an authenticator app, which this app can't take yet. Sign in with a link from a signed-in computer instead.",
       code: setup ? "CODE_SETUP" : "CODE_NEEDED",
       step: mintStep(user.username, stamp(user), setup),

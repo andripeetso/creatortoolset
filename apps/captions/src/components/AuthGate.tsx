@@ -12,7 +12,6 @@ import { CodeStep } from "@/components/SignInCode";
 import { PROVIDER_NAME, ProviderMark, SIGN_IN_BUTTON } from "@/components/ProviderMark";
 import { postToApp } from "@/lib/mac-record";
 import { webPlugins } from "@/plugins.gen";
-import { DOWNLOAD_URL } from "@/lib/setup";
 
 const PUBLIC_UUID =
   "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
@@ -185,7 +184,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   }, [setAuth, pathname, publicShare]);
 
   useEffect(() => {
-    if (state !== "login" || !signsInHere(inMacApp(), window.location.search)) return;
+    if (state !== "login") return;
     // only a server that mounts the route answers ok; elsewhere the account gate's 401 must not read as providers
     fetch("/api/account/providers?login=1")
       .then((r) => (r.ok ? (r.json() as Promise<SignInProviders>) : Promise.reject(new Error(String(r.status)))))
@@ -214,7 +213,6 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     );
   }
   if (publicShare) return <>{children}</>;
-  if (!signsInHere(inMacApp(), window.location.search)) return <NeedsApp />;
 
   const anyProvider = !!providers && (["apple", "google", "github"] as const).some((p) => providers[p]);
   const passwords = providers?.password !== false;
@@ -328,38 +326,3 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
 
 /** Inside the Mac app (it sets <html data-mac-this-mac>, as ThisMacSection's hasThisMac reads it). */
 const inMacApp = () => document.documentElement.dataset.macThisMac === "1";
-
-/**
- * Whether this page shows the sign-in form. People sign in in the Mac app's window (the iPhone app signs in itself and
- * brings its session); a plain browser gets the form only for an AI app's sign-in, which a browser carries.
- */
-export const signsInHere = (macApp: boolean, search: string): boolean => macApp || connectingApp(search) !== null;
-
-/** This page as the Mac app opens it: creatortoolset://review/<id>?v=2 (apps/mac Logic.swift appHref). */
-export const appLink = (pathname: string, search: string): string => `creatortoolset:/${pathname}${search}`;
-
-/** A plain browser on a server that asks for a sign-in: the way in is the Mac app. */
-function NeedsApp() {
-  return (
-    <div className="flex h-screen flex-col items-center justify-center bg-background px-4 text-foreground">
-      <section aria-label="Open in the app" className="w-full max-w-[400px] space-y-6 rounded-2xl border border-border bg-card p-8 shadow-lg shadow-black/10">
-        <div className="flex items-center gap-3">
-          <ToolsetLogo className="h-10 w-10" />
-          <div>
-            <h1 className="text-xl font-semibold tracking-tight">Creator Toolset</h1>
-            <p className="text-sm text-muted-foreground">{window.location.host}</p>
-          </div>
-        </div>
-        <p className="text-sm text-muted-foreground">Sign-in is in the Mac app and the iPhone app.</p>
-        <div className="flex flex-col gap-2">
-          <a href={appLink(window.location.pathname, window.location.search)} className="flex h-10 items-center justify-center rounded-lg bg-primary text-sm font-medium text-primary-foreground hover:bg-primary/90">
-            Open in the app
-          </a>
-          <a href={DOWNLOAD_URL} className="py-1 text-center text-xs text-muted-foreground hover:text-foreground">
-            Download Mac app
-          </a>
-        </div>
-      </section>
-    </div>
-  );
-}

@@ -8,9 +8,8 @@ stops being true, fix the rule in the same change.
 Creator Toolset: open-source tools for content creators (captions, audio enhancement, client review,
 story splitting, video notes, guides, an Instagram content analyzer, a writing workspace and AI providers).
 It is one person's app: no sign-up, no invites, no user management. It runs as one web app on the user's machine or
-on their own server, opened in the Mac app's window and the iPhone app, never signed in to from a plain browser. The
-Mac app also relays AI requests to the Claude Code or Codex tool its owner installed and signed in to with their own
-subscription.
+on their own server, plus a Mac app that relays AI requests to the Claude Code or Codex tool its owner installed
+and signed in to with their own subscription.
 
 | Folder | What | Stack |
 |---|---|---|
@@ -118,20 +117,16 @@ that takes it (`accountTicketHost`, `account` in `GET /api/account/providers`) s
 section in Settings → Account, and its sign-in page's Google, Apple and GitHub buttons sign in through it
 (`Shell.swift` `pageSignIn`). Never draw a server's own Sign-ins list beside it there.
 
-**The apps are the way in** (owner, 2026-11-23). People work in the Mac app's window and the iPhone app, which both
-show the web app's pages. A plain browser gets only what needs no account: share links (Review, Finals, Content
-Workshop, Media Library, Video Notes, documents), an invite's page and a phone's pairing page, which hand over to the
-app, and an AI app's sign-in. On a server that asks for a sign-in, a plain browser gets no sign-in form (`signsInHere`,
-`apps/captions/src/components/AuthGate.tsx`) and an invite no join form (`JoinPage.tsx`).
-- Never build, keep or review a screen for a signed-in person in a plain browser. "Does nothing in a browser" is not a
-  finding.
-- A page with no Mac app behind it is still real: the iPhone app's pages and the public pages have no bridge
-  (`thisMacBridge()`, `hasThisMac()`), so a control only the Mac app can serve stays hidden there and nothing stands
-  in for it.
+**The browser is for viewing** (owner, 2026-11-26). People work in the Mac app's window and the iPhone app, which both
+show the web app's pages. A plain browser is for hosting, viewing, sharing and downloading: share links with no
+account, and, signed in, what the account may see (the Media Library, Review, Finals and the rest of its pages).
+- Sign-in and what a signed-in account may view keep working in a plain browser: never block or remove them
+  (`apps/captions/src/components/AuthGate.dom.test.tsx` holds the sign-in page).
+- Tools are built for the apps. A control that needs the Mac app stays hidden in a plain browser (`thisMacBridge()`,
+  `hasThisMac()`), as it does in the iPhone app's pages, and gets no stand-in there. "Does nothing in a browser" is
+  not a finding for such a control: judge a tool's screen as the Mac app shows it.
 - "In the browser" in code and commit messages mostly means in the page (a worker, the page's own export, its
   storage), which the Mac app runs too. Write "in the page", and "a plain browser" for the program.
-- Check a change in the Mac app. A headless browser stands in for its window only on a server with no sign-in (the dev
-  server) or one signed in to through the API (`apps/captions/e2e/`), and for the public pages.
 
 **No secrets in code, docs or fixtures.** Keys, tokens, cookies and passwords come from environment variables or
 per-user files written with mode 0600. Read them with `process.env` at the point of use (paid service keys only

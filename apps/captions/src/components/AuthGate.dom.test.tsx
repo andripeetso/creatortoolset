@@ -4,7 +4,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
-// A server that asks for a sign-in: the Mac app's window gets the form, a plain browser the way to the app.
+// A server that asks for a sign-in: a plain browser gets the sign-in form too, and a share link needs none (AGENTS.md,
+// "The browser is for viewing").
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -29,7 +30,6 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount());
   host.remove();
-  delete document.documentElement.dataset.macThisMac;
   vi.unstubAllGlobals();
 });
 
@@ -47,20 +47,11 @@ const open = async (path: string) => {
   return host.textContent ?? "";
 };
 
-it("gives a plain browser the way to the app and no sign-in", async () => {
-  const text = await open("/library");
-  expect(text).toContain("Open in the app");
-  expect(text).not.toContain("Continue with");
-  expect(host.querySelector("input")).toBeNull();
-  expect(text).not.toContain("tool pages");
-  expect(host.querySelector("a")?.getAttribute("href")).toMatch(/^creatortoolset:\/\//);
-});
-
-it("gives the Mac app's window the sign-in form", async () => {
-  document.documentElement.dataset.macThisMac = "1";
+it("gives a plain browser the sign-in form", async () => {
   const text = await open("/library");
   expect(text).toContain("Continue with Google");
-  expect(text).not.toContain("Open in the app");
+  expect(text).toContain("Use a password instead");
+  expect(text).not.toContain("tool pages");
 });
 
 it("leaves a share link open to a plain browser", async () => {
