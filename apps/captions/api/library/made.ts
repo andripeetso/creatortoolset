@@ -172,7 +172,7 @@ export async function libraryMade(libraryId: string, username: string): Promise<
       ...engineOf(libraryId, kind, username),
       ...(n ? { minutes: await makeMinutes(libraryId, username, kind, n, seconds) } : {}),
       ...(skipped ? { skipped: { n: skipped, why: kind === "transcribe" && !librarySetting(libraryId, "transcribeBroll") ? "no sound, music, or B-roll" : skip!.why } } : {}),
-      ...(n && (kind === "transcribe" || kind === "describe") ? { broll: brollOf(libraryId, kind, username) } : {}),
+      ...((n || r.queued) && (kind === "transcribe" || kind === "describe") ? { broll: brollOf(libraryId, kind, username) } : {}),
     });
   }
   return out;
@@ -186,10 +186,10 @@ const SKIP: Partial<Record<MadeKind, { of: string; why: string }>> = {
   timeline: { of: LOOKABLE, why: "no shot descriptions yet" },
 };
 
-/** Of `kind`'s missing files, the B-roll ones (videos nobody talks in: roll.ts). */
+/** Of `kind`'s missing and queued files, the B-roll ones (videos nobody talks in: roll.ts). */
 function brollOf(libraryId: string, kind: MadeKind, username: string): number {
   const s = specOf(kind, username);
-  return (libraryDb().prepare(`SELECT COUNT(*) AS n ${LIVE} AND ${s.of} AND NOT ${s.have} AND NOT ${s.open} AND NOT ${s.failed} AND a.roll = 'b'`).get(libraryId) as { n: number }).n;
+  return (libraryDb().prepare(`SELECT COUNT(*) AS n ${LIVE} AND ${s.of} AND NOT ${s.have} AND NOT ${s.failed} AND a.roll = 'b'`).get(libraryId) as { n: number }).n;
 }
 
 /** `username`'s computers online that claimed library work here (library-package.ts takesLibrary; imported, it would load before the worker). */
@@ -270,6 +270,22 @@ export function stopQueued(libraryId: string, kind: MadeKind, username: string):
   if (!job) return 0;
   // kept as stopped, not deleted: a file with no job row is new to the sweeps (shots.ts sweepLook) and queued again
   return Number(db.prepare(`UPDATE jobs SET state = 'stopped', error = NULL WHERE library_id = ? AND kind = ? AND state = 'queued'`).run(libraryId, job).changes);
+}
+
+/**
+ * Transcripts for B-roll turned off: the B-roll transcripts still queued end as stopped, as Cancel leaves them (Retry, or
+ * Include B-roll then Retry, queues them again). Returns how many files.
+ * shortcut: a job row doesn't say whether it was picked by hand, so hand-picked B-roll queued before the switch stops too.
+ */
+export function stopBroll(libraryId: string): number {
+  return Number(
+    libraryDb()
+      .prepare(
+        `UPDATE jobs SET state = 'stopped', error = NULL WHERE library_id = ? AND kind = 'transcribe' AND state = 'queued'
+           AND version_id IN (SELECT v.id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE a.library_id = ? AND a.roll = 'b')`,
+      )
+      .run(libraryId, libraryId).changes,
+  );
 }
 
 /**

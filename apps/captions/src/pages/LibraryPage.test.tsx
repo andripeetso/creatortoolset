@@ -336,6 +336,10 @@ describe("Media Library page", () => {
     expect(dialog.querySelector('[role="switch"]')).toBeNull();
     await act(async () => [...dialog.querySelectorAll("button")].find((b) => b.textContent === "Skip B-roll")!.click());
     expect(server.patched.at(-1)).toEqual({ settings: { transcribeBroll: false } });
+    // skipped, the same place takes it back: Include B-roll is the only control for it
+    await settle();
+    await act(async () => [...dialog.querySelectorAll("button")].find((b) => b.textContent === "Include B-roll")!.click());
+    expect(server.patched.at(-1)).toEqual({ settings: { transcribeBroll: true } });
     await act(async () => {
       dialog.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     });

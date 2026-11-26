@@ -15,7 +15,7 @@ import { uploadTarget } from "./upload-target";
 import { currentWorkspaceId } from "../lib/workspace-scope";
 import { sharedHere, workspaceScope } from "../lib/workshop/workspace";
 import { expandCollection } from "./collections";
-import { libraryMade, makeMissing, retryFailed, retryUnreadable, stopQueued, unreadableOf } from "./made";
+import { libraryMade, makeMissing, retryFailed, retryUnreadable, stopBroll, stopQueued, unreadableOf } from "./made";
 import { blobs, BLUR_SQL, blursFaces, proxyAsked, type ProxyAnswer, finalsUpload, isBlurred, keepsOnlyOriginals, libraryDb, makesProxyOf, librarySetting, libraryStore, libraryUpload, libraryUploadStored, meter, newLibrarySettings, proxiesInCloud, SETTING_DEFAULTS, SINCE, uploadOf } from "./db";
 import { estimate, libraryStatus, progress } from "./estimate";
 import { sendFile } from "../lib/send-file";
@@ -1273,7 +1273,7 @@ libraryApp.get("/:id/status", (c) => {
 });
 
 // PATCH /api/library/:id { name?, settings?: { describe?, embed?, pictures?, proxy?, upload?, finalsUpload?, organize?, … } } → LibrarySummary;
-// the owner only. Proxies off: the ones still queued are dropped; on under Hosted proxies, every clip with none gets one.
+// the owner only. Proxies off: the ones still queued are dropped; Transcripts for B-roll off: B-roll's queued transcripts stop; on under Hosted proxies, every clip with none gets one.
 // A switch turned on makes for new files only (made.ts). organize "ai" files what is in no folder yet (UNIFIED-PRD §4.9); it does not force describe.
 // copyTo and places are read only by the one-time migration (§4.6), so nothing writes them.
 libraryApp.patch("/:id", async (c) => patchLibrary(c, c.req.param("id"), (await c.req.json().catch(() => null)) as { name?: unknown; settings?: Record<string, unknown> } | null));
@@ -1292,6 +1292,8 @@ async function patchLibrary(c: Context<{ Variables: AuthVars }>, libraryId: stri
     if (on === true && key in SINCE && !settingOn(libraryId, key)) put(SINCE[key as keyof typeof SINCE], Date.now());
     if (typeof on === "boolean") put(key, on);
   }
+  // Skip B-roll: what is still queued of it stops too, so a Make pressed before the switch costs nothing more
+  if (b?.settings?.transcribeBroll === false) stopBroll(libraryId);
   const s = b?.settings ?? {};
   // true/false: the upload switch's older values (db.ts uploadOf), kept so a stored boolean still maps the same way
   const upload = s.upload === true ? "all" : s.upload === false ? "none" : s.upload;

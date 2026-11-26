@@ -24,7 +24,7 @@ process.env.DATA_DIR = dir;
 delete process.env.APP_SECRET; // the solo install: "local" is the admin
 const { libraryDb } = await import("./db");
 const { enqueueJob } = await import("./jobs");
-const { engineOf, libraryMade, makeMissing, PICTURE_RETRY_DAYS, retryEmptyPictures, retryFailed, retryFailedPictures, STILLS_FIXED_AT, stopQueued } = await import("./made");
+const { engineOf, libraryMade, makeMissing, PICTURE_RETRY_DAYS, retryEmptyPictures, retryFailed, retryFailedPictures, STILLS_FIXED_AT, stopBroll, stopQueued } = await import("./made");
 const { queueLook, sweepLook } = await import("./shots");
 const { mirrorBlurred } = await import("./blur-mirror");
 const { libraryApp } = await import("./routes");
@@ -244,6 +244,21 @@ describe("what's made", () => {
     } finally {
       d.prepare("UPDATE libraries SET settings = json_remove(settings, '$.transcribeBroll') WHERE id = 'lib_m'").run();
       d.prepare("UPDATE assets SET trashed_at = 1 WHERE id = 'ast-broll-off'").run();
+    }
+  });
+
+  it("Skip B-roll stops the B-roll transcripts still queued, and leaves A-roll's", async () => {
+    const b = clip("ast-broll-queued");
+    const a = clip("ast-aroll-queued");
+    d.prepare("UPDATE assets SET roll = 'a' WHERE id = 'ast-aroll-queued'").run();
+    try {
+      for (const v of [a, b]) d.prepare("INSERT INTO jobs (library_id, version_id, kind, state, actor) VALUES ('lib_m', ?, 'transcribe', 'queued', 'local')").run(v);
+      // queued, not missing: the row still counts it as B-roll, so Skip B-roll is offered after a Make
+      expect((await row("transcribe")).broll).toBeGreaterThanOrEqual(1);
+      expect(stopBroll("lib_m")).toBe(1);
+      expect([job(b, "transcribe")?.state, job(a, "transcribe")?.state]).toEqual(["stopped", "queued"]);
+    } finally {
+      d.prepare("UPDATE assets SET trashed_at = 1 WHERE id IN ('ast-broll-queued', 'ast-aroll-queued')").run();
     }
   });
 

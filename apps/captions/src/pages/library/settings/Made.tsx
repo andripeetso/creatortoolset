@@ -33,9 +33,9 @@ export function costWords(m: Pick<LibraryMade, "cost" | "usd" | "minutes" | "whe
 /** What a kind runs on: "Deepgram nova-3 on Deepgram", "FFmpeg on Studio Mac". */
 export const engineLine = (m: Pick<LibraryMade, "engine" | "where">) => (m.engine ? `${m.engine}${m.where ? ` on ${m.where}` : ""}` : "");
 
-/** Beside the count: the missing are mostly B-roll (when so), and the files this kind skips. */
-export function missingWhy(m: Pick<LibraryMade, "missing" | "broll" | "skipped">): string {
-  const broll = m.missing && m.broll && m.broll * 2 > m.missing ? "Mostly B-roll" : "";
+/** Beside the count: how many of the missing and queued are B-roll, and the files this kind skips. */
+export function missingWhy(m: Pick<LibraryMade, "broll" | "skipped">): string {
+  const broll = m.broll ? `${n(m.broll)} of them B-roll` : "";
   return [broll, m.skipped ? `${files(m.skipped.n)} skipped: ${m.skipped.why}` : ""].filter(Boolean).join(" · ");
 }
 
@@ -169,7 +169,7 @@ export function Made({ library, onSettings, onBroll }: { library: LibrarySummary
           const retry = on && !!(m.failed || m.stopped);
           const makes = m.missing > 0 && !k.auto && (on || (k.kind !== "proxy" && !blur));
           const broll = k.kind === "transcribe" && onBroll ? library.settings.transcribeBroll !== false : undefined;
-          // off: Make leaves clips sorted as B-roll out (made.ts); offered while some of the missing are B-roll, or while off
+          // off: Make leaves clips sorted as B-roll out and the queued ones stop (made.ts); offered while some of the missing or queued are B-roll, or while off
           const brollButton = broll === true ? !!m.broll : broll === false;
           return (
             <Row

@@ -540,7 +540,7 @@ export interface LibraryMade {
   minutes?: number;
   /** files of the library this kind never makes, and why ("no sound") */
   skipped?: { n: number; why: string };
-  /** of the missing, how many are B-roll (a video nobody talks in) */
+  /** of the missing and queued, how many are B-roll (a video nobody talks in) */
   broll?: number;
 }
 

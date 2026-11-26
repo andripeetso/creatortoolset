@@ -25,8 +25,9 @@ describe("What's made: a kind's state at a glance", () => {
     expect(costWords(m({ cost: "tokens", usd: 3, where: "the AI provider sign-in" }))).toBe("about $3.00 of plan usage");
     expect(costWords(m({ cost: "free", minutes: 12, where: "Studio Mac" }))).toBe("free, about 12 min");
     expect(costWords(m({ cost: "paid", needs: "Needs a Deepgram key" }))).toBe("Needs a Deepgram key");
-    expect(missingWhy(m({ missing: 838, broll: 700, skipped: { n: 120, why: "no sound, or music" } }))).toBe("Mostly B-roll · 120 files skipped: no sound, or music");
-    expect(missingWhy(m({ missing: 10, broll: 2 }))).toBe("");
+    expect(missingWhy(m({ missing: 838, broll: 700, skipped: { n: 120, why: "no sound, or music" } }))).toBe("700 of them B-roll · 120 files skipped: no sound, or music");
+    expect(missingWhy(m({ missing: 10, broll: 1_142 }))).toBe("1,142 of them B-roll");
+    expect(missingWhy(m({ missing: 10 }))).toBe("");
     expect(makeWhat(m({ missing: 21, where: "Studio Mac" }))).toBe("queues 21 jobs that run on Studio Mac, and Cancel takes off the ones still waiting");
   });
 
