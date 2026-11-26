@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it } from "vitest";
-import { ProviderButtons, connectingApp } from "./AuthGate";
+import { ProviderButtons, appLink, connectingApp, signsInHere } from "./AuthGate";
 
 it("shows a Continue with button only for each provider this server has keys for, Google first", () => {
   const html = renderToStaticMarkup(<ProviderButtons providers={{ apple: true, google: true, github: true }} />);
@@ -21,4 +21,16 @@ it("names the AI app a sign-in is for, from the Allow page it goes back to", () 
   expect(connectingApp("?next=/oauth/authorize?client_id=garbage")).toBe("an AI app");
   expect(connectingApp("?next=/workshop")).toBeNull();
   expect(connectingApp("")).toBeNull();
+});
+
+it("shows the sign-in form in the Mac app and for an AI app's sign-in, never in a plain browser", () => {
+  expect(signsInHere(true, "")).toBe(true);
+  expect(signsInHere(false, "?next=/oauth/authorize?client_id=garbage")).toBe(true);
+  expect(signsInHere(false, "")).toBe(false);
+  expect(signsInHere(false, "?next=/workshop")).toBe(false);
+});
+
+it("links a page to the Mac app's window", () => {
+  expect(appLink("/review/abc", "?v=2")).toBe("creatortoolset://review/abc?v=2");
+  expect(appLink("/", "")).toBe("creatortoolset://");
 });

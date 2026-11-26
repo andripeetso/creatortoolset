@@ -128,8 +128,7 @@ workspaceApp.post("/invites", async (c) => {
           `New to Creator Toolset?\n` +
           `1. Download the app: https://creatortoolset.com/download\n` +
           `2. Open the invite link above and choose Open in the app, or paste the link into the app's Add server.\n` +
-          `The app then adds ${server} and opens ${what === server ? "it" : what} for you: there is nothing else to set up.\n\n` +
-          `Rather use a browser? Open the invite link and join there.\n`,
+          `The app then adds ${server} and opens ${what === server ? "it" : what} for you: there is nothing else to set up.\n`,
       );
     } catch (e) {
       revokeInvite(m.w, made.invite.id); // not sent: no link left behind that nobody has

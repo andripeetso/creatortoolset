@@ -8,7 +8,7 @@ import XCTest
 @MainActor
 final class SignInCodeTests: XCTestCase {
     private let needed = #"{"error":"This account asks for a code from an authenticator app, which this app can't take yet. Sign in with a link from a signed-in computer instead.","code":"CODE_NEEDED","step":"Xq3v9Tn0aBcD-eFgHiJkLmNoPqRsTuVwXyZ01234567"}"#
-    private let setup = #"{"error":"This server asks for a code from an authenticator app. Set it up in a browser, then sign in here with a link from it.","code":"CODE_SETUP","step":"Xq3v9Tn0aBcD-eFgHiJkLmNoPqRsTuVwXyZ01234567"}"#
+    private let setup = #"{"error":"This server asks for a code from an authenticator app. Set it up in the Mac app, then sign in here with a link from it.","code":"CODE_SETUP","step":"Xq3v9Tn0aBcD-eFgHiJkLmNoPqRsTuVwXyZ01234567"}"#
     private let expired = #"{"error":"That sign-in expired. Sign in again.","code":"STEP_EXPIRED"}"#
     private let wrong = #"{"error":"Wrong code"}"#
     private let locked = #"{"error":"Too many wrong tries. Try again in 2 minutes.","code":"LOCKED"}"#

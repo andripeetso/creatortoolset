@@ -24,11 +24,10 @@ Ground rules for whoever runs it:
   Settings → API keys.
 - Every paid service on your own keys (Settings → API keys, or the server's `.env`). The server's Anthropic
   key is never used for AI. See "Whose keys pay" in step 8.
-- The web app works on phones: open it in the phone's browser and add it to the home screen.
+- Your server opens in the Mac app, and in the iPhone app (`apps/ios`). A plain browser gets only the links you
+  share: it has no sign-in.
 - Nothing from anyone else: no outside account, no outside service. The Mac app's first run offers an optional
   Apple or Google sign-in at an account server; your server doesn't need it (step 8).
-
-This repository does not include an iPhone app.
 
 ## 1. Choose the server and the domain
 
@@ -174,7 +173,8 @@ Run it again after each change to `.env`: `docker compose up -d` applies the cha
 
 ## 7. Sign in to your account
 
-1. Open `https://tools.example.com` in a browser.
+1. In the Mac app (step 8, "On your Mac", has how to get it), add your server: **Servers → Add server…**, with
+   `https://tools.example.com`. A plain browser has no sign-in.
 2. Sign in as `admin` (or your `ADMIN_USERNAME`), with `APP_SECRET` as the password. The account was created on
    first start.
 3. In **Settings → Account**, set a new password. The password is then no longer the secret that signs the

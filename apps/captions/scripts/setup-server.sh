@@ -29,4 +29,4 @@ grep -q '^APP_SECRET=.\{16,\}' .env || sed -i "s|^APP_SECRET=.*|APP_SECRET=$(ope
 docker compose up -d --build
 echo
 echo "Started. Check: curl -fsS https://$domain/api/health"
-echo "Sign in at https://$domain as admin; the first password is APP_SECRET in $(pwd)/.env."
+echo "Add https://$domain in the Mac app (Servers → Add server…) and sign in as admin; the first password is APP_SECRET in $(pwd)/.env."
