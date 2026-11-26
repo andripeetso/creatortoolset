@@ -21,8 +21,10 @@ export interface VoiceFault {
 
 /** Writing down failed for a reason the server named (422 SPEECH): the dock shows its fault. */
 export class SpeechFault extends Error {
-  constructor(readonly fault: VoiceFault) {
+  readonly fault: VoiceFault;
+  constructor(fault: VoiceFault) {
     super(fault.line);
+    this.fault = fault;
   }
 }
 
