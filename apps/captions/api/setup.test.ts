@@ -126,7 +126,7 @@ describe("setup: my tools, my plan, what is set up", () => {
     try {
       const out = (await get()) as unknown as SetupView;
       expect(out.ways).toEqual([{ tool: "enhance", what: "A Tiny sign-in", have: "plugin:tiny-way/enhance" }]);
-      expect(needsLine(readiness("enhance", out.have).missing)).toBe("Needs an API key or a Tiny sign-in");
+      expect(needsLine(readiness("enhance", out.have).missing)).toBe("Needs an audio cleanup key or a Tiny sign-in");
       signedIn = true;
       const inn = (await get()) as unknown as SetupView;
       expect(inn.have).toContain("plugin:tiny-way/enhance");

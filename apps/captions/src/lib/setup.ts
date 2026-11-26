@@ -406,6 +406,15 @@ export const JOB_SETUP: Record<Job, { name: string; tools: readonly Tool[] }> = 
 /** The answers this account is offered: those with a tool it may use (`mine`), and Just look around. */
 export const jobsFor = (mine: readonly Tool[]): Job[] => JOBS.filter((j) => j === "look" || JOB_SETUP[j].tools.some((t) => mine.includes(t)));
 
+/**
+ * What a job still needs: the required rows (contracts/tools.ts readiness, the list Home's dots and a tool's card read)
+ * of its tools this account may use, each once. The workspace counts as there: setup makes it.
+ */
+export function jobNeeds(job: Job | null | undefined, mine: readonly Tool[], have: readonly Have[]): Need[] {
+  if (!job) return [];
+  return missingFor(JOB_SETUP[job].tools.filter((t) => mine.includes(t)), [...have, "project"]);
+}
+
 /** The required rows still missing for these tools, each once. */
 function missingFor(tools: readonly Tool[], have: readonly Have[]): Need[] {
   const seen = new Set<string>();

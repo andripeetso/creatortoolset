@@ -98,13 +98,13 @@ describe("needs: a plug-in's other way to set up a tool", () => {
     const shipped = JSON.stringify(TOOL_NEEDS);
     mountPlugins(new Hono(), [definePlugin({ id: "tiny-way", needs: [{ tool: "enhance", what: "A Tiny sign-in", met: (u) => u.username === "in", settings: "tiny-way" }] })]);
     try {
-      expect(TOOL_NEEDS.enhance[0]).toMatchObject({ what: "An API key or a Tiny sign-in", alsoMetBy: ["plugin:tiny-way/enhance"] });
+      expect(TOOL_NEEDS.enhance[0]).toMatchObject({ what: "An audio cleanup key or a Tiny sign-in", alsoMetBy: ["plugin:tiny-way/enhance"] });
       const yes = await pluginNeeds(user("in"));
       expect(yes).toEqual({ ways: [{ tool: "enhance", what: "A Tiny sign-in", have: "plugin:tiny-way/enhance", settings: "tiny-way" }], have: ["plugin:tiny-way/enhance"] });
       expect(readiness("enhance", yes.have).ready).toBe(true);
       const no = await pluginNeeds(user("out"));
       expect(no.have).toEqual([]);
-      expect(needsLine(readiness("enhance", no.have).missing)).toBe("Needs an API key or a Tiny sign-in");
+      expect(needsLine(readiness("enhance", no.have).missing)).toBe("Needs an audio cleanup key or a Tiny sign-in");
       // a tool with no required row is left as it is
       expect(TOOL_NEEDS.review).toEqual([]);
     } finally {

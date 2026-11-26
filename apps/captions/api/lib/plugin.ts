@@ -137,7 +137,7 @@ export interface ServerPlugin {
   // Installers for pack items the core can't install itself (a design system for the AI Editor). Each kind is installed by
   // at most one plug-in; a pack's items of a kind with no installer are held on the account (api/lib/packs.ts).
   packItems?: PackItemInstaller[];
-  // Another way to meet a tool's required row on Home, in setup and in Settings → Tools ("Needs an API key or an Adobe
+  // Another way to meet a tool's required row on Home, in setup and in Settings → Tools ("Needs an audio cleanup key or an Adobe
   // sign-in"): `what` names it, `met` says whether this account has it. Read by api/setup.ts (pluginNeeds).
   needs?: PluginNeed[];
   // Skills for the places a pack's skills may go (contracts/packs.ts PACK_SKILL_SLOTS, never the assistant): text the

@@ -90,7 +90,7 @@ const PRIMARY = "min-w-28 bg-[var(--tint)] text-white hover:bg-[var(--tint)] hov
 
 /**
  * First-run setup in one window, four screens for everyone: your look (the theme, set as Settings → Appearance sets it)
- * → connect your AI → what you want to do first (the choice alone) → how you work best (in the app, or with an AI app too), then Home. "With an AI app" gets
+ * → connect your AI → what you want to do first (and, to press or leave, what that still needs) → how you work best (in the app, or with an AI app too), then Home. "With an AI app" gets
  * one more screen first, where Creator Toolset is installed in the AI apps on this computer. Leaving the
  * last screen saves `done`; no job to do is asked of her. Not now (the X, the footer link, Escape) hides it for this
  * browser and remembers the screen; Home's card brings it back. A click outside never closes it. Never shown on a
@@ -314,7 +314,7 @@ export function SetupDialog() {
           ))}
 
           {step === "job" && (
-            <JobStep mine={mine} job={prefs.job ?? null} onPick={pickJob} />
+            <JobStep mine={mine} have={view.have} job={prefs.job ?? null} onPick={pickJob} ai={<AgentsStep picked={THIS_COMPUTER} onConnectedChange={onConnected} />} onChanged={() => void load()} />
           )}
 
           {step === "social" && <SocialStep />}

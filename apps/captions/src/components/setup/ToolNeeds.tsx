@@ -6,7 +6,7 @@ import {
 } from "lucide-react";
 import { MY_KEYS, type MyKeyEnv } from "@contracts/service-keys";
 import { PLANS, type PlanId } from "@contracts/plans";
-import { NEED_SENTENCE, readiness, TOOL_NAMES, TOOL_NEEDS, type Have, type Need, type SetupView, type Tool } from "@contracts/tools";
+import { NEED_SENTENCE, needName, readiness, TOOL_NAMES, TOOL_NEEDS, type Have, type Need, type SetupView, type Tool } from "@contracts/tools";
 import { Button } from "@/components/ui/button";
 import { ConnectorsSection } from "@/components/settings/ConnectorsSection";
 import { MyKeysSection } from "@/components/settings/MyKeysSection";
@@ -90,13 +90,13 @@ export function NeedLine({ met, name, line, button, children }: { met: boolean; 
   );
 }
 
-/** A need's line: its button opens the need's own form under it. */
-export function NeedRow({ need, met, welcome, focus }: { need: Need; met: boolean; welcome?: boolean; focus?: boolean }) {
+/** A need's line, named as a list names it (needName). `form`: what its button opens in place of the need's own form (setup opens its own Connect your AI). */
+export function NeedRow({ need, met, welcome, focus, form }: { need: Need; met: boolean; welcome?: boolean; focus?: boolean; form?: ReactNode }) {
   const [open, setOpen] = useState(false);
   return (
     <NeedLine
       met={met}
-      name={need.what}
+      name={needName(need)}
       line={welcome && NEED_SENTENCE[need.anyOf[0]]}
       button={
         <Button size="sm" variant="outline" className="h-7" autoFocus={focus} onClick={() => setOpen(!open)}>
@@ -104,12 +104,13 @@ export function NeedRow({ need, met, welcome, focus }: { need: Need; met: boolea
         </Button>
       }
     >
-      {open && (
-        <>
-          <NeedForm need={need} />
-          <WaySections need={need} />
-        </>
-      )}
+      {open &&
+        (form ?? (
+          <>
+            <NeedForm need={need} />
+            <WaySections need={need} />
+          </>
+        ))}
     </NeedLine>
   );
 }

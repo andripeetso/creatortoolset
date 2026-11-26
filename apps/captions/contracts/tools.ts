@@ -84,7 +84,7 @@ export const NEED_SENTENCE: Record<Have, string> = {
   project: "A workspace keeps this tool's work together. Making one takes a moment.",
   ai: "ChatGPT, Claude or another AI plan you already have.",
   ownAi: "ChatGPT, Claude or another AI plan you already have.",
-  library: "The Media Library is where your footage lives. Set it up to start.",
+  library: "Where your videos are kept.",
   instagram: "Lets this tool read your own Instagram posts. You sign in yourself.",
   apify: "Apify reads public posts for you. Apify bills you for each read, to your own account.",
   mcp: "Lets your own Claude Code or Codex use Creator Toolset. Set it up in Settings → Headless access.",
@@ -110,7 +110,7 @@ export const NEED_SENTENCE: Record<Have, string> = {
 export type Have = "project" | "ai" | "ownAi" | "library" | "instagram" | "apify" | "mcp" | "deviceTranscripts" | MyKeyEnv | NeedWay["have"];
 
 /**
- * A plug-in's other way to meet a tool's required row (ServerPlugin.needs, api/lib/plugin.ts): the row reads "An API key
+ * A plug-in's other way to meet a tool's required row (ServerPlugin.needs, api/lib/plugin.ts): the row reads "An audio cleanup key
  * or <what>", and is met when `have` holds this way's id.
  */
 export interface NeedWay {
@@ -144,9 +144,11 @@ export interface Need {
  * person's own computer no key is needed.
  */
 // One way of saying every row (owner, 2026-11-11: "no standard… each has its own personality"): `what` is the thing to
-// add, as Settings names it ("An Apify key", "An AI provider"; "An API key" where more than one key does: owner, 11-11);
+// add, as Settings names it ("An Apify key", "An AI provider"); where more than one key does, the row says what the
+// keys are for, never each brand and never just "An API key" (owner, 2026-11-26: "what do you mean an API key?");
 // an optional row adds what it gives after a colon. Home,
-// Settings → Tools and the tool's checklist all say a missing row the same way: needsLine, "Needs an Apify key".
+// Settings → Tools and the tool's checklist all say a missing row the same way: needsLine, "Needs an Apify key". A
+// list's row shows it without its article: needName, "Apify key".
 export const TOOL_NEEDS: Record<Tool, readonly Need[]> = {
   instagram: [
     { what: "A workspace", anyOf: ["project"], form: "project" },
@@ -159,7 +161,7 @@ export const TOOL_NEEDS: Record<Tool, readonly Need[]> = {
     { what: "An AI provider", anyOf: ["ownAi"], form: "ai" },
     { what: "A Perplexity key: accuracy checks and deep research", anyOf: ["PERPLEXITY_API_KEY"], form: "keys", optional: true },
   ],
-  enhance: [{ what: "An API key", anyOf: ["ELEVENLABS_API_KEY", "NVIDIA_API_KEY"], form: "keys" }],
+  enhance: [{ what: "An audio cleanup key", anyOf: ["ELEVENLABS_API_KEY", "NVIDIA_API_KEY"], form: "keys" }],
   captions: [
     { what: "A Deepgram key: faster transcripts", anyOf: ["DEEPGRAM_API_KEY"], form: "keys", optional: true },
     { what: "An AI provider: Match cadence", anyOf: ["ai"], form: "ai", optional: true },
@@ -167,14 +169,14 @@ export const TOOL_NEEDS: Record<Tool, readonly Need[]> = {
   review: [],
   media: [
     { what: "A Media Library", anyOf: ["library"], form: "library" },
-    { what: "An API key: transcripts", anyOf: ["DEEPGRAM_API_KEY", "OPENAI_API_KEY"], alsoMetBy: ["deviceTranscripts"], form: "keys", optional: true },
+    { what: "A transcription key: a transcript of each clip", anyOf: ["DEEPGRAM_API_KEY", "OPENAI_API_KEY"], alsoMetBy: ["deviceTranscripts"], form: "keys", optional: true },
     { what: "An OpenAI key: search by meaning", anyOf: ["OPENAI_API_KEY"], form: "keys", optional: true },
     { what: "An AI provider: descriptions", anyOf: ["ai"], form: "ai", optional: true },
   ],
   editor: [
     { what: "An AI provider", anyOf: ["ai"], form: "ai" },
     { what: "A Media Library", anyOf: ["library"], form: "library" },
-    { what: "An API key", anyOf: ["DEEPGRAM_API_KEY", "OPENAI_API_KEY"], alsoMetBy: ["deviceTranscripts"], form: "keys" },
+    { what: "A transcription key", anyOf: ["DEEPGRAM_API_KEY", "OPENAI_API_KEY"], alsoMetBy: ["deviceTranscripts"], form: "keys" },
   ],
   stories: [],
   // the app asks no AI anything here: the person's AI designs through the assistant's tools
@@ -214,6 +216,9 @@ export function needNames(needs: readonly Need[]): string {
   const names = needs.map((n) => n.what.charAt(0).toLowerCase() + n.what.slice(1));
   return names.length <= 1 ? (names[0] ?? "") : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
 }
+
+/** A row's name where it stands alone, as a list's row: `what` without its article ("Media Library", "AI provider: descriptions"). */
+export const needName = (need: Pick<Need, "what">): string => need.what.replace(/^An? /, "").replace(/^./, (c) => c.toUpperCase());
 
 /** Missing rows in one line, as every screen says them: "Needs a project and an Apify key". */
 export const needsLine = (needs: readonly Need[]): string => `Needs ${needNames(needs)}`;

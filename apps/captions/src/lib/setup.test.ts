@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  dismissSetup, DOWNLOAD_URL, endIntro, firstProjectName, introPlays, introSeen, openSetupAt, jobsFor, markIntroSeen, resumeStep, startIntro, toolsWithJob, useIntro, SETUP_PATH, SIDE_STEPS, setupDismissed, setupFinished, setupOpen, setupOpensItself,
+  dismissSetup, DOWNLOAD_URL, endIntro, firstProjectName, introPlays, introSeen, jobNeeds, openSetupAt, jobsFor, markIntroSeen, resumeStep, startIntro, toolsWithJob, useIntro, SETUP_PATH, SIDE_STEPS, setupDismissed, setupFinished, setupOpen, setupOpensItself,
   hideReminders, remindLater, remindersOn, setupGapIds, setupAsked, setupGaps, setupLeft, useReminders, setupStepFromParam, shareDownload, stepsFor, toolForPath, seedSetup, useWorkPrefs,
 } from "./setup";
 import { useAuth } from "./auth";
 import { putCached, readCached } from "./local-cache";
-import { TOOLS, type Have, type Tool } from "@contracts/tools";
+import { readiness, TOOLS, type Have, type Tool } from "@contracts/tools";
 import { JOBS } from "@contracts/work-prefs";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -291,6 +291,27 @@ describe("What do you want to do first?", () => {
     expect(jobsFor(["workshop", "captions"])).toEqual(["write", "captions", "look"]);
     expect(jobsFor(["editor"])).toEqual(["edit", "look"]); // one of its two tools is enough
     expect(jobsFor([])).toEqual(["look"]);
+  });
+
+  it("lists a job's missing required rows from the tools' own list (readiness), each once, never an optional one", () => {
+    const have = ["deviceTranscripts", "library"] as const; // a fresh account on the Mac app
+    const edit = jobNeeds("edit", all, [...have]);
+    expect(edit.map((n) => n.anyOf)).toEqual([["ai"]]); // the library and transcripts are there; the AI Editor needs an AI
+    expect(edit).toEqual(readiness("editor", [...have]).missing); // the same rows as the AI Editor's card
+    expect(jobNeeds("ideas", all, [...have]).map((n) => n.form)).toEqual(["apify"]);
+    expect(jobNeeds("write", all, [...have]).map((n) => n.anyOf)).toEqual([["ownAi"]]);
+    for (const j of JOBS) expect(jobNeeds(j, all, []).some((n) => n.optional)).toBe(false);
+  });
+
+  it("counts the workspace as made (setup makes it), and lists nothing for a job that needs nothing", () => {
+    for (const j of JOBS) expect(jobNeeds(j, all, []).some((n) => n.anyOf.includes("project"))).toBe(false);
+    expect(jobNeeds("captions", all, [])).toEqual([]); // Caption Studio needs nothing it cannot do without
+    expect(jobNeeds("look", all, [])).toEqual([]);
+    expect(jobNeeds(null, all, [])).toEqual([]);
+    expect(jobNeeds("write", all, ["ownAi"])).toEqual([]);
+    // the Media Library and the AI Editor both need a library: one row
+    expect(jobNeeds("edit", all, []).filter((n) => n.anyOf.includes("library"))).toHaveLength(1);
+    expect(jobNeeds("edit", ["media"], [])).toEqual(readiness("media", ["project"]).missing); // only tools the account may use
   });
 
   it("switches the job's tools on when setup is left", () => {

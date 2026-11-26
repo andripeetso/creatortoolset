@@ -16,7 +16,7 @@ describe("TOOL_NEEDS readiness", () => {
   });
 
   it("the Audio Enhancer is ready with either key", () => {
-    expect(readiness("enhance", []).missing.map((n) => n.what)).toEqual(["An API key"]);
+    expect(readiness("enhance", []).missing.map((n) => n.what)).toEqual(["An audio cleanup key"]);
     expect(readiness("enhance", ["NVIDIA_API_KEY"]).ready).toBe(true);
     expect(readiness("enhance", ["ELEVENLABS_API_KEY"]).ready).toBe(true);
   });
@@ -83,10 +83,16 @@ describe("home order and need copy", () => {
     for (const t of TOOLS)
       for (const n of TOOL_NEEDS[t]) {
         expect(n.what, `${t}: ${n.what}`).toMatch(n.optional ? /^(A|An) [^:]+: [a-zA-Z]/ : /^(A|An) [^:]+$/);
-        // more than one key does: the row names where they go, not each brand
-        if (n.form === "keys" && n.anyOf.length > 1) expect(n.what, `${t}: ${n.what}`).toMatch(/^An API key\b/);
+        // more than one key does: the row says what the keys are for, in plain words: never a brand, never just "An API key"
+        if (n.form === "keys" && n.anyOf.length > 1) expect(n.what, `${t}: ${n.what}`).toMatch(/^An? [a-z ]+ key\b/);
       }
     expect(needsLine([TOOL_NEEDS.instagram[0], TOOL_NEEDS.instagram[1]])).toBe("Needs a workspace and an Apify key");
     expect(needsLine([TOOL_NEEDS.workshop[1]])).toBe("Needs an AI provider");
+    // a list's row names the thing alone, without the article the sentence needs
+    const { needName } = await import("./tools");
+    expect(needName(TOOL_NEEDS.workshop[1])).toBe("AI provider");
+    expect(needName({ what: "A Media Library" })).toBe("Media Library");
+    expect(needName(TOOL_NEEDS.editor[2])).toBe("Transcription key");
+    expect(needName({ what: "An OpenAI key: search by meaning" })).toBe("OpenAI key: search by meaning");
   });
 });
