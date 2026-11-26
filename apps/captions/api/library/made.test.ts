@@ -191,6 +191,33 @@ describe("what's made", () => {
     d.prepare("UPDATE assets SET trashed_at = 1 WHERE id = 'ast-blur'").run(); // out of the counts the next tests read
   });
 
+  it("a blurred copy's Make, Cancel and Retry read the jobs on its original: queued, stopped, failed, never missing again", async () => {
+    const orig = clip("ast-blurmake", { kind: "image" });
+    d.prepare("UPDATE asset_versions SET full_sha256 = 'sha-filmed-2' WHERE id = ?").run(orig);
+    d.prepare(
+      `INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, blurred_of, probe, state, created_by, created_at)
+       SELECT 'ver-ast-blurmake-2', asset_id, 2, 'k2', bytes, 'sha-blurred-2', 'sha-filmed-2', probe, 'ready', created_by, created_at FROM asset_versions WHERE id = ?`,
+    ).run(orig);
+    d.prepare("UPDATE assets SET current_version_id = 'ver-ast-blurmake-2' WHERE id = 'ast-blurmake'").run();
+    const before = await row("describe");
+    expect(makeMissing("lib_m", "describe", "local")).toBeGreaterThanOrEqual(1);
+    expect(job(orig, "describe")?.state).toBe("queued");
+    const after = await row("describe");
+    expect(after.queued).toBe(before.queued + before.missing);
+    expect(after.missing).toBe(0);
+    // the waiting line names the computer making it on the original
+    d.prepare("UPDATE jobs SET state = 'running', held_by = 'dev_mine' WHERE version_id = ? AND kind = 'describe'").run(orig);
+    expect((await row("describe")).by).toBe("Studio Mac");
+    d.prepare("UPDATE jobs SET state = 'queued', held_by = NULL WHERE version_id = ? AND kind = 'describe'").run(orig);
+    stopQueued("lib_m", "describe", "local");
+    expect((await row("describe")).stopped).toBe(before.missing);
+    d.prepare("UPDATE jobs SET state = 'failed' WHERE version_id = ? AND kind = 'describe'").run(orig);
+    expect((await row("describe")).failed).toBe(1);
+    retryFailed("lib_m", "describe");
+    expect(job(orig, "describe")?.state).toBe("queued");
+    d.prepare("DELETE FROM jobs WHERE kind = 'describe' AND state = 'queued'").run();
+    d.prepare("UPDATE assets SET trashed_at = 1 WHERE id = 'ast-blurmake'").run();
+  });
   it("timelines: a press covers the files with none once; a watch that fails after it is missing again", async () => {
     const v = clip("ast-tl", { at: 5 });
     d.prepare("INSERT INTO stretches (version_id, seg, a, b, motion, text, created_at) VALUES (?, 0, 0, 4, 0.5, 'A jump.', 1)").run(v);

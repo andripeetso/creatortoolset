@@ -10,9 +10,16 @@ import type { DatabaseSync } from "node:sqlite";
 /** The analysis jobs a blurred copy never runs: queued on its original instead (jobs.ts enqueueJob). */
 export const ON_ORIGINAL: ReadonlySet<string> = new Set(["transcribe", "describe", "look", "embed", "fingerprint"]);
 
-// each blurred copy with its original: an older version of the same clip with the SHA-256 the copy was made from
-const PAIRS = `SELECT b.id AS copy, o.id AS original FROM asset_versions b JOIN asset_versions o ON o.asset_id = b.asset_id AND o.id != b.id
-  AND o.blurred_of IS NULL AND (o.full_sha256 = b.blurred_of OR o.sha256 = b.blurred_of) WHERE b.blurred_of IS NOT NULL`;
+// SQL: version `o` is blurred copy `b`'s original: an older version of the same clip with the SHA-256 the copy was made from
+const pairOn = (b: string, o: string) =>
+  `${b}.blurred_of IS NOT NULL AND ${o}.asset_id = ${b}.asset_id AND ${o}.id != ${b}.id AND ${o}.blurred_of IS NULL AND (${o}.full_sha256 = ${b}.blurred_of OR ${o}.sha256 = ${b}.blurred_of)`;
+// each blurred copy with its original
+const PAIRS = `SELECT b.id AS copy, o.id AS original FROM asset_versions b JOIN asset_versions o ON ${pairOn("b", "o")}`;
+
+/** SQL: the versions whose `kind` job is version `v`'s: `v`, and for an analysis of a blurred copy its original. */
+export function jobVersions(kind: string, v = "v"): string {
+  return ON_ORIGINAL.has(kind) ? `(${v}.id, (SELECT o.id FROM asset_versions o WHERE ${pairOn(v, "o")} LIMIT 1))` : `(${v}.id)`;
+}
 
 /** The original a blurred copy was made from, else undefined. */
 export function originalOf(db: DatabaseSync, versionId: string): string | undefined {

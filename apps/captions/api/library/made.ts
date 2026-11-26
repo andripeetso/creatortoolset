@@ -4,6 +4,7 @@ import { aiFor, anthropicParams, onApiKey } from "../ai-complete";
 import { PICTURE_MODEL } from "../lib/device-picture";
 import { deviceOf, isOnline, listDevices } from "../lib/devices";
 import { libraryWorkspace, serverWorks } from "../work/server-work";
+import { jobVersions } from "./blur-mirror";
 import { BLUR_SQL, keepsOnlyOriginals, libraryDb, libraryUploadStored } from "./db";
 import { FINISHED } from "./query";
 import { DESCRIBE_LABEL, whoFor } from "./describe";
@@ -39,12 +40,12 @@ const HERE = "v.source_key NOT LIKE 'mac:%'";
 
 /** SQL: `job` is queued or running for the version `v`. */
 function open(job?: string): string {
-  return job ? `EXISTS (SELECT 1 FROM jobs j WHERE j.version_id = v.id AND j.kind = '${job}' AND j.state IN ('queued', 'running'))` : "0";
+  return job ? `EXISTS (SELECT 1 FROM jobs j WHERE j.version_id IN ${jobVersions(job)} AND j.kind = '${job}' AND j.state IN ('queued', 'running'))` : "0";
 }
 /** SQL: the version's `job` failed (Retry queues it again, routes.ts). */
-const failedJob = (job?: string) => (job ? `EXISTS (SELECT 1 FROM jobs j WHERE j.version_id = v.id AND j.kind = '${job}' AND j.state = 'failed')` : "0");
+const failedJob = (job?: string) => (job ? `EXISTS (SELECT 1 FROM jobs j WHERE j.version_id IN ${jobVersions(job)} AND j.kind = '${job}' AND j.state = 'failed')` : "0");
 /** SQL: the version's `job` was stopped (Retry queues it again): neither failed nor missing. */
-const stoppedJob = (job?: string) => (job ? `EXISTS (SELECT 1 FROM jobs j WHERE j.version_id = v.id AND j.kind = '${job}' AND j.state = 'stopped')` : "0");
+const stoppedJob = (job?: string) => (job ? `EXISTS (SELECT 1 FROM jobs j WHERE j.version_id IN ${jobVersions(job)} AND j.kind = '${job}' AND j.state = 'stopped')` : "0");
 /** A file in the library when Make for the missing was pressed for `kind` (search by picture, timelines: their catch-ups make them). */
 const pressed = (kind: "pictures" | "timeline") => `v.created_at <= IFNULL(json_extract(l.settings, '$.${kind}Asked'), -1)`;
 
@@ -83,7 +84,7 @@ const SPEC: Record<MadeKind, { job?: string; of: string; have: string; can?: str
     open: pressed("pictures"),
   },
   // a look that ran and wrote no line counts as made: pressed again it would only spend again
-  look: { job: "look", of: LOOKABLE, have: `(${LINES} OR ${has("jobs", " AND x.kind = 'look' AND x.state = 'done'")})` },
+  look: { job: "look", of: LOOKABLE, have: `(${LINES} OR EXISTS (SELECT 1 FROM jobs x WHERE x.version_id IN ${jobVersions("look")} AND x.kind = 'look' AND x.state = 'done'))` },
   // on its way: its look running, or pressed for with no watch since (one that failed after the press is missing again)
   timeline: {
     job: "look",
@@ -279,7 +280,7 @@ export function waitOf(libraryId: string, kind: MadeKind, username: string): Pic
   const s = specOf(kind, username);
   const jobs = libraryDb()
     .prepare(
-      `SELECT j.id, j.state, j.held_by, j.error, j.actor ${LIVE.replace("WHERE", `JOIN jobs j ON j.version_id = v.id AND j.kind = '${s.job}' AND j.state IN ('queued', 'running') WHERE`)} AND ${s.of} AND NOT ${s.have} ORDER BY j.id LIMIT 500`,
+      `SELECT j.id, j.state, j.held_by, j.error, j.actor ${LIVE.replace("WHERE", `JOIN jobs j ON j.version_id IN ${jobVersions(s.job!)} AND j.kind = '${s.job}' AND j.state IN ('queued', 'running') WHERE`)} AND ${s.of} AND NOT ${s.have} ORDER BY j.id LIMIT 500`,
     )
     .all(libraryId) as { id: number; state: string; held_by: string | null; error: string | null; actor: string | null }[];
   let snap: ReturnType<NonNullable<typeof leaveToComputers.status>> | undefined;
@@ -327,13 +328,16 @@ export function makeMissing(libraryId: string, kind: MadeKind, username: string,
   return files.length;
 }
 
+// a job's clip (a) and that clip's current version (v), each by its key: one row per job
+const CLIP_OF_JOB = "JOIN asset_versions jv ON jv.id = j.version_id JOIN assets a ON a.id = jv.asset_id JOIN asset_versions v ON v.id = a.current_version_id";
+
 /** Retry: the failed and stopped jobs of `kind` in the library queued again as whoever queued them (a failed file that has it is marked done, jobs.ts). */
 export function retryFailed(libraryId: string, kind: string): number {
   const db = libraryDb();
   const rows = db
     .prepare(
-      `SELECT j.version_id, j.actor FROM jobs j JOIN assets a ON a.current_version_id = j.version_id
-       WHERE j.library_id = ? AND j.kind = ? AND j.state = 'failed' AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL`,
+      `SELECT j.version_id, j.actor FROM jobs j ${CLIP_OF_JOB}
+       WHERE j.library_id = ? AND j.kind = ? AND j.state = 'failed' AND j.version_id IN ${jobVersions(kind)} AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL`,
     )
     .all(libraryId, kind) as { version_id: string; actor: string | null }[];
   for (const r of rows) enqueueJob(db, libraryId, r.version_id, kind, r.actor);
@@ -341,7 +345,8 @@ export function retryFailed(libraryId: string, kind: string): number {
   const stopped = db
     .prepare(
       `UPDATE jobs SET state = 'queued', attempts = 0, run_after = 0, lease_until = NULL, error = NULL
-       WHERE library_id = ? AND kind = ? AND state = 'stopped' AND version_id IN (SELECT current_version_id FROM assets WHERE trashed_at IS NULL AND left_hidden_at IS NULL)`,
+       WHERE library_id = ? AND kind = ? AND state = 'stopped' AND EXISTS (SELECT 1 FROM jobs j ${CLIP_OF_JOB}
+         WHERE j.id = jobs.id AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND j.version_id IN ${jobVersions(kind)})`,
     )
     .run(libraryId, kind).changes;
   return rows.length + Number(stopped);
