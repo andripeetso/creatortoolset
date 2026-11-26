@@ -158,9 +158,9 @@ describe("Claude on the Mac", () => {
     const c = (await (await third).json()) as { id: string; user: string };
     expect(c.user).toBe("bg4");
     for (const r of [first, b, b2, c]) await post(`/${r.id}/fail`, { error: "x" });
-    // nobody asked for five minutes, or ever: background takes every slot
+    // nobody asked for half an hour, or ever: background takes every slot
     expect(backgroundRoom(mac.id)).toBe(3);
-    expect(backgroundRoom(mac.id, Date.now() + 5 * 60_000 + 1)).toBe(4);
+    expect(backgroundRoom(mac.id, Date.now() + 30 * 60_000 + 1)).toBe(4);
     expect(backgroundRoom("never-asked")).toBe(4);
   });
 

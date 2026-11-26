@@ -48,9 +48,9 @@ describe("estimate", () => {
     const step = (s: string) => e.steps.find((x) => x.step === s)!;
     expect(step("transcript")).toMatchObject({ route: "deepgram", measured: false });
     expect(step("transcript").usd).toBeCloseTo(100 * 0.0043, 5);
-    // measured: 20 s each, four at a time on a connected AI
+    // measured: 20 s each, three at a time on a connected AI (one slot kept for its person)
     expect(step("describe").route).toBe("provider");
-    expect(step("describe").seconds).toBe(500);
+    expect(step("describe").seconds).toBeCloseTo(2000 / 3, 5);
     expect(step("embed").route).toBe("none"); // on by default, no OpenAI key
     expect(e.seconds).toBe(Math.max(...e.steps.map((s) => s.seconds)));
     // the person's own computer makes them with no key
@@ -71,7 +71,7 @@ describe("estimate", () => {
     d.prepare("INSERT INTO descriptions (version_id, source, text, provider, created_at) VALUES ('vb', 'ai', 'x', 'mac-instance', 1)").run();
     try {
       const e = await estimate("lib_e", "local", { clips: 100, bytes: 100 * 30_000_000 });
-      expect(e.steps.find((x) => x.step === "describe")!.seconds).toBe(500);
+      expect(e.steps.find((x) => x.step === "describe")!.seconds).toBeCloseTo(2000 / 3, 5);
     } finally {
       // whatever the check says: left behind, these rows fail the tests after it too
       for (const t of ["descriptions", "jobs", "asset_versions"]) d.prepare(`DELETE FROM ${t} WHERE ${t === "asset_versions" ? "id" : "version_id"} = 'vb'`).run();

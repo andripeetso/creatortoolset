@@ -338,8 +338,8 @@ const startedAt = Date.now();
 const MAC_SLOTS = 4;
 /** the most background requests a Mac runs at once: all its slots, while nobody asks (backgroundRoom) */
 export const BACKGROUND_SLOTS = MAC_SLOTS;
-/** after a person's request, one slot stays free this long, so their next one never waits behind background calls */
-const PERSON_HOLD_MS = 5 * 60_000;
+/** after a person's request, one slot stays free this long (a working session), so their next one never waits behind background calls */
+const PERSON_HOLD_MS = 30 * 60_000;
 /** when a person last asked, by device */
 const personAt = new Map<string, number>();
 /** How many background requests a device may run now: one fewer while a person asked in the last PERSON_HOLD_MS. */

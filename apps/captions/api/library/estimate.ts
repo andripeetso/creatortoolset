@@ -5,7 +5,7 @@ import { BACKGROUND_SLOTS, macUsageSince } from "../lib/mac-claude";
 import { libraryDb, libraryLookLevel, librarySetting } from "./db";
 import { DESCRIBE_LABEL, whoFor } from "./describe";
 import { antigravityRoute, canWatch, watchStopped, libraryWatchModel, watchKey, watching, watchUsdPerHour } from "./timeline";
-import { BUDGET_WAITS, budgetPause, LOOK_KEY_CALLS, LOOK_LABEL, LOOK_MIN_S, librarySpent, MAC_WAITS, SHEETS_PER_CALL } from "./shots";
+import { LOOK_KEY_CALLS, LOOK_LABEL, LOOK_MIN_S, MAC_WAITS, SHEETS_PER_CALL } from "./shots";
 import { SHEET_STRETCHES } from "./look";
 import { embedRoute } from "./embed";
 import { NeedsKey, transcribeRoute } from "./transcribe";
@@ -37,6 +37,8 @@ const STEP_OF: Record<string, LibraryStep> = {
   embed: "embed",
 };
 
+/** Background calls a Mac runs at once while its person uses it (one slot kept, mac-claude.ts backgroundRoom): the slower case, so a run ends on time or early. */
+const PROVIDER_AT_ONCE = BACKGROUND_SLOTS - 1;
 // ponytail: starting guesses (seconds a job, dollars a description) until this server has finished its own
 // (a duplicate check reads the lighter copy: under 2 s a 4K clip, measured)
 const GUESS_S: Record<string, number> = { probe: 1, thumb: 2, wave: 3, fingerprint: 1, embed: 2, deepgram: 5, openai: 15, provider: 30, api: 12 };
@@ -176,7 +178,7 @@ async function perClip(db: DatabaseSync, step: LibraryStep, route: LibraryStepRo
       seconds: pace ?? GUESS_S[api ? "api" : "provider"]!,
       usd: cost ?? GUESS_USD[api ? "api" : "provider"],
       measured: pace !== null && cost !== null,
-      at: api ? laneSize("ai") : BACKGROUND_SLOTS,
+      at: api ? laneSize("ai") : PROVIDER_AT_ONCE,
     };
   }
   if (step === "look") return lookPerClip(db, route, clipSeconds);
@@ -224,12 +226,12 @@ const levelShare = (level: string) => 8 / (LOOK_LEVELS.find((l) => l.value === l
 /**
  * A look of `clipSeconds` of footage at `share` of Standard's lines (levelShare): its calls at the tally's average cost,
  * its time at this server's measured pace, else the picture read plus its calls spread over the calls that run at once
- * (a Mac's background slots on an AI provider, six on a key: shots.ts callsAtOnce).
+ * (PROVIDER_AT_ONCE on an AI provider, six on a key: shots.ts callsAtOnce).
  * ponytail: the measured pace is of every level run here, scaled by `share` against the library's own level
  */
 async function lookPerClip(db: DatabaseSync, route: LibraryStepRoute, clipSeconds: number, share = 1, paceShare = 1) {
   const api = route !== "provider";
-  const atOnce = api ? LOOK_KEY_CALLS : BACKGROUND_SLOTS;
+  const atOnce = api ? LOOK_KEY_CALLS : PROVIDER_AT_ONCE;
   // a call carries up to SHEETS_PER_CALL × SHEET_STRETCHES stretches; a part-full one costs its share
   const calls = Math.max(1 / (SHEETS_PER_CALL * SHEET_STRETCHES), ((clipSeconds / 60) * STRETCHES_PER_MIN * share) / (SHEETS_PER_CALL * SHEET_STRETCHES));
   const pace = lookPace(db);
@@ -336,7 +338,6 @@ export async function estimate(libraryId: string, username: string, drop: Drop):
   if (stopped) out.timelineStopped = stopped;
   if (out.timelineKey) out.timelineModels = WATCH_MODELS.filter((m) => m.value !== "antigravity").map((m) => ({ model: m.value, usd: watchUsdPerHour(libraryLookLevel(libraryId), m.value) }));
   if (antigravityRoute(username)) out.timelineAntigravity = true;
-  if (librarySetting(libraryId, "look")) out.lookSpent = await librarySpent(db, libraryId);
   if (count.describe && routes.describe.route === "provider") {
     const api = await perClip(db, "describe", "api", clipSeconds, proxyShare);
     const faster = total(steps.map((s) => (s.step === "describe" ? { ...s, seconds: (api.seconds * count.describe) / api.at } : s)));
@@ -380,9 +381,8 @@ const runEnded = new Map<string, number>();
 // a step that ended before the run began; a moment's margin keeps one that ended between the queue and the first look
 const FRESH = "(state NOT IN ('done', 'failed', 'stopped') OR IFNULL(done_at, started_at) >= $since)";
 
-// a description held back by the plan's limit (worker.ts holdForLimit), or a look by its library's monthly budget (BUDGET_WAITS):
-// it waits, and takes no time, until one gets through or the budget is raised
-const HELD = `(kind IN ('describe', 'look') AND state != 'needs_key' AND (IFNULL(error, '') LIKE ? OR IFNULL(error, '') = '${BUDGET_WAITS.replace(/'/g, "''")}'))`;
+// a description or look held back by the plan's limit (worker.ts holdForLimit): it waits, and takes no time, until one gets through
+const HELD = `(kind IN ('describe', 'look') AND state != 'needs_key' AND IFNULL(error, '') LIKE ?)`;
 // a step this server leaves for one of the person's computers while none can take it, or that waits for video work this
 // server does not do (worker.ts leftToComputers): nothing runs it until a computer of theirs is on, so it is waiting, not
 // time left (a library stuck at "about 20 min left" for days, 2026-11-17)
@@ -452,10 +452,10 @@ export async function progress(libraryId: string, username: string): Promise<Lib
   const look = { mac: MAC_WAITS, looks: JSON.stringify(snap?.queuedLookIds ?? []) };
   const rows = db
     .prepare(
-      `SELECT kind, state, ${HELD} AS held, ${AWAY} AS away, ${CW} AS cw, ${QL} AS ql, (kind = 'look' AND state = 'needs_key' AND error = $mac) AS mac, IFNULL(error, '') = ? AS budget, COUNT(*) AS n, MIN(error) AS error
-       FROM jobs j WHERE library_id = ? AND state IN ('queued', 'running', 'needs_key') AND ${NOT_TRASHED} GROUP BY kind, state, held, away, cw, ql, mac, budget`,
+      `SELECT kind, state, ${HELD} AS held, ${AWAY} AS away, ${CW} AS cw, ${QL} AS ql, (kind = 'look' AND state = 'needs_key' AND error = $mac) AS mac, COUNT(*) AS n, MIN(error) AS error
+       FROM jobs j WHERE library_id = ? AND state IN ('queued', 'running', 'needs_key') AND ${NOT_TRASHED} GROUP BY kind, state, held, away, cw, ql, mac`,
     )
-    .all({ ...away, ...look }, LIMIT_LIKE, BUDGET_WAITS, libraryId) as { kind: string; state: string; held: number; away: number; cw: number; ql: number; mac: number; n: number; error: string | null }[];
+    .all({ ...away, ...look }, LIMIT_LIKE, libraryId) as { kind: string; state: string; held: number; away: number; cw: number; ql: number; mac: number; n: number; error: string | null }[];
   const pending = rows.filter((r) => (r.state !== "needs_key" || r.ql) && !r.held && !r.away);
   // the files a watch folder has found and not handed over yet: each is a clip still to prepare, from the moment it is seen
   const toCome = stillToCome(db, libraryId);
@@ -514,11 +514,7 @@ export async function progress(libraryId: string, username: string): Promise<Lib
   for (const step of ["look", "describe"] as const) {
     const held = rows.filter((r) => r.held && STEP_OF[r.kind] === step);
     const heldN = held.reduce((n, r) => n + r.n, 0);
-    const budget = held.filter((r) => r.error === BUDGET_WAITS).reduce((n, r) => n + r.n, 0);
-    if (budget) waiting.unshift({ step, count: budget, missing: budgetPause(), limit: true });
-    const limited = held.filter((r) => r.error !== BUDGET_WAITS);
-    const limitedN = heldN - budget;
-    if (limitedN) waiting.unshift({ step, count: limitedN, missing: `${limited[0]!.error} They continue then.`, limit: true });
+    if (heldN) waiting.unshift({ step, count: heldN, missing: `${held[0]!.error} They continue then.`, limit: true });
   }
   if (!left) {
     runs.delete(libraryId);
