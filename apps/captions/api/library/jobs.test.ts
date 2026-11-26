@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { openLibraryDb } from "./db";
 import type { DatabaseSync } from "node:sqlite";
-import { claimJob, defer, enqueueJob, extendLease, finishJob, graceHeld, parkJob, requeueExpired } from "./jobs";
+import { claimJob, defer, enqueueJob, extendLease, finishJob, graceHeld, parkJob, requeueExpired, wakeBudgetStops } from "./jobs";
 
 const dir = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "library-jobs-"));
 let db: DatabaseSync;
@@ -137,5 +137,20 @@ describe("long jobs and the editor's table", () => {
     expect(claimJob(db, 300, 10 ** 12)).toBeNull();
     expect(db.prepare("SELECT edit_id FROM edit_jobs").get()).toEqual({ edit_id: "edit_9" });
     expect(claimJob(db, 300, 10 ** 12, "edit_jobs")).toMatchObject({ kind: "script", version_id: "edit_9:" });
+  });
+});
+
+describe("a job parked by a key's spent budget", () => {
+  it("is queued again by wakeBudgetStops, and a job parked for a missing key is not", () => {
+    for (const [ver, why] of [["ver_budget", "Deepgram key reached its monthly budget of $10: raise it in Settings → API keys"], ["ver_nokey", "Add your Deepgram key in Settings → API keys"]]) {
+      enqueueJob(db, "lib_b", ver, "budgettest", "u1");
+      const id = (db.prepare("SELECT id FROM jobs WHERE version_id = ?").get(ver) as { id: number }).id;
+      claimJob(db, 300, 1000, "jobs", undefined, id);
+      parkJob(db, id, why);
+    }
+    expect(wakeBudgetStops(db)).toBe(1);
+    const of = (ver: string) => (db.prepare("SELECT state, error FROM jobs WHERE version_id = ?").get(ver) as { state: string; error: string | null });
+    expect(of("ver_budget")).toEqual({ state: "queued", error: null });
+    expect(of("ver_nokey").state).toBe("needs_key");
   });
 });

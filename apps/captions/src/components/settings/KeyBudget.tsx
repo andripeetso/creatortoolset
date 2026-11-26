@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { BUDGET_NEAR, BUDGET_SERVICES, type KeyBudget, type ServiceUsageView } from "@contracts/service-usage";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { useWorkspace } from "@/lib/workspace";
@@ -80,7 +79,6 @@ const shown = (n: number | null) => (n === null ? "" : String(n));
 export function BudgetDialog({ name, b, open, onOpenChange, saved, offer }: { name: string; b: KeyBudget; open: boolean; onOpenChange: (open: boolean) => void; saved: () => unknown; offer?: boolean }) {
   const projects = useWorkspace((s) => s.projects);
   const [text, setText] = useState(shown(b.budget));
-  const [none, setNone] = useState(b.budget === null);
   const [ws, setWs] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -89,15 +87,14 @@ export function BudgetDialog({ name, b, open, onOpenChange, saved, offer }: { na
   useEffect(() => {
     if (!open) return;
     setText(shown(b.budget));
-    setNone(b.budget === null && !offer);
     setWs(Object.fromEntries(projects.map((p) => [p.id, shown(wsOf(p.id)?.budget ?? null)])));
     setError(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   const submit = async () => {
-    const all = none ? null : parse(text);
-    if (all === undefined || (!none && all === null)) return setError("Needs an amount in dollars");
+    const all = parse(text);
+    if (all === undefined) return setError("Needs an amount in dollars, or nothing for no limit");
     const each = projects.map((p) => [p.id, parse(ws[p.id] ?? "")] as const);
     if (each.some(([, v]) => v === undefined)) return setError("Needs an amount in dollars for each workspace, or nothing");
     setBusy(true);
@@ -128,12 +125,8 @@ export function BudgetDialog({ name, b, open, onOpenChange, saved, offer }: { na
       <label className="flex items-center gap-2 text-sm">
         <span className="w-32 shrink-0">All workspaces</span>
         <span>$</span>
-        <Input aria-label="Monthly budget in dollars" inputMode="decimal" value={none ? "" : text} disabled={none} onChange={(e) => setText(e.target.value)} className="w-24" />
+        <Input aria-label="Monthly budget in dollars" inputMode="decimal" placeholder="No limit" value={text} onChange={(e) => setText(e.target.value)} className="w-24" />
         <span className="text-xs text-muted-foreground">{usd(b.spent)} this month</span>
-      </label>
-      <label className="flex items-center gap-2 text-sm">
-        <Checkbox checked={none} onCheckedChange={(on) => setNone(on === true)} />
-        No limit
       </label>
       {projects.length > 1 && (
         <div className="flex flex-col gap-2 border-t border-border/60 pt-3">

@@ -8,7 +8,7 @@ import { blobs, fileBlur, fileProxy, isBlurred, keepsOnlyOriginals, libraryDb, l
 import { describeFromLines, describeSlot, describeVersion, workspaceIdOf } from "./describe";
 import { canEmbed, embedRoute, embedVersion, startEmbedCatchUp } from "./embed";
 import { fingerprint } from "./fingerprint";
-import { claimJob, defer, enqueueJob, extendLease, finishJob, firstClips, graceHeld, parkJob, requeueExpired, NOT_TRASHED, takingClips, WAITS_FOR_COMPUTER, WAITS_FOR_SERVER, type JobRow } from "./jobs";
+import { claimJob, defer, enqueueJob, extendLease, finishJob, firstClips, graceHeld, parkJob, requeueExpired, NOT_TRASHED, takingClips, wakeBudgetStops, WAITS_FOR_COMPUTER, WAITS_FOR_SERVER, type JobRow } from "./jobs";
 import { ModelNotReady } from "../lib/device-transcribe";
 import { ComputerOff } from "../lib/computer-transcribe";
 import { AiProviderError } from "../ai-complete";
@@ -304,10 +304,19 @@ export function releaseRunningJobs(now = Date.now()): void {
   for (const id of running) defer(libraryDb(), id, 0, now);
 }
 
+/** The month this server last woke budget-parked jobs in (tick). */
+let budgetMonth = "";
+
 /** Runs one queued job (of `kinds`, when given), if there is one. Returns false when there is none. */
 export async function tick(now = Date.now(), kinds: readonly string[] = LANES.flatMap((l) => l.kinds)): Promise<boolean> {
   const db = libraryDb();
   requeueExpired(db, now);
+  // a new month (or this server's first tick) starts every key's budget again: what a spent one parked tries again
+  const month = new Date(now).toISOString().slice(0, 7);
+  if (month !== budgetMonth) {
+    budgetMonth = month;
+    wakeBudgetStops(db);
+  }
   const id = nextJob(db, now, kinds, leftToComputers(db, now, kinds));
   const device = id !== null && onThisComputer(db, id);
   if (device && onDevice > 0) return false;

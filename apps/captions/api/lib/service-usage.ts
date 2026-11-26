@@ -4,7 +4,7 @@ import path from "node:path";
 import { Hono } from "hono";
 import { MY_KEYS, type MyKeyEnv } from "../../contracts/service-keys";
 import type { ActivityRow } from "../../contracts/activity";
-import { BUDGET_NEAR, BUDGET_SERVICES, type KeyBudget, type ServiceLimit, type ServiceUsageLine, type ServiceUsageView } from "../../contracts/service-usage";
+import { BUDGET_NEAR, BUDGET_SERVICES, BUDGET_STOP, type KeyBudget, type ServiceLimit, type ServiceUsageLine, type ServiceUsageView } from "../../contracts/service-usage";
 import type { AuthVars } from "../auth";
 import { isAdminActor, myKeys } from "../my-keys";
 import { listUsers, LOCAL_USER } from "../users";
@@ -194,10 +194,10 @@ const keyName = (service: ServiceId) => (service === "APIFY_TOKEN" ? "Apify" : (
  */
 export function budgetRefusal(service: ServiceId, holder: Holder, now = Date.now(), workspace = usageWorkspace()): string | null {
   const all = budgetOf(service, holder);
-  if (all !== null && spentThisMonth(service, holder, now) >= all) return `${keyName(service)} key reached its monthly budget of $${all}: raise it in Settings → API keys`;
+  if (all !== null && spentThisMonth(service, holder, now) >= all) return `${keyName(service)} key reached its ${BUDGET_STOP}${all}: raise it in Settings → API keys`;
   const mine = workspace ? budgetOf(service, holder, workspace) : null;
   if (mine !== null && spentThisMonth(service, holder, now, workspace) >= mine)
-    return `${keyName(service)} key reached this workspace's monthly budget of $${mine}: raise it in Settings → API keys`;
+    return `${keyName(service)} key reached this workspace's ${BUDGET_STOP}${mine}: raise it in Settings → API keys`;
   return null;
 }
 
@@ -341,5 +341,8 @@ serviceUsageApp.put("/budgets/:service", async (c) => {
   if (workspace === null) return c.json({ error: "Workspace not found" }, 400);
   if (b.whose === "server" && !(u.role === "admin" || isAdminActor(u.username))) return c.json({ error: "Only an admin sets the server's key budgets" }, 403);
   setBudget(service, b.whose === "server" ? "server" : `own:${u.username}`, budget, workspace);
+  // library work parked by a budget tries again now (one still over it parks again)
+  const [{ wakeBudgetStops }, { libraryDb }] = await Promise.all([import("../library/jobs"), import("../library/db")]);
+  wakeBudgetStops(libraryDb());
   return c.json({ ok: true });
 });

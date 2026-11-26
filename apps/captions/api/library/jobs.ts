@@ -1,5 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { move, type Moves } from "../../contracts/transition";
+import { BUDGET_STOP } from "../../contracts/service-usage";
 import { mirrorFromOriginal, mirrorTo, ON_ORIGINAL, originalOf } from "./blur-mirror";
 
 /**
@@ -194,6 +195,14 @@ export function graceHeld(db: DatabaseSync, seconds: number, now = Date.now()): 
 /** A claimed job its actor has no key or AI route for: parked as needs_key (not failed) until someone queues it again. */
 export function parkJob(db: DatabaseSync, id: number, why: string, table: JobTable = "jobs"): void {
   db.prepare(`UPDATE ${table} SET state = 'needs_key', lease_until = NULL, error = ? WHERE id = ? AND state = 'running'`).run(why, id);
+}
+
+/**
+ * Jobs parked by a key's spent monthly budget (service-usage.ts budgetRefusal) go back in the queue: called when a budget
+ * changes and on the first tick of each month (worker.ts). One whose key is still over its budget parks again.
+ */
+export function wakeBudgetStops(db: DatabaseSync): number {
+  return Number(db.prepare("UPDATE jobs SET state = 'queued', error = NULL, run_after = 0 WHERE state = 'needs_key' AND IFNULL(error, '') LIKE ?").run(`%${BUDGET_STOP}%`).changes);
 }
 
 /** The AI Editor's job row (edit_jobs) this device holds (claimed by it and still running), or undefined. */

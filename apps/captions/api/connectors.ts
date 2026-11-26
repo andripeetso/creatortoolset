@@ -3,7 +3,7 @@ import { escHtml, plainPage } from "./lib/plain-page";
 import type { Context } from "hono";
 import { getSessionUser, sessionOf, type AuthVars } from "./auth";
 import { env } from "./lib/env";
-import { keyFor } from "./my-keys";
+import { hasKey } from "./my-keys";
 import { LOGINS, PLATFORMS, type ConnectorsView, type OwnInstagram, type LoginKind, type SocialPlatform, type SocialVideo } from "../contracts/connectors";
 import { accountsFromGrant, finishLogin, freshToken, loginUrl, pullAccount, refreshGrant } from "./lib/connectors/platforms";
 import { issuerFor, loginsHere, serviceRedeem, serviceRefresh, serviceStart, viaService, type Issuer } from "./lib/connectors/signin-service";
@@ -56,7 +56,7 @@ async function view(c: Context<{ Variables: AuthVars }>): Promise<ConnectorsView
     viaService: viaService(),
     instagram: await ownInstagram(user.username),
     apify: { configured: apify.configured, valid: apify.valid },
-    youtubeKey: !!keyFor(user, "YOUTUBE_API_KEY").key,
+    youtubeKey: hasKey(user, "YOUTUBE_API_KEY"),
     accounts: readConnectors(user.username).accounts.map(publicAccount),
     ...(pick ? { choose: { platform: pick.platform, options: pick.options.map(({ platform, platformId, handle, name, avatar, stats }) => ({ platform, platformId, handle, name, avatar, followers: stats?.followers })) } } : {}),
     extras: { sessions: sessionSources() },

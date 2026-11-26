@@ -69,6 +69,9 @@ export const BUDGET_SERVICES = ["DEEPGRAM_API_KEY", "ELEVENLABS_API_KEY", "PERPL
 /** Spent at or past this share of the budget: the key is near it (Activity and its row say so). */
 export const BUDGET_NEAR = 0.8;
 
+/** The words in every refusal for a spent budget: work parked by one is queued again when a budget changes and on the 1st. */
+export const BUDGET_STOP = "monthly budget of $";
+
 export interface ServiceUsageView {
   lines: ServiceUsageLine[];
   limits: ServiceLimit[];

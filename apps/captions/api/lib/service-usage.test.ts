@@ -16,7 +16,7 @@ vi.stubGlobal("fetch", () => Promise.reject(new Error("offline")));
 const { createUser } = await import("../users");
 const { saveMyKey } = await import("../my-keys");
 const { budgetRows, costOf, recordService, serviceUsageApp, setBudget } = await import("./service-usage");
-const { keyFor } = await import("../my-keys");
+const { hasKey, keyFor } = await import("../my-keys");
 createUser("lee", "password1");
 saveMyKey("lee", "DEEPGRAM_API_KEY", "lee-dg");
 afterAll(() => vi.unstubAllGlobals());
@@ -76,6 +76,7 @@ describe("service usage", () => {
     await recordService({ service: "DEEPGRAM_API_KEY", key: "lee-dg", actor: "lee", label: "Caption Studio: captions", units: 100, unit: "audio minutes", workspace: null });
     expect(keyFor("lee", "DEEPGRAM_API_KEY")).toEqual({ key: "", missing: expect.stringContaining("Deepgram key reached its monthly budget") });
     expect((await budgetRows("lee", false))[0]).toMatchObject({ title: "Deepgram: monthly budget reached", href: "/settings/keys" });
+    expect(hasKey("lee", "DEEPGRAM_API_KEY")).toBe(true); // over budget, still a key: Home never says "Needs a Deepgram key"
     // the server's key has its own budget: none set, the admin's calls go on
     expect(keyFor("admin", "DEEPGRAM_API_KEY")).toEqual({ key: "server-dg" });
     setBudget("DEEPGRAM_API_KEY", "own:lee", null);

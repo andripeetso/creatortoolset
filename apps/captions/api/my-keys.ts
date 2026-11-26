@@ -109,6 +109,13 @@ export function teamAiKey(username: string, job: JobId): KeyRoute {
   return key ? { key } : { key: "", missing: "Needs an Anthropic key on this server: ask the admin" };
 }
 
+/** The actor has this key (their own, or the server's that serves them), whatever its budget: for "which keys are set" (Home, setup), never to run a call. */
+export function hasKey(actor: Actor, name: MyKeyEnv): boolean {
+  const username = (typeof actor === "string" ? actor : actor?.username) ?? "";
+  const role = typeof actor === "object" && actor ? actor.role : undefined;
+  return !!username && role !== "visitor" && (!!myKeys(username)[name] || !!serverKeyOf(actor, name));
+}
+
 export function keyFor(actor: Actor, name: MyKeyEnv): KeyRoute {
   const username = (typeof actor === "string" ? actor : actor?.username) ?? "";
   const role = typeof actor === "object" && actor ? actor.role : undefined;

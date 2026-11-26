@@ -16,7 +16,7 @@ import { accountFolder, addMcp, connectCli, installCli, localAiView, planOf, set
 import { ownedProjects } from "./lib/workshop/workspace";
 import { ensureLibrary, mediaReady } from "./library/access";
 import { currentWorkspaceId } from "./lib/workspace-scope";
-import { keyFor } from "./my-keys";
+import { hasKey } from "./my-keys";
 import { pluginNeeds } from "./lib/plugin";
 import {
   apiKeysOf,
@@ -82,7 +82,7 @@ function write(u: string, s: Saved): void {
 /** What this account has set up, each the way the tool that needs it checks. */
 export async function haveFor(user: SessionUser): Promise<Have[]> {
   const u = user.username;
-  const have: Have[] = MY_KEYS.filter((k) => keyFor(user, k.env).key).map(
+  const have: Have[] = MY_KEYS.filter((k) => hasKey(user, k.env)).map(
     (k) => k.env,
   );
   if (anyAiConfigured(user)) have.push("ai");

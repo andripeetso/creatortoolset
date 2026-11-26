@@ -10,6 +10,7 @@ import { SHEET_STRETCHES } from "./look";
 import { embedRoute } from "./embed";
 import { NeedsKey, transcribeRoute } from "./transcribe";
 import { ON_ORIGINAL } from "./blur-mirror";
+import { BUDGET_STOP } from "../../contracts/service-usage";
 import { NOT_TRASHED, stillToCome, WAITS_FOR_COMPUTER, WAITS_FOR_SERVER } from "./jobs";
 import { LANES, LIMIT_LIKE, leaveToComputers, type WaitSnapshot } from "./worker";
 import { deviceOf, isThisMachine, listDevices } from "../lib/devices";
@@ -473,7 +474,14 @@ export async function progress(libraryId: string, username: string): Promise<Lib
   const canStop = toCome > 0 || coming.length > 0 || pending.some((r) => r.state === "queued" && STOPPED.has(r.kind));
   const waiting: LibraryProgress["waiting"] = rows
     .filter((r) => r.state === "needs_key" && !r.ql && !r.cw)
-    .map((r) => ({ step: STEP_OF[r.kind] ?? "files", count: r.n, missing: r.error ?? "", ...(r.mac ? { computer: true } : {}) }));
+    .map((r) => ({
+      step: STEP_OF[r.kind] ?? "files",
+      count: r.n,
+      missing: r.error ?? "",
+      ...(r.mac ? { computer: true } : {}),
+      // a key's spent budget says so and opens the keys, not "needs a key" (it has one)
+      ...(r.error?.includes(BUDGET_STOP) ? { reason: r.error, href: "/settings/keys" } : {}),
+    }));
   // waiting for one of the person's computers, per step: "6 descriptions wait for one of your computers"
   for (const r of rows.filter((x) => x.away && !x.cw)) {
     const step = STEP_OF[r.kind] ?? "files";
