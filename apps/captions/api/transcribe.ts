@@ -453,6 +453,19 @@ function micFallback(user: AuthVars["user"]): { route: Route; by: string } | nul
 /** Longest recording the mic takes: two minutes are 3.8 MB as the browser's WAV, under 1 MB as the phone's AAC. */
 const MIC_MAX_BYTES = 10 * 1024 * 1024;
 
+/** A short recording in the request body into a scratch file (the mic's and the live words'), or the answer refusing it. */
+export async function micUpload(c: Context, max: number): Promise<{ src: string; scratch: string } | Response> {
+  if (Number(c.req.header("content-length") ?? 0) > max) return c.json({ error: "That recording is too long" }, 413);
+  const audio = new Uint8Array(await c.req.arrayBuffer());
+  if (!audio.byteLength) return c.json({ error: "No audio" }, 400);
+  if (audio.byteLength > max) return c.json({ error: "That recording is too long" }, 413);
+  const scratch = path.join(env.dataDir, "library", "scratch");
+  await mkdir(scratch, { recursive: true });
+  const src = path.join(scratch, `mic-${randomUUID()}`);
+  await writeFile(src, audio);
+  return { src, scratch };
+}
+
 /**
  * Talking to the assistant (the web dock's mic and the phone's): a short recording in any common sound format (WAV, the
  * phone's m4a) → `{ text, language, engine }`, written down by the engine the person chose for `mic` (Settings → AI →
@@ -467,14 +480,9 @@ transcribeApp.post("/mic", async (c) => {
   // no engine: the key to add, or a computer with a speech model to turn on
   if ("needs" in s) return "key" in s && s.key ? speechFail(c, "missing-key") : speechFail(c, "computer-off", "local");
   if (s.engine !== "local" && !mayUseCloud(user)) return c.json({ error: "Transcription is locked for this account", code: "CLOUD_LOCKED" }, 403);
-  if (Number(c.req.header("content-length") ?? 0) > MIC_MAX_BYTES) return c.json({ error: "That recording is too long" }, 413);
-  const audio = new Uint8Array(await c.req.arrayBuffer());
-  if (!audio.byteLength) return c.json({ error: "No audio" }, 400);
-  if (audio.byteLength > MIC_MAX_BYTES) return c.json({ error: "That recording is too long" }, 413);
-  const scratch = path.join(env.dataDir, "library", "scratch");
-  await mkdir(scratch, { recursive: true });
-  const src = path.join(scratch, `mic-${randomUUID()}`);
-  await writeFile(src, audio);
+  const up = await micUpload(c, MIC_MAX_BYTES);
+  if (up instanceof Response) return up;
+  const { src, scratch } = up;
   const said = (t: Awaited<ReturnType<typeof transcribeFile>>, note?: string) =>
     c.json({ text: t.segments.map((seg) => seg.text).join(" ").trim(), language: t.language, engine: t.provider, ...(note ? { note } : {}) });
   try {

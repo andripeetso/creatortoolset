@@ -24,17 +24,18 @@ describe("the dock's mic when the person's computers can't", () => {
     expect(transcribeAudio).not.toHaveBeenCalled();
   });
 
-  it("no key either: the browser writes it, and says why", async () => {
+  it("the person's computers off or busy at stop: the browser writes it, and says why", async () => {
+    vi.stubGlobal("Worker", class {});
     vi.stubGlobal("OfflineAudioContext", class {
       decodeAudioData = async () => ({ getChannelData: () => new Float32Array(16000) });
     });
-    server(Response.json({ error: "Your computers are off. Needs a Deepgram key", code: "NEEDS_KEY", chosen: false, why: "Your computers are off" }, { status: 402 }));
-    expect(await writeDown(recording, () => {})).toEqual({ text: "from the browser", note: "Your computers are off: written in the browser" });
+    server(Response.json({ error: "Needs one of your computers", code: "SPEECH", reason: "computer-off", engine: "local" }, { status: 422 }));
+    expect(await writeDown(recording, () => {})).toEqual({ text: "from the browser", note: "Your computers are off or busy: written in the browser" });
   });
 
-  it("an engine the person picked that can't run says what it needs", async () => {
-    server(Response.json({ error: "Needs a Deepgram key", code: "NEEDS_KEY", chosen: true }, { status: 402 }));
-    await expect(writeDown(recording, () => {})).rejects.toThrow("Needs a Deepgram key");
+  it("any other reason says what it needs, and the browser writes nothing", async () => {
+    server(Response.json({ error: "Add your Deepgram key in Settings → API keys.", code: "SPEECH", reason: "missing-key", engine: "deepgram" }, { status: 422 }));
+    await expect(writeDown(recording, () => {})).rejects.toThrow();
     expect(transcribeAudio).not.toHaveBeenCalled();
   });
 });

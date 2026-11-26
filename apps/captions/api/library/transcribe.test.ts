@@ -75,6 +75,17 @@ describe("library transcripts with words", () => {
     expect(segmentsOf(db, "ver_1")).toEqual([{ start: 0.1, end: 0.8, text: "So um so" }]);
   });
 
+  it("a misheard spelling of several words is rewritten in what Deepgram wrote, as with every engine", async () => {
+    const { writeVoicePrefs } = await import("../lib/speech");
+    writeVoicePrefs("local", { words: [{ term: "So-so", soundsLike: ["so um so"] }] });
+    try {
+      await transcribeVersion(db, "ver_1", wav, "local", dir);
+      expect(segmentsOf(db, "ver_1")).toEqual([{ start: 0.1, end: 0.8, text: "So-so" }]);
+    } finally {
+      writeVoicePrefs("local", { words: [] });
+    }
+  });
+
   it("a key goes first; with none, only a server on its owner's computer transcribes by itself", () => {
     process.env.CT_LOCAL = "1";
     expect(transcribeRoute("local")).toEqual({ provider: "deepgram", key: "dg-test" });

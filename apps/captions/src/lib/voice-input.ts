@@ -82,12 +82,12 @@ const browserCanWrite = () => typeof WebAssembly !== "undefined" && typeof Worke
 export async function writeDown(recording: Blob, onProgress: (p: number) => void, signal?: AbortSignal): Promise<{ text: string; note?: string }> {
   const res = await fetch("/api/transcribe/mic", { method: "POST", headers: { "Content-Type": recording.type || "application/octet-stream" }, body: recording, signal });
   if (res.ok) return (await res.json()) as { text: string; note?: string };
-  const e = (await res.json().catch(() => ({}))) as { error?: string; code?: string; reason?: string; chosen?: boolean; why?: string };
-  if (e.code === SPEECH_CODE) throw new SpeechFault(speechFault(e));
-  // an engine the person picked that can't run says what it needs; only Automatic falls back to the browser's model
-  if (e.code === "NEEDS_KEY" && e.chosen) throw new SpeechFault(speechFault({ error: e.error, reason: "missing-key" }));
-  if ((e.code !== "NEEDS_KEY" && e.code !== "CLOUD_LOCKED") || e.chosen) throw new Error(e.error || "Could not transcribe");
-  // no engine on the server for this account: the browser's model
+  const e = (await res.json().catch(() => ({}))) as { error?: string; code?: string; reason?: string };
+  // the person's computers can't take it now (off, busy), or the server may not write it: the browser's own model does
+  const computersOff = e.code === SPEECH_CODE && e.reason === "computer-off";
+  if (!(computersOff || e.code === "CLOUD_LOCKED") || !browserCanWrite()) {
+    throw e.code === SPEECH_CODE ? new SpeechFault(speechFault(e)) : new Error(e.error || "Could not transcribe");
+  }
   const job = transcribeAudio(await toPcm16k(recording), browserModel(), null, await detectDevice(), { onLoadProgress: onProgress });
   signal?.addEventListener("abort", () => job.cancel(), { once: true });
   const words = await job.promise;
@@ -95,7 +95,7 @@ export async function writeDown(recording: Blob, onProgress: (p: number) => void
     .map((w) => w.text.trim())
     .filter(Boolean)
     .join(" ");
-  return e.why ? { text, note: `${e.why}: written in the browser` } : { text };
+  return computersOff ? { text, note: "Your computers are off or busy: written in the browser" } : { text };
 }
 
 /** The words so far from the server's engine for the mic (interim: no fallback, no paid engine). */
@@ -231,15 +231,18 @@ export function useVoiceInput(onText: (text: string) => void) {
         : route.live
           ? interimWords((sig) => liveWords(soFar(), sig), setInterim, INTERIM_EVERY_MS)
           : null;
-    const halt = () => {
-      live?.stop();
+    // a pass on the person's computer still running at stop is waited for (`finish`), so the final pass finds the
+    // computer free; a cancel, or a pass in this browser, is stopped at once
+    let passDone: Promise<void> = Promise.resolve();
+    const halt = (finish = false) => {
+      if (live) passDone = live.stop(finish && route.via === "server");
       held.worker?.terminate();
       held.worker = undefined;
       setInterim("");
     };
     control.current = {
       stop: () => {
-        halt();
+        halt(true);
         if (recorder.state === "recording") recorder.stop();
       },
       cancel: () => {
@@ -256,7 +259,7 @@ export function useVoiceInput(onText: (text: string) => void) {
     cancelAnimationFrame(raf);
     stream.getTracks().forEach((t) => t.stop());
     void ctx.close();
-    halt();
+    halt(true);
     setBars(quiet());
     setSeconds(0);
     if (cancelled) {
@@ -275,6 +278,8 @@ export function useVoiceInput(onText: (text: string) => void) {
     };
     setPhase("writing");
     try {
+      await passDone;
+      if (cancelled) return;
       const { text } = await writeDown(new Blob(chunks, { type: recorder.mimeType }), setProgress, abort.signal);
       if (!cancelled) {
         if (text) textTo.current(text);

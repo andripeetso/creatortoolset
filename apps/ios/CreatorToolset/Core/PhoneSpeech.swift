@@ -113,7 +113,23 @@ enum PhoneSpeech {
         }
     }
 
+    /// The last answer, by server: a tap starts recording at once with it, and it is read again in the background.
+    private static var last: (server: String?, prefs: Prefs)?
+
     static func prefs() async -> Prefs? {
+        let server = Servers.shared.currentId
+        if let kept = last, kept.server == server {
+            Task {
+                if let fresh = await fetchPrefs(), Servers.shared.currentId == server { last = (server, fresh) }
+            }
+            return kept.prefs
+        }
+        let fresh = await fetchPrefs()
+        if let fresh, Servers.shared.currentId == server { last = (server, fresh) }
+        return fresh
+    }
+
+    private static func fetchPrefs() async -> Prefs? {
         guard let api = ToolsetAPI.current else { return nil }
         var request = api.request("/api/voice-prefs")
         request.timeoutInterval = 4

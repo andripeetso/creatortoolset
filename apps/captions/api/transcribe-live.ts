@@ -1,11 +1,9 @@
-import { randomUUID } from "node:crypto";
-import { mkdir, rm, writeFile } from "node:fs/promises";
-import path from "node:path";
+import { rm } from "node:fs/promises";
 import { Hono } from "hono";
 import type { AuthVars } from "./auth";
-import { env } from "./lib/env";
 import { speechFor } from "./lib/speech";
 import { transcribeFile } from "./library/transcribe";
+import { micUpload } from "./transcribe";
 import { SPEECH_CODE } from "../contracts/voice";
 
 /**
@@ -25,14 +23,9 @@ transcribeLiveApp.post("/", async (c) => {
   const s = speechFor(user, "mic");
   if ("needs" in s) return c.json({ error: s.needs, code: SPEECH_CODE, reason: s.key ? "missing-key" : "model-unavailable" }, 422);
   if (s.engine !== "local") return c.json({ text: "", interim: true, skipped: true });
-  if (Number(c.req.header("content-length") ?? 0) > LIVE_MAX_BYTES) return c.json({ error: "That recording is too long" }, 413);
-  const audio = new Uint8Array(await c.req.arrayBuffer());
-  if (!audio.byteLength) return c.json({ error: "No audio" }, 400);
-  if (audio.byteLength > LIVE_MAX_BYTES) return c.json({ error: "That recording is too long" }, 413);
-  const scratch = path.join(env.dataDir, "library", "scratch");
-  await mkdir(scratch, { recursive: true });
-  const src = path.join(scratch, `live-${randomUUID()}`);
-  await writeFile(src, audio);
+  const up = await micUpload(c, LIVE_MAX_BYTES);
+  if (up instanceof Response) return up;
+  const { src, scratch } = up;
   try {
     const t = await transcribeFile(src, user.username, scratch, src, { use: "mic", fillers: false, soon: true });
     return c.json({ text: t.segments.map((seg) => seg.text.trim()).filter(Boolean).join(" "), interim: true });

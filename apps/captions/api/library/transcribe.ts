@@ -125,7 +125,7 @@ async function deepgram(file: string, actor: string, fillers: boolean, languages
   const r = await transcribeWav(await readFile(file), { username: actor, role, cloud: true, off: [] }, { fillers, languages, label: "Media Library: transcripts" });
   if ("error" in r) throw new SpeechFailure(r.reason, "deepgram");
   const words = r.words.map((w) => ({ w: w.text, s: w.start, e: w.end, ...(w.confidence !== undefined ? { c: w.confidence } : {}) }));
-  return { segments: wordsToSegments(r.words), words, language: r.language };
+  return fixed({ segments: wordsToSegments(r.words), words, language: r.language }, actor);
 }
 
 /** The person's words written as they are said (speechCorrector), once, where a provider's answer comes back. */
