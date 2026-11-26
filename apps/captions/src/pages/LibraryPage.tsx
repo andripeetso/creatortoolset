@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { startTransition, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
 import { Activity, FolderCog, Instagram, MoreHorizontal, Music, RefreshCw, Search, Settings2, Trash2, Upload } from "lucide-react";
@@ -781,8 +781,12 @@ export default function LibraryPage() {
   const landing = useRef(false); // the open-on-first-tab move replaces the history entry, so Back is not caught by it
   /** A tab's place: a folder (`id`), or the top with a kind; a tab never keeps the kind or roll picked before */
   const go = (id: string | null, k: AssetKind | "all" = "all", r: Roll | null = null) => {
-    setKind(k);
-    setRoll(r);
+    // the router moves in a transition: kind and roll go in the same one, or a frame shows the old place with the new
+    // kind (All, a hidden tab drawn because it is open, flashing in the row)
+    startTransition(() => {
+      setKind(k);
+      setRoll(r);
+    });
     navigate(id ? folderTo(id) : "/library", { replace: landing.current });
     landing.current = false;
   };
