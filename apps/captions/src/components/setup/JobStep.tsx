@@ -1,12 +1,12 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router";
 import { Compass, type LucideIcon } from "lucide-react";
 import type { LibrarySummary, WatchStatus } from "@contracts/library";
-import { NEED_SENTENCE, TOOL_NAMES, type Have, type Need, type Tool } from "@contracts/tools";
+import { NEED_SENTENCE, needAction, rowState, TOOL_NAMES, type Have, type Need, type Tool } from "@contracts/tools";
 import type { Job } from "@contracts/work-prefs";
 import { Button } from "@/components/ui/button";
 import { getWatch, listLibraries } from "@/lib/library";
-import { JOB_SETUP, jobNeeds, jobsFor } from "@/lib/setup";
+import { JOB_SETUP, jobRows, jobsFor } from "@/lib/setup";
 import { LibrarySetup } from "@/pages/library/Setup";
 import { Choice } from "./Choice";
 import { NeedLine, NeedRow, TOOL_ICONS } from "./ToolNeeds";
@@ -33,31 +33,25 @@ function useFootage(on: boolean) {
 }
 
 /**
- * "What do you want to do first?": her main job (work-prefs `job`), then, under Still to set up, what that job's tools
- * still need: one row each with its one button. Nothing here has to be done to go on (owner, 2026-11-26: "they can
- * choose to trigger everything from here, they don't have to"); the assistant names what is left after setup too.
- * The rows are a tool's own checklist rows (jobNeeds: the list Home's dots and a tool's card read), and a row done here
- * stays, ticked. Each opens where she is: the AI row setup's own Connect your AI (`ai`), a key its field, and the Media
- * Library its own setup over this window, back here when it closes. The Media Library is one row: having none and
- * having no folder in it are the same thing to set up there, never a second row for the folder.
+ * "What do you want to do first?": her main job (work-prefs `job`), then that job's list, with no heading over it
+ * (owner, 2026-11-26): every row of its tools as the thing to do ("Connect your AI", "Add a Deepgram key"), the
+ * required ones first, an optional one saying so and what it adds. A row done already is ticked (a sign-in from the
+ * screen before shows as done); one this computer covers by itself with nothing to add is left out. Nothing here has
+ * to be done to go on: each row has its one button, to press or leave.
+ * The rows are the tools' own checklist rows (jobRows: the list Home's dots and a tool's card read). Each opens where
+ * she is: the AI row setup's own Connect your AI (`ai`), a key its field, and the Media Library its own setup over this
+ * window, back here when it closes. The Media Library is one row, done once it has a folder to read.
  */
 export function JobStep({ mine, have, job, onPick, ai, onChanged }: { mine: readonly Tool[]; have: readonly Have[]; job: Job | null; onPick: (j: Job) => void; ai: ReactNode; onChanged?: () => void }) {
   const navigate = useNavigate();
-  const editing = job === "edit" && (mine.includes("media") || mine.includes("editor"));
-  const footage = useFootage(editing);
+  const rows = jobRows(job, mine).filter((n) => rowState(n, have) !== "free");
+  const library = rows.find(isLibrary);
+  const footage = useFootage(!!library);
   const [librarySetup, setLibrarySetup] = useState(false);
-  const missing = jobNeeds(job, mine, have);
-  const noFolders = !!footage.status?.allowed && footage.status.folders.length === 0;
-  const libraryOpen = editing && (missing.some(isLibrary) || noFolders);
-  // the rows shown since this job was picked: one done here stays on screen, ticked
-  const shown = useRef<{ job: Job | null; keys: Set<string>; library: boolean | null }>({ job, keys: new Set(), library: null });
-  if (shown.current.job !== job) shown.current = { job, keys: new Set(), library: null };
-  for (const n of missing) shown.current.keys.add(key(n));
-  if (editing && footage.read && shown.current.library === null) shown.current.library = libraryOpen;
-  const rows = jobNeeds(job, mine, []).filter((n) => !isLibrary(n) && shown.current.keys.has(key(n)));
-  const showLibrary = editing && !!shown.current.library;
-  const waiting = editing && !footage.read;
   const folders = footage.status?.folders ?? [];
+  const libraryDone = !!library && rowState(library, have) === "done" && !(footage.status?.allowed && folders.length === 0);
+  // the Media Library's row waits for its folders, so it never shows open and then ticks itself
+  const waiting = !!library && !footage.read;
 
   return (
     <div className="space-y-5">
@@ -73,28 +67,27 @@ export function JobStep({ mine, have, job, onPick, ai, onChanged }: { mine: read
           />
         ))}
       </div>
-      {job && !waiting && (rows.length > 0 || showLibrary) && (
-        <div>
-          <p className="text-xs font-medium text-muted-foreground">Still to set up</p>
-          <ul className="divide-y divide-border">
-            {showLibrary && (
+      {!waiting && rows.length > 0 && (
+        <ul className="divide-y divide-border">
+          {rows.map((n) =>
+            isLibrary(n) ? (
               <NeedLine
-                met={!libraryOpen}
-                name={TOOL_NAMES.media}
-                line={libraryOpen ? NEED_SENTENCE.library : folders.map((f) => f.path).join(", ") || undefined}
+                key={key(n)}
+                met={libraryDone}
+                name={needAction(n).title}
+                line={libraryDone ? folders.map((f) => f.path).join(", ") || undefined : NEED_SENTENCE.library}
                 button={
                   // its own setup, over this window; with no library of her own to set up, the Media Library itself
                   <Button size="sm" variant="outline" className="h-7" onClick={() => (footage.lib ? setLibrarySetup(true) : navigate("/library?setup=1"))}>
-                    Set up
+                    {needAction(n).button}
                   </Button>
                 }
               />
-            )}
-            {rows.map((n) => (
-              <NeedRow key={key(n)} need={n} met={!missing.some((m) => key(m) === key(n))} welcome form={n.form === "ai" ? ai : undefined} />
-            ))}
-          </ul>
-        </div>
+            ) : (
+              <NeedRow key={key(n)} need={n} met={rowState(n, have) === "done"} welcome form={n.form === "ai" ? ai : undefined} />
+            ),
+          )}
+        </ul>
       )}
       {librarySetup && footage.lib && (
         <LibrarySetup

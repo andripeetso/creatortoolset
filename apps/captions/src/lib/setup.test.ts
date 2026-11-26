@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  dismissSetup, DOWNLOAD_URL, endIntro, firstProjectName, introPlays, introSeen, jobNeeds, openSetupAt, jobsFor, markIntroSeen, resumeStep, startIntro, toolsWithJob, useIntro, SETUP_PATH, SIDE_STEPS, setupDismissed, setupFinished, setupOpen, setupOpensItself,
+  dismissSetup, DOWNLOAD_URL, endIntro, firstProjectName, introPlays, introSeen, jobRows, openSetupAt, jobsFor, markIntroSeen, resumeStep, startIntro, toolsWithJob, useIntro, SETUP_PATH, SIDE_STEPS, setupDismissed, setupFinished, setupOpen, setupOpensItself,
   hideReminders, remindLater, remindersOn, setupGapIds, setupAsked, setupGaps, setupLeft, useReminders, setupStepFromParam, shareDownload, stepsFor, toolForPath, seedSetup, useWorkPrefs,
 } from "./setup";
 import { useAuth } from "./auth";
 import { putCached, readCached } from "./local-cache";
-import { readiness, TOOLS, type Have, type Tool } from "@contracts/tools";
+import { rowState, TOOL_NEEDS, TOOLS, type Have, type Tool } from "@contracts/tools";
 import { JOBS } from "@contracts/work-prefs";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -293,25 +293,29 @@ describe("What do you want to do first?", () => {
     expect(jobsFor([])).toEqual(["look"]);
   });
 
-  it("lists a job's missing required rows from the tools' own list (readiness), each once, never an optional one", () => {
-    const have = ["deviceTranscripts", "library"] as const; // a fresh account on the Mac app
-    const edit = jobNeeds("edit", all, [...have]);
-    expect(edit.map((n) => n.anyOf)).toEqual([["ai"]]); // the library and transcripts are there; the AI Editor needs an AI
-    expect(edit).toEqual(readiness("editor", [...have]).missing); // the same rows as the AI Editor's card
-    expect(jobNeeds("ideas", all, [...have]).map((n) => n.form)).toEqual(["apify"]);
-    expect(jobNeeds("write", all, [...have]).map((n) => n.anyOf)).toEqual([["ownAi"]]);
-    for (const j of JOBS) expect(jobNeeds(j, all, []).some((n) => n.optional)).toBe(false);
+  it("lists every row of a job's tools from the tools' own list: required first, then optional, each once, never the workspace", () => {
+    const edit = jobRows("edit", all);
+    // the Media Library and the AI Editor share a library, an AI and a transcription key: one row each, the required one
+    expect(edit.map((n) => [n.what, !!n.optional])).toEqual([
+      ["A Media Library", false],
+      ["An AI provider", false],
+      ["A transcription key", false],
+      ["An OpenAI key: search by meaning", true],
+    ]);
+    expect(jobRows("captions", all).every((n) => n.optional)).toBe(true); // Caption Studio needs nothing, and says what it can use
+    expect(jobRows("write", all)[0]).toBe(TOOL_NEEDS.workshop[1]); // the same row as the Workshop's card
+    for (const j of JOBS) expect(jobRows(j, all).some((n) => n.form === "project")).toBe(false); // setup makes the workspace
+    expect(jobRows("look", all)).toEqual([]);
+    expect(jobRows(null, all)).toEqual([]);
+    expect(jobRows("edit", ["media"]).map((n) => n.what)).not.toContain("An AI provider"); // only tools the account may use
   });
 
-  it("counts the workspace as made (setup makes it), and lists nothing for a job that needs nothing", () => {
-    for (const j of JOBS) expect(jobNeeds(j, all, []).some((n) => n.anyOf.includes("project"))).toBe(false);
-    expect(jobNeeds("captions", all, [])).toEqual([]); // Caption Studio needs nothing it cannot do without
-    expect(jobNeeds("look", all, [])).toEqual([]);
-    expect(jobNeeds(null, all, [])).toEqual([]);
-    expect(jobNeeds("write", all, ["ownAi"])).toEqual([]);
-    // the Media Library and the AI Editor both need a library: one row
-    expect(jobNeeds("edit", all, []).filter((n) => n.anyOf.includes("library"))).toHaveLength(1);
-    expect(jobNeeds("edit", ["media"], [])).toEqual(readiness("media", ["project"]).missing); // only tools the account may use
+  it("a row is done with one of its own things, free when this computer covers it, else open", () => {
+    const key = TOOL_NEEDS.editor[2]!; // a transcription key, which a computer's own speech model also meets
+    expect(rowState(key, [])).toBe("open");
+    expect(rowState(key, ["deviceTranscripts"])).toBe("free");
+    expect(rowState(key, ["deviceTranscripts", "DEEPGRAM_API_KEY"])).toBe("done");
+    expect(rowState(TOOL_NEEDS.instagram[1]!, ["instagram"])).toBe("done"); // the sign-in from the screen before
   });
 
   it("switches the job's tools on when setup is left", () => {

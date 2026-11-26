@@ -148,7 +148,7 @@ export interface Need {
 // keys are for, never each brand and never just "An API key" (owner, 2026-11-26: "what do you mean an API key?");
 // an optional row adds what it gives after a colon. Home,
 // Settings → Tools and the tool's checklist all say a missing row the same way: needsLine, "Needs an Apify key". A
-// list's row shows it without its article: needName, "Apify key".
+// list's row is the thing to do: needAction, "Add an Apify key".
 export const TOOL_NEEDS: Record<Tool, readonly Need[]> = {
   instagram: [
     { what: "A workspace", anyOf: ["project"], form: "project" },
@@ -163,7 +163,7 @@ export const TOOL_NEEDS: Record<Tool, readonly Need[]> = {
   ],
   enhance: [{ what: "An audio cleanup key", anyOf: ["ELEVENLABS_API_KEY", "NVIDIA_API_KEY"], form: "keys" }],
   captions: [
-    { what: "A Deepgram key: faster transcripts", anyOf: ["DEEPGRAM_API_KEY"], form: "keys", optional: true },
+    { what: "A Deepgram key: faster transcripts than this computer makes by itself", anyOf: ["DEEPGRAM_API_KEY"], form: "keys", optional: true },
     { what: "An AI provider: Match cadence", anyOf: ["ai"], form: "ai", optional: true },
   ],
   review: [],
@@ -217,8 +217,41 @@ export function needNames(needs: readonly Need[]): string {
   return names.length <= 1 ? (names[0] ?? "") : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
 }
 
-/** A row's name where it stands alone, as a list's row: `what` without its article ("Media Library", "AI provider: descriptions"). */
-export const needName = (need: Pick<Need, "what">): string => need.what.replace(/^An? /, "").replace(/^./, (c) => c.toUpperCase());
+/**
+ * A row as something to do, in the words the setup screens and the assistant's next steps use ("Connect your AI", "Set
+ * up the Media Library", "Add a Deepgram key"): every list shows a row this way (owner, 2026-11-26: "do this, do this,
+ * actionable items"), and `what` stays the thing for the Needs line. `line`: the row's own sentence, where the one of
+ * its first key (NEED_SENTENCE) is about something else.
+ */
+export function needAction(need: Pick<Need, "what" | "form">): { title: string; button: string; line?: string } {
+  const thing = need.what.split(":")[0]!;
+  switch (need.form) {
+    case "ai":
+      return { title: "Connect your AI", button: "Connect" };
+    case "library":
+      return { title: "Set up the Media Library", button: "Set up" };
+    case "apify":
+      // met by the person's own sign-in, or by an Apify key: the sign-in is the one to ask for
+      return { title: "Connect Instagram", button: "Connect", line: "A sign-in lets the app read your posts and numbers." };
+    case "project":
+      return { title: "Create a workspace", button: "Create" };
+    case "keys":
+      return { title: `Add ${thing.charAt(0).toLowerCase()}${thing.slice(1)}`, button: "Add key" };
+  }
+}
+
+/** What an optional row adds, as its line: "Optional: faster transcripts." */
+export const optionalLine = (need: Pick<Need, "what">): string => {
+  const gives = need.what.split(": ")[1];
+  return gives ? `Optional: ${gives}.` : "Optional";
+};
+
+/**
+ * How a row stands: "done" when one of its own things is there, "free" when it is met another way with nothing to do
+ * (this computer makes the transcripts itself: nothing to add, nothing added), else "open".
+ */
+export const rowState = (need: Pick<Need, "anyOf" | "alsoMetBy">, have: readonly Have[]): "done" | "free" | "open" =>
+  need.anyOf.some((h) => have.includes(h)) ? "done" : need.alsoMetBy?.some((h) => have.includes(h)) ? "free" : "open";
 
 /** Missing rows in one line, as every screen says them: "Needs a project and an Apify key". */
 export const needsLine = (needs: readonly Need[]): string => `Needs ${needNames(needs)}`;

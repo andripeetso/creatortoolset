@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { create } from "zustand";
 import { planWarning, type Feature, type PlanId } from "@contracts/plans";
-import { applyNeedWays, readiness, type Have, type HomeTile, type Need, type NeedForm, type SetupView, type Tool } from "@contracts/tools";
+import { applyNeedWays, readiness, TOOL_NEEDS, type Have, type HomeTile, type Need, type NeedForm, type SetupView, type Tool } from "@contracts/tools";
 import { DEFAULT_WORK_PREFS, JOBS, type Job, type WorkPrefs } from "@contracts/work-prefs";
 import { confirmDialog } from "./dialogs";
 import { useAuth } from "./auth";
@@ -407,12 +407,15 @@ export const JOB_SETUP: Record<Job, { name: string; tools: readonly Tool[] }> = 
 export const jobsFor = (mine: readonly Tool[]): Job[] => JOBS.filter((j) => j === "look" || JOB_SETUP[j].tools.some((t) => mine.includes(t)));
 
 /**
- * What a job still needs: the required rows (contracts/tools.ts readiness, the list Home's dots and a tool's card read)
- * of its tools this account may use, each once. The workspace counts as there: setup makes it.
+ * A job's rows: every row (contracts/tools.ts TOOL_NEEDS, the list Home's dots and a tool's card read) of its tools this
+ * account may use, the required ones first and then the optional, each once (a row two tools share is the required
+ * one). The workspace is left out: setup makes it.
  */
-export function jobNeeds(job: Job | null | undefined, mine: readonly Tool[], have: readonly Have[]): Need[] {
+export function jobRows(job: Job | null | undefined, mine: readonly Tool[]): Need[] {
   if (!job) return [];
-  return missingFor(JOB_SETUP[job].tools.filter((t) => mine.includes(t)), [...have, "project"]);
+  const all = JOB_SETUP[job].tools.filter((t) => mine.includes(t)).flatMap((t) => TOOL_NEEDS[t]).filter((n) => n.form !== "project");
+  const seen = new Set<string>();
+  return [...all.filter((n) => !n.optional), ...all.filter((n) => n.optional)].filter((n) => !seen.has(n.anyOf.join()) && !!seen.add(n.anyOf.join()));
 }
 
 /** The required rows still missing for these tools, each once. */
