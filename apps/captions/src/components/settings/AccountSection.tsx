@@ -10,7 +10,7 @@ import { UserRound } from "lucide-react";
 import { PROVIDER_NAME, ProviderMark, type Provider } from "@/components/ProviderMark";
 import { hasAccountBridge, linkedOf, useMacAccount } from "@/components/setup/AccountStep";
 import { SignInCodeRow } from "@/components/SignInCode";
-import { Card, EmptyRow, FormDialog, ListRow, LoadingRow, Row, RowMenu, Section, type RowMenuItem } from "./ui";
+import { Card, EmptyRow, FormDialog, ListRow, LoadingRow, Row, RowMenu, Section } from "./ui";
 
 const PROVIDERS: Provider[] = ["google", "apple", "github"];
 
@@ -168,7 +168,8 @@ export function AccountSection() {
 
       {!one && <SignIns signins={signins} open={linkable.filter((p) => !account.signins.some((x) => x.provider === p))} unlink={unlink} />}
       {hasAccountBridge() && <MacAppAccount here={one ? { linked: signins.map((s) => s.provider), unlink, signOut: logout } : undefined} />}
-      {own && (
+      {/* one account: its Sign out ends this server's sign-in too, so no second Sign out */}
+      {own && !one && (
         <Section title="Session">
           <Card>
             <Row id="sign-out" title="This server" control={<Button size="sm" variant="outline" onClick={() => void logout()}>Sign out</Button>} />
@@ -231,18 +232,6 @@ function SignIns({ signins, open, unlink }: { signins: SignIn[]; open: Provider[
 }
 
 /**
- * What the Mac app's account row's menu offers: one more sign-in for the account, dropping one it has, and signing the
- * app out. `unlink` and `signOut` may answer later (a promise): the menu waits on it and shows its failure.
- */
-export function macAccountItems(o: { linked: Provider[]; open: Provider[]; link: (p: Provider) => void; unlink: (p: Provider) => void; signOut: () => void }): RowMenuItem[] {
-  return [
-    ...o.open.map((p) => ({ label: `Add ${PROVIDER_NAME[p]}`, onSelect: async () => o.link(p) })),
-    { label: "Sign out", onSelect: async () => o.signOut() },
-    ...o.linked.map((p) => ({ label: `Disconnect ${PROVIDER_NAME[p]}`, destructive: true, confirm: { title: `Disconnect ${PROVIDER_NAME[p]}?`, ok: "Disconnect" }, onSelect: async () => o.unlink(p) })),
-  ];
-}
-
-/**
  * The account row's ways in, and the ones Disconnect is offered for: `first` is the sign-in the account was made with
  * (it stays, as on the account server), `linked` the ones added to the account since, `here` the ones the server in
  * the window has for the person (one that is only there can go).
@@ -255,7 +244,7 @@ export function accountWays(first: Provider | undefined, linked: Provider[], her
 /**
  * Creator Toolset account, in the Mac app only: the account the app itself is signed in to. One row whatever its state:
  * signed out, "Not signed in" and a button for each sign-in the app offers; signed in, who it is (their name over their
- * address) and the ways in, with the rest (one more sign-in, Disconnect, Sign out) in its menu. Nothing to show (no
+ * address) with Sign out, then one row per sign-in: Disconnect for one that can go, Add for one it has not. Nothing to show (no
  * account server, none offered) means no section.
  *
  * `here`: the server in the window takes this account, so this row is its only account section. The ways in then
@@ -285,20 +274,22 @@ function MacAppAccount({ here }: { here?: { linked: Provider[]; unlink: (p: Prov
     await mac.signOut();
     await here?.signOut();
   };
+  const mark = (p: Provider) => (
+    <span className="text-foreground">
+      <ProviderMark provider={p} className="size-4" />
+    </span>
+  );
+  // signed in: the account on its own row with Sign out, then each sign-in on a row of its own (never all on one line)
   return (
     <Section id="mac-account" title="Creator Toolset account">
       <Card>
         <ListRow
-          icon={<span className="text-foreground">{first ? <ProviderMark provider={first} className="size-4" /> : <UserRound className="size-4" />}</span>}
+          icon={<span className="text-foreground"><UserRound className="size-4" /></span>}
           title={macIn ? macIn.name || macIn.email || "Signed in" : "Not signed in"}
           subtitle={macIn && macIn.name ? macIn.email || undefined : undefined}
-          status={macIn && ways.length > 1 ? ways.map((p) => PROVIDER_NAME[p]).join(" · ") : undefined}
           actions={
             macIn ? (
-              <RowMenu
-                label="Creator Toolset account actions"
-                items={macAccountItems({ linked: droppable, open: mac.providers.filter((p) => !ways.includes(p)), link: mac.link, unlink, signOut })}
-              />
+              <Button size="sm" variant="outline" onClick={() => void signOut()}>Sign out</Button>
             ) : (
               <span className="flex items-center gap-1.5">
                 {mac.providers.map((p) => (
@@ -311,6 +302,37 @@ function MacAppAccount({ here }: { here?: { linked: Provider[]; unlink: (p: Prov
             )
           }
         />
+        {macIn &&
+          ways.map((p) => (
+            <ListRow
+              key={p}
+              icon={mark(p)}
+              title={PROVIDER_NAME[p]}
+              actions={
+                droppable.includes(p) ? (
+                  <RowMenu
+                    label={`${PROVIDER_NAME[p]} actions`}
+                    items={[{ label: "Disconnect", destructive: true, confirm: { title: `Disconnect ${PROVIDER_NAME[p]}?`, ok: "Disconnect" }, onSelect: () => unlink(p) }]}
+                  />
+                ) : undefined
+              }
+            />
+          ))}
+        {macIn &&
+          mac.providers
+            .filter((p) => !ways.includes(p))
+            .map((p) => (
+              <ListRow
+                key={`add-${p}`}
+                icon={mark(p)}
+                title={PROVIDER_NAME[p]}
+                actions={
+                  <Button size="sm" variant="outline" aria-label={`Add ${PROVIDER_NAME[p]}`} onClick={() => mac.link(p)}>
+                    Add
+                  </Button>
+                }
+              />
+            ))}
       </Card>
     </Section>
   );

@@ -72,7 +72,7 @@ it("the owner of the server on their Mac sees their name and the app's account, 
   );
 });
 
-it("signed in to the app's account: who it is, once, with no provider rows", async () => {
+it("signed in to the app's account: who it is, once, with Sign out, and a row per sign-in", async () => {
   useAuth.setState({ required: true, kind: "mac", me: me({ name: "Tiny Sam", noPassword: true }) });
   account = { username: "admin", name: "", login: "admin", identities: [], signins: [], picture: null };
   macApp({ state: "signedIn", name: "Tiny Sam", email: "sam@tinyacrobatics.com", provider: "google", logins: "", providers: "google,apple,github" });
@@ -80,7 +80,10 @@ it("signed in to the app's account: who it is, once, with no provider rows", asy
   expect(text()).toContain("sam@tinyacrobatics.com");
   expect(text()).not.toContain("Not signed in");
   expect(document.querySelector('[aria-label="Sign in with Google"]')).toBeNull();
-  expect(document.querySelector('[aria-label="Creator Toolset account actions"]')).not.toBeNull();
+  expect(document.querySelector('[aria-label="Add Apple"]')).not.toBeNull();
+  expect(document.querySelector('[aria-label="Add GitHub"]')).not.toBeNull();
+  expect(document.querySelector('[aria-label="Add Google"]')).toBeNull();
+  expect(text()).toContain("Sign out");
 });
 
 it("someone with a password of their own on a server keeps the sign-in name, the password, its code and Sign out", async () => {
@@ -101,9 +104,11 @@ it("in the Mac app, a server that takes the Creator Toolset account shows that a
   await show();
   expect(text()).toContain("Creator Toolset account");
   expect(text()).not.toContain("Sign-ins");
-  // the account was made with Google; Apple is one this server has for the person: both are its ways in
-  expect(text()).toContain("Google · Apple");
-  // the server's own sign-in can go from here, the one the account was made with can not
+  // each sign-in on a row of its own, never all on one line: Apple (this server's) can go, Google (the account's first) can not
+  expect(text()).not.toContain("Google · Apple");
+  expect(document.querySelector('[aria-label="Apple actions"]')).not.toBeNull();
+  expect(document.querySelector('[aria-label="Google actions"]')).toBeNull();
+  expect(document.querySelector('[aria-label="Add GitHub"]')).not.toBeNull();
   expect(accountWays("google", [], ["google", "apple"])).toEqual({ ways: ["google", "apple"], droppable: ["apple"] });
   expect(accountWays("google", ["github"], ["google"])).toEqual({ ways: ["google", "github"], droppable: ["github"] });
 });
