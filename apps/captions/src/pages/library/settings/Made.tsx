@@ -168,8 +168,8 @@ export function Made({ library, onSettings, onBroll }: { library: LibrarySummary
           const retry = on && !!(m.failed || m.stopped);
           const makes = m.missing > 0 && !k.auto && (on || (k.kind !== "proxy" && !blur));
           // Include B-roll, the Transcripts row's one switch: off, Make leaves clips sorted as B-roll out and the queued ones stop (made.ts).
-          // It shows the saved choice flipped while its save runs, and the B-roll count beside it instead of a line of its own
-          const broll = k.kind === "transcribe" && onBroll ? (library.settings.transcribeBroll !== false) !== (busy === "broll") : undefined;
+          // While its save runs it shows the value being saved (busy "broll-true"/"broll-false"), and the B-roll count beside it instead of a line of its own
+          const broll = k.kind === "transcribe" && onBroll ? (busy?.startsWith("broll-") ? busy === "broll-true" : library.settings.transcribeBroll !== false) : undefined;
           const why = missingWhy(broll === undefined ? m : { ...m, broll: undefined });
           return (
             <Row
@@ -209,7 +209,7 @@ export function Made({ library, onSettings, onBroll }: { library: LibrarySummary
                   )}
                   {broll !== undefined && (
                     <label className="ml-2 flex items-center gap-2 text-sm">
-                      <Switch aria-label="Include B-roll" checked={broll} disabled={busy !== null} onCheckedChange={(v) => void run("broll", v ? "include B-roll" : "skip B-roll", () => onBroll!(v))} />
+                      <Switch aria-label="Include B-roll" checked={broll} disabled={busy !== null} onCheckedChange={(v) => void run(`broll-${v}`, v ? "include B-roll" : "skip B-roll", () => onBroll!(v))} />
                       Include B-roll
                       {!!m.broll && <span className="text-muted-foreground">{n(m.broll)}</span>}
                     </label>

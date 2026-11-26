@@ -29,6 +29,7 @@ vi.mock("../plugins.gen", () => ({
 type Card = { id: string; title: string; kind: string; state: string; thumbUrl?: string; roll?: "a" | "b"; blur?: "yes" | "no"; tags: string[]; aiTags: string[] };
 const clip = (id: string, more: Partial<Card> = {}): Card => ({ id, title: `Tiny Acrobatics ${id}`, kind: "video", state: "ready", tags: [], aiTags: [], ...more });
 const server = vi.hoisted(() => ({
+  madeWait: null as Promise<void> | null, // holds What's made's read open while set
   retried: [] as string[],
   items: [] as unknown[],
   trash: [] as unknown[],
@@ -154,7 +155,7 @@ vi.mock("@/lib/library", async (importOriginal) => ({
   },
   getEstimate: async () => ({ clips: 1, minutes: 0, seconds: 0, steps: [{ step: "describe", route: "provider", usd: 0, seconds: 1, measured: false }] }),
   getStatus: async () => ({ clips: 3, unreadable: 0, stages: [{ kind: "transcribe", done: 2, failed: 1, open: 0, of: 3 }] }),
-  getMade: async () => [{ kind: "transcribe", have: 2, missing: 1, queued: 0, failed: 1, cost: "free", broll: 1 }],
+  getMade: async () => (await server.madeWait, [{ kind: "transcribe", have: 2, missing: 1, queued: 0, failed: 1, cost: "free", broll: 1 }]),
   retryFailed: async (_: string, kind: string) => {
     server.retried.push(kind);
     return { files: 1 };
@@ -207,6 +208,7 @@ beforeEach(() => {
   server.holdAll = undefined;
   server.scans = 0;
   server.retried = [];
+  server.madeWait = null;
   localStorage.clear();
 });
 afterEach(() => {
@@ -336,8 +338,15 @@ describe("Media Library page", () => {
     const broll = () => dialog.querySelector<HTMLButtonElement>('[role="switch"][aria-label="Include B-roll"]')!;
     expect(dialog.querySelectorAll('[role="switch"]')).toHaveLength(1);
     expect(broll().getAttribute("aria-checked")).toBe("true");
+    // the setting saved and the list still being read again: the switch holds the new value, never flips back
+    let release = () => {};
+    server.madeWait = new Promise((r) => (release = r));
     await act(async () => broll().click());
     expect(server.patched.at(-1)).toEqual({ settings: { transcribeBroll: false } });
+    await act(async () => new Promise((r) => setTimeout(r, 0)));
+    expect(broll().getAttribute("aria-checked")).toBe("false");
+    server.madeWait = null;
+    release();
     await settle();
     expect(broll().getAttribute("aria-checked")).toBe("false");
     await act(async () => broll().click());
