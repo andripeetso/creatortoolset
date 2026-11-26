@@ -1,8 +1,8 @@
 # Media Library: blurred copies and proxies — plan
 
-Status: draft 5, 2026-11-25 (the owner's answers to draft 4: §2, D3, D6, R13). Replaces draft 3 (proxies alone). The chain itself is built (`9a8453275`); this is what is
-left, in build order, with the review findings three earlier changes left open (§5). Tool: Media Library, with the Face
-Blur plug-in (`editor-steps/blur-faces`, `docs/face-blur-intake-prd.md`).
+Status: built, 2026-11-25 (draft 5 with the owner's answers: §2, D3, D6, R13). Everything in §5 and §6 is in the code
+but for the three lines of §7a. Tool: Media Library, with the Face Blur plug-in (`editor-steps/blur-faces`,
+`docs/face-blur-intake-prd.md`). Replaces draft 3 (proxies alone).
 
 ## 1. The rule
 
@@ -280,6 +280,35 @@ In this order. Each is one small change with its test.
 7. R11: last, alone, with its two-order test.
 8. R13: its own change, with the upload gate's tests first.
 9. L10, L11, R12: in the running app, after a deploy.
+
+## 7a. Built, and what is left
+
+Built on 2026-11-25, each item with its test: L1–L9, R1–R11, R13 (the server, the iPhone app and the chat), and the
+click-through of R12 in two browser engines on a Linux machine. Three reviews of the whole change followed, and their
+findings are fixed. What the build found that the plan had wrong:
+
+- **R1.** The proxy encode did not keep every frame of a clip with uneven frame times (a phone's): 90 frames became 82.
+  It now counts time in the source's own ticks and writes each frame once (`-fps_mode vfr -enc_time_base:v demux`).
+  The first of those flags alone made FFmpeg 6.1 write a frame for every tick. Proxies need FFmpeg 6.1 or newer; the
+  doctor says so.
+- **The first migration broke D5.** It stored an existing Blur faces library's Upload as Blurred with Generate proxies
+  off, so the proxies the server held of clips kept as filmed stopped being served and new blurred copies went up
+  whole. A later step puts such a library back to how it behaved: Generate proxies on, Upload → Proxies, Blurred off.
+- **A clip found to have no faces was never sent.** It waited for its blur when it came in, so nothing asked for it
+  afterwards. It follows Upload from the moment its answer is in (`derived.ts` `followUpload`).
+- **R8 went further.** A save that turned Upload → Proxies on, or flipped the switch while proxies were hosted, queued
+  a proxy for every old video. No save queues old files now.
+- **R11 is narrower.** Where the server keeps originals and no proxy, the proxy of a file that came from a computer is
+  that computer's own; another computer never downloads the original to make one, and the server never takes the job.
+
+Left:
+
+- **L10.** The cut-off "Queueing" button was not reproduced in Chromium or WebKit on Linux, at three widths, light and
+  dark. The one moment a row's button is drawn cut is while the confirm fades in. Not checked in the Mac app's own
+  engine, where it was seen.
+- **L11.** The time left for descriptions, on a real library after a deploy.
+- **In the running Mac and iPhone apps:** a blurred copy and a proxy made end to end, a held phone file pulled to the
+  main computer, the chat carrying on, Show proxy in Finder. Built and unit-tested, never run on a device.
 
 ## 8. Parked: the Editor
 
