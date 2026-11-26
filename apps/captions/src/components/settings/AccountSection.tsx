@@ -238,7 +238,8 @@ export function macAccountItems(o: { linked: Provider[]; open: Provider[]; link:
 /**
  * Creator Toolset account, in the Mac app only: the account the app itself is signed in to, which is the app's and not a
  * sign-in to the server in the window. One row whatever its state, so a provider this server also signs in with is
- * never listed twice: signed out, a button for each sign-in the app offers; signed in, who it is and the ways in, with
+ * never listed twice: signed out, "Not signed in" and a button for each sign-in the app offers; signed in, who it is
+ * (their name over their address) and the ways in, with
  * the rest (one more sign-in, Disconnect, Sign out) in its menu. Nothing to show (no account server, none offered) means
  * no section.
  */
@@ -261,8 +262,8 @@ function MacAppAccount() {
       <Card>
         <ListRow
           icon={<span className="text-foreground">{first ? <ProviderMark provider={first} className="size-4" /> : <UserRound className="size-4" />}</span>}
-          title="Mac app"
-          subtitle={macIn ? [macIn.name, macIn.email].filter(Boolean).join(" · ") || undefined : undefined}
+          title={macIn ? macIn.name || macIn.email || "Signed in" : "Not signed in"}
+          subtitle={macIn && macIn.name ? macIn.email || undefined : undefined}
           status={macIn && ways.length > 1 ? ways.map((p) => PROVIDER_NAME[p]).join(" · ") : undefined}
           actions={
             macIn ? (

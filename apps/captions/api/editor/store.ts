@@ -31,7 +31,7 @@ import { writeJsonAtomic } from "../library/media/run";
 import { libraryHasSounds } from "../library/sfx";
 import { pluginsOffIn } from "../lib/plugin-workspaces";
 import { currentWorkspaceId } from "../lib/workspace-scope";
-import { findUser, pictureOf, type SessionUser } from "../users";
+import { findUser, pictureOf, shownName, type SessionUser } from "../users";
 import { tallyInto, type Tally } from "../lib/mac-claude";
 import type { PairMatch, Roll } from "./sync";
 
@@ -764,7 +764,10 @@ function makerOf(e: EditMeta): Pick<EditSummary, "maker"> {
   return { maker: { name: nameOf(e.createdBy), picture: u ? pictureOf(u) : null } };
 }
 
-const nameOf = (username: string) => findUser(username)?.displayName || username;
+const nameOf = (username: string) => {
+  const user = findUser(username);
+  return user ? shownName(user) : username;
+};
 
 export function viewOf(e: EditMeta): Edit {
   const { trashedAt: _, ...meta } = e;

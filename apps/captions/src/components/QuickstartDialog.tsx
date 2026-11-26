@@ -112,7 +112,7 @@ export function QuickstartDialog() {
         onClick={(e) => e.stopPropagation()}
       >
         <h2 className="mb-2 flex items-center gap-2 text-sm font-semibold">
-          <Rocket className="h-4 w-4 text-violet-400" /> Welcome, {me?.username}
+          <Rocket className="h-4 w-4 text-violet-400" /> Welcome, {me?.name || me?.username}
           — quick start
         </h2>
         <ol className="mb-4 flex flex-col gap-2.5">

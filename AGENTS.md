@@ -109,6 +109,9 @@ phone's token is, so each is listed in Settings → Computers and revoked by its
 `setLoginCookie`, never a value of its own (`sign-in-answers.test.ts` fails a route whose cookie has no session); a call
 the server makes as an account to a service that asks back who it is uses `ownLogin`. A device's token is never read
 from a cookie, where it would count as the account itself.
+On This Mac the Mac app makes the owner's account and its password itself ("admin", shown to nobody): a person's name on
+screen comes from `shownName` (`api/users.ts`; `me.name` in the pages), never the username, and a sign-in name, a
+password, its code and Sign out are shown only where `signsIn` (`src/lib/auth.ts`) says the person has their own.
 
 **No secrets in code, docs or fixtures.** Keys, tokens, cookies and passwords come from environment variables or
 per-user files written with mode 0600. Read them with `process.env` at the point of use (paid service keys only

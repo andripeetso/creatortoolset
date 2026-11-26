@@ -5,7 +5,6 @@ import { createSocket } from "node:dgram";
 import { mkdirSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { env, keepsOverRestart, hasTeam, isCloud, serverKind } from "./lib/env";
-import { ownerName } from "./owner-profile";
 import { viewAsTarget } from "./lib/view-as";
 import { getConnInfo } from "@hono/node-server/conninfo";
 import type { Context } from "hono";
@@ -18,6 +17,7 @@ import {
   type SignInProvider,
   bumpUsage,
   createUser,
+  shownName,
   findByLogin,
   findUser,
   unlinkIdentity,
@@ -98,9 +98,7 @@ export function getSessionUser(
 
 export const sessionOf = (user: UserRecord): SessionUser => ({
   username: user.username,
-  // on the server on a Mac the owner's account was made by the app ("admin"): their own name is the one they typed,
-  // else the one their Creator Toolset account gave (owner-profile.ts), else this Mac's own user's (the Mac app says it)
-  name: user.displayName || (user.role === "admin" && serverKind() === "mac" && (ownerName() || process.env.CT_OWNER_NAME?.trim().slice(0, 60))) || user.username,
+  name: shownName(user),
   role: user.role,
   cloud: user.cloud,
   off: user.role === "admin" ? [] : user.off,
@@ -552,7 +550,7 @@ authApp.get("/link/:code", (c) => {
     return c.text(LINK_USED, 410);
   }
   if (remoteRefused(c, user)) return c.text(NO_PASSWORD_YET, 403);
-  const name = escHtml(user.displayName || user.username);
+  const name = escHtml(shownName(user));
   // the press sends JSON (a page can't send it cross-site); a page that failed reloads and says why
   const press = `<script>document.forms[0].onsubmit=async(e)=>{e.preventDefault();const r=await fetch(e.target.action,{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});location.replace(r.ok?"/":location.href)}</script>`;
   return c.html(

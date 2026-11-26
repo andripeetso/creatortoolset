@@ -2,7 +2,8 @@ import { createHash, randomBytes, scryptSync, timingSafeEqual } from "node:crypt
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { mkdir, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { env } from "./lib/env";
+import { env, serverKind } from "./lib/env";
+import { ownerName } from "./owner-profile";
 import { TOOLS, isPluginGateId, isRetiredAppId, isTool, type PluginGateId, type Tool } from "../contracts/tools";
 import { pluginDefaultOff } from "./lib/plugin";
 import { announce } from "./lib/sync";
@@ -278,7 +279,18 @@ export function findByLogin(name: string): UserRecord | null {
   return users.find((u) => (u.login ?? u.username) === n) ?? null;
 }
 
-/** Settings → Account: what the app calls the person. Empty = the username again. */
+/**
+ * What the app calls a person: the name they typed (Settings → Account), else their account's own name. On the server
+ * on a Mac the owner's account and its name ("admin") were made by the Mac app, so the owner is called by the name their
+ * Creator Toolset account gave (owner-profile.ts), else by this Mac's own user's (CT_OWNER_NAME, set by the Mac app):
+ * nobody is called by a name they never chose. Every place that prints a person's name reads it here.
+ */
+export function shownName(user: UserRecord): string {
+  const ofThisMac = user.role === "admin" && serverKind() === "mac" && (ownerName() || process.env.CT_OWNER_NAME?.trim().slice(0, 60));
+  return user.displayName || ofThisMac || user.username;
+}
+
+/** Settings → Account: what the app calls the person. Empty = the name shownName gives without one. */
 export function setDisplayName(user: UserRecord, name: string): void {
   // eslint-disable-next-line no-control-regex
   const n = name.replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, 60);
