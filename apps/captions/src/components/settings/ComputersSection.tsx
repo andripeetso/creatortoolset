@@ -20,7 +20,7 @@ import { groupComputers, kindOf, type ComputerGroup, type Listed, type ThisMacNa
 import { hasThisMac, SharedDrivesRow, tell, useThisMac, type ThisMacState } from "./ThisMacSection";
 import { HelperSetup, readyLine } from "@/components/setup/HelperStep";
 import { useCachedLoad } from "@/lib/local-cache";
-import { AllowedFolders, call } from "./StorageRows";
+import { call } from "./StorageRows";
 import { unreachedShares, type StorageView } from "@contracts/storage";
 import type { Balance, Device, DeviceWaits } from "@contracts/providers";
 import { listLibraries } from "@/lib/library";
@@ -40,8 +40,8 @@ const hardware = (d: Listed): string | null => {
 /**
  * Settings → Computers, three sections and each thing once. Computers: one row per computer (a Mac that registered twice
  * is listed once) with its load preference and its `…` menu, then the Load balancing switch; the plug-ins' "computers"
- * cards sit under it without a heading. This Mac (Mac app only): its own switches, its connections (the server on this
- * Mac only) and the folders it reads. Phones and browsers: pairing links and the other sign-ins. The computers offline a
+ * cards sit under it without a heading. This Mac (Mac app only): its own switches and its connections (the server on
+ * this Mac only); the folders it may read are Settings → Folders. Phones and browsers: pairing links and the other sign-ins. The computers offline a
  * day or more with no AI on them are a section of their own. `?add=1` opens the add-computer dialog, `?phone=1` Create link
  * (other pages link there).
  */
@@ -89,7 +89,6 @@ export function ComputersSection() {
             <ThisMacSwitch bridge={bridge} />
             {thisMac && <ConnectionsCard mac={bridge} />}
           </Card>
-          <AllowedFolders />
         </Section>
       )}
       <PhonesSection create={phoning} onCreateChange={setPhoning} />

@@ -247,7 +247,7 @@ and answers:
     top bar's tool menu and the plug-in tiles). **Settings** = how the app is set up, grouped by whose setting it
     is: You (General, Appearance, Tools, Dictation, Computers, Servers, Providers, Headless access: the same in every
     workspace), Workspace (Details, Social accounts, Folders, Scheduled tasks, Memory: what belongs to one
-    workspace), Server (Video work, Team, Storage, API keys: what this server does and keeps, and who is on it; an
+    workspace; Folders also holds Folder access, what this Mac may read, the same in every workspace), Server (Video work, Team, Storage, API keys: what this server does and keeps, and who is on it; an
     admin sees everyone's, a member their own), Tool settings (a page per tool: the Media Library's, with its sound
     effects, and Voice's are there). No group of one page: a page joins the group it belongs to, and a thing with
     one or two rows is a section of the page it belongs to, never a page of its own. There is no Admin page: the

@@ -8,18 +8,28 @@ import type { StorageView } from "@contracts/storage";
 import { devicesSectionsFor, replacementFor } from "@/lib/plugin";
 import { webPlugins } from "@/plugins.gen";
 import { Card, EmptyRow, ErrorRow, ListRow, LoadingRow, Section, Status, WorkspacePick, useSettingsWorkspace } from "./ui";
-import { STORAGE_ALL, STORAGE_API, Storage, call, driveList, getStorage, spaceOf, isFull } from "./StorageRows";
+import { AllowedFolders, STORAGE_ALL, STORAGE_API, Storage, call, driveList, getStorage, spaceOf, isFull } from "./StorageRows";
 import { KeptSection, RenderCacheSection, ThisComputerSection, WorkspaceStorageSection } from "./KeptRows";
 import { ServerProjects } from "@/components/AdminPanel";
+import { hasThisMac } from "./ThisMacSection";
 
 /**
  * Settings → Folders (the Workspace group): where each workspace's finished videos and Media folders live. The
  * workspace selector starts on All workspaces (every folder, each with its workspace); one picked shows its own and
  * the ones every workspace uses. A plug-in that owns storage (`replaces.storage`) draws its own rows here for admins,
- * selector and all; a member there has no Folders page (nav.ts sectionsFor: only admins edit that server's folders).
+ * selector and all: only admins edit that server's folders. Under them, in the Mac app, Folder access: the folders this
+ * Mac may read, the same in every workspace (the selector does not reach it; its row says "This Mac"). A member on a
+ * server whose plug-in keeps the folders has that section alone, so nav.ts lists the page for them in the Mac app only.
  */
 export function FoldersSection() {
-  return <Folders />;
+  const me = useAuth((s) => s.me);
+  const kept = me?.role !== "admin" && webPlugins.some((p) => !!p.replaces?.storage);
+  return (
+    <>
+      {!kept && <Folders />}
+      {hasThisMac() && <AllowedFolders />}
+    </>
+  );
 }
 
 /**

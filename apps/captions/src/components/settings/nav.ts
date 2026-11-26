@@ -87,10 +87,11 @@ export const RETIRED_PATHS: Readonly<Record<string, string>> = {
 
 /** Every section this install and person may open (sidebar and account page), with the plug-ins' sections placed in. */
 export function sectionsFor(ctx: NavContext, plugins: PluginList = webPlugins): SettingsEntry[] {
-  // a plug-in that keeps the server's folders (`replaces.storage`) has only admins edit them: a member has no Folders page
+  // a plug-in that keeps the server's folders (`replaces.storage`) has only admins edit them: a member's Folders page
+  // is this Mac's Folder access alone, so they have the page in the Mac app only
   const pluginFolders = plugins.some((p) => !!p.replaces?.storage);
   const allowed = BUILTIN.filter(
-    (s) => (ctx.team || !s.teamOnly) && (ctx.mac || !s.macOnly) && (ctx.admin || !s.adminOnly) && (s.id !== "folders" || ctx.admin || !pluginFolders),
+    (s) => (ctx.team || !s.teamOnly) && (ctx.mac || !s.macOnly) && (ctx.admin || !s.adminOnly) && (s.id !== "folders" || ctx.admin || !pluginFolders || ctx.mac),
   );
   // a plug-in's server-wide page (adminTab, was an Admin tab): admins on a server with a team only, as Admin was
   const shown = settingsWithPlugins(allowed, plugins).filter((s) => (ctx.team && ctx.admin) || !("adminTab" in s && s.adminTab));

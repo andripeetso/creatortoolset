@@ -58,8 +58,10 @@ describe("the sidebar per install and role", () => {
   it("on a server whose plug-in keeps the folders, members still get Storage (what they keep on the server)", () => {
     const owns = [{ replaces: { storage: () => null } }];
     expect(navListFor(at(true, false), owns).map((s) => s.id)).toContain("storage");
-    // its folders are the admins' to set: a member there has no Folders page
+    // its folders are the admins' to set: a member there has no Folders page, but in the Mac app, where the page
+    // holds this Mac's Folder access
     expect(navListFor(at(true, false), owns).map((s) => s.id)).not.toContain("folders");
+    expect(navListFor(at(true, false, true), owns).map((s) => s.id)).toContain("folders");
     expect(navListFor(at(true, true), owns).map((s) => s.id)).toContain("folders");
     expect(listed(at(true, false))).toContain("storage");
   });
