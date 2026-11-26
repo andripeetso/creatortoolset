@@ -283,6 +283,23 @@ describe("a session on /api", () => {
   });
 });
 
+describe("revoke-others is the caller's own account", () => {
+  it("an admin's press leaves the team signed in; a member's sign-in still ends by its own revoke", async () => {
+    const { createUser } = await import("./users");
+    createUser("tiny-member", "a-long-password-9");
+    const signedIn = await call("POST", "/api/auth/login", { body: { username: "tiny-member", password: "a-long-password-9" } });
+    const member = (signedIn.headers.get("set-cookie") ?? "").split(";")[0]!;
+    const mine = await signIn();
+    expect((await call("POST", "/api/auth/clients/revoke-others", { cookie, body: {} })).status).toBe(200);
+    // the admin's other sign-in went, the member's did not
+    expect((await call("GET", "/api/auth/access", { cookie: mine })).status).toBe(401);
+    expect((await call("GET", "/api/auth/access", { cookie: member })).status).toBe(200);
+    const theirs = ((await (await call("GET", "/api/auth/access", { cookie: member })).json()) as { clientSessions: Array<{ sessionId: string; current: boolean }> }).clientSessions.find((x) => x.current)!;
+    expect((await call("POST", "/api/auth/clients/revoke", { cookie, body: { sessionId: theirs.sessionId } })).status).toBe(200);
+    expect((await call("GET", "/api/auth/access", { cookie: member })).status).toBe(401);
+  });
+});
+
 describe("a sign-in is a session like a paired device's", () => {
   type Listed = { clientSessions: Array<{ sessionId: string; method: string; current: boolean }> };
   const listed = async (as: string) => ((await (await call("GET", "/api/auth/access", { cookie: as })).json()) as Listed).clientSessions;

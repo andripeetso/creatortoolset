@@ -64,27 +64,10 @@ it("turns Reach from anywhere on through the Mac app, and shows its problem", as
   expect(text()).toContain("Your account has three computers already.");
 });
 
-it("in a browser: Network access says where this computer is reachable, and its switch is the Mac app's", async () => {
-  endpoints = [
-    { kind: "lan", httpBaseUrl: "http://tiny-mac.local:3773" },
-    { kind: "tailnet", httpBaseUrl: "http://tiny-mac.vpn.example:3773" },
-  ];
-  act(() => root.render(<ConnectionsCard inMac={false} mac={null} />));
-  await flush();
-  expect(text()).toContain("This computer");
-  expect(text()).toContain("Reachable on your network at tiny-mac.local:3773.");
-  expect(text()).toContain("Reachable at http://tiny-mac.vpn.example:3773");
-  expect(text()).toContain("Tailnet");
-  const sw = document.querySelector<HTMLButtonElement>('[aria-label="Network access"]')!;
-  expect(sw.getAttribute("aria-checked")).toBe("true");
-  expect(sw.disabled).toBe(true);
-  expect(text()).not.toContain("Reach from anywhere");
-});
-
 it("in the Mac app with Network access off: only this Mac can connect, and the switch asks the app", async () => {
   const postMessage = vi.fn(async () => ({ aiOn: false, paired: true, problem: "Could not restart the server." }));
   (window as { webkit?: unknown }).webkit = { messageHandlers: { thisMac: { postMessage } } };
-  act(() => root.render(<ConnectionsCard inMac mac={mac({ linked: false })} />));
+  act(() => root.render(<ConnectionsCard mac={mac({ linked: false })} />));
   await flush();
   expect(text()).toContain("Only this Mac can connect.");
   const sw = document.querySelector<HTMLButtonElement>('[aria-label="Network access"]')!;
@@ -95,12 +78,18 @@ it("in the Mac app with Network access off: only this Mac can connect, and the s
   expect(text()).toContain("Could not restart the server.");
 });
 
-it("in the Mac app with Network access on: the switch turns it off through the app", async () => {
-  endpoints = [{ kind: "lan", httpBaseUrl: "http://tiny-mac.local:3773" }];
+it("in the Mac app with Network access on: the addresses it is reachable at, and the switch turns it off through the app", async () => {
+  endpoints = [
+    { kind: "lan", httpBaseUrl: "http://tiny-mac.local:3773" },
+    { kind: "tailnet", httpBaseUrl: "http://tiny-mac.vpn.example:3773" },
+  ];
   const postMessage = vi.fn(async () => ({ aiOn: false, paired: true, problem: "Could not restart the server." }));
   (window as { webkit?: unknown }).webkit = { messageHandlers: { thisMac: { postMessage } } };
-  act(() => root.render(<ConnectionsCard inMac mac={mac({})} />));
+  act(() => root.render(<ConnectionsCard mac={mac({})} />));
   await flush();
+  expect(text()).toContain("This Mac");
+  expect(text()).toContain("Reachable on your network at tiny-mac.local:3773.");
+  expect(text()).toContain("Reachable at http://tiny-mac.vpn.example:3773");
   act(() => document.querySelector<HTMLButtonElement>('[aria-label="Network access"]')!.click());
   await flush();
   expect(postMessage).toHaveBeenCalledWith("access:off");

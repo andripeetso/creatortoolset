@@ -62,7 +62,7 @@ export function ClientRow({ session, now, mine, onRevoke }: { session: ClientSes
 /**
  * Settings → Computers → Signed-in devices: the live pairing links and every sign-in to this server (each browser, the
  * Mac app's window, each phone and iPad, however it signed in), live from the server's access events. Create link makes
- * a one-time link; Revoke others signs out every one but this device.
+ * a one-time link; Revoke others signs out every other sign-in of this account (never the team's).
  * `create` opens Create link (the page's `?phone=1`).
  */
 export function PhonesSection({ create, onCreateChange }: { create: boolean; onCreateChange: (open: boolean) => void }) {
@@ -76,7 +76,9 @@ export function PhonesSection({ create, onCreateChange }: { create: boolean; onC
   const sessions = view?.clientSessions ?? [];
   const now = useNow(links.length > 0 || sessions.some((s) => s.connected || s.current));
   const live = links.filter((l) => ms(l.expiresAt) > now);
-  const others = sessions.some((s) => !s.current);
+  // Revoke others is this account's other sign-ins: an admin's list also holds the team's, which one press never ends
+  const other = (s: ClientSession) => !s.current && (!mine || s.subject === mine);
+  const others = sessions.some(other);
 
   const created = (link: CreatedLink) => {
     setMade((m) => new Map(m).set(link.id, link));
@@ -95,7 +97,7 @@ export function PhonesSection({ create, onCreateChange }: { create: boolean; onC
     setRevokingOthers(true);
     try {
       await revokeOtherClients();
-      for (const s of sessions) if (!s.current) apply("clientRemoved", { sessionId: s.sessionId });
+      for (const s of sessions) if (other(s)) apply("clientRemoved", { sessionId: s.sessionId });
     } catch (e) {
       toast.error("Could not revoke the others", { description: e instanceof Error ? e.message : undefined });
     }

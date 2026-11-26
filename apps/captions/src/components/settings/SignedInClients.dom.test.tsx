@@ -157,6 +157,16 @@ it("names a browser's sign-in from what the browser says of itself, and says who
   expect(text()).not.toContain("admin · ");
 });
 
+it("Revoke others is for this account's own sign-ins: with only a teammate's beside this one, there is nothing to revoke", async () => {
+  const { useAuth } = await import("@/lib/auth");
+  useAuth.setState({ me: { username: "admin" } as never });
+  await show();
+  expect(button("Revoke others").disabled).toBe(false); // the admin's own phone
+  FakeSource.last!.send("snapshot", { pairingLinks: [], clientSessions: [browser, signIn] });
+  expect(text()).toContain("sam · Windows");
+  expect(button("Revoke others").disabled).toBe(true);
+});
+
 it("follows the access events: a new device, a removed one, and a snapshot that replaces the list", async () => {
   await show();
   FakeSource.last!.send("clientUpserted", ipad);

@@ -474,7 +474,9 @@ export const fromThisMac = (c: Context) =>
   !["forwarded", "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto", "x-real-ip", "via"].some((h) => c.req.header(h) !== undefined);
 const localOnly = (c: Context) => (serverKind() === "mac" && !isLoopback(c)) || (ownComputer() && viaTunnel(c));
 const remoteRefused = (c: Context, user: UserRecord) => localOnly(c) && !!env.appSecret && verifyPassword(user, env.appSecret);
-const NO_PASSWORD_YET = "This computer's password isn't set yet. In Creator Toolset on this computer, open Settings → Computers and use Create link, then open that link here.";
+// another computer or phone asking for a password this one never set: only the phone app opens it, by its link (a
+// browser does nothing with that link, src/lib/pairing.ts)
+const NO_PASSWORD_YET = "This computer's password isn't set yet. It opens in the Creator Toolset app on a phone: in Creator Toolset on this computer, open Settings → Computers and use Create link.";
 
 /**
  * One-time sign-in links, for a phone (Setup → Add your phone, as a QR code) or another computer. POST mints one for

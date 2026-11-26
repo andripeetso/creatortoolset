@@ -70,7 +70,7 @@ describe("joinServer", () => {
   });
 
   it("shows the password refusal from a server that asks for one first", async () => {
-    const refused = () => new Response("This computer's password isn't set yet. In Creator Toolset on this computer, open Settings → Computers and use Create link, then open that link here.", { status: 403 });
+    const refused = () => new Response("This computer's password isn't set yet. It opens in the Creator Toolset app on a phone: in Creator Toolset on this computer, open Settings → Computers and use Create link.", { status: 403 });
     const r = await joinServer(LINK, { fetchImpl: fakeServer(refused, added()).fetchImpl });
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.message).toContain("This computer's password isn't set yet");

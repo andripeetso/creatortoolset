@@ -22,6 +22,11 @@ describe("macSignsWindowIn (a server's sign-in page asks the Mac app first)", ()
     expect(await macSignsWindowIn(NOW, undefined, memory())).toBe(false);
   });
 
+  it("stops waiting on an app that does not answer in time, so the sign-in page shows", async () => {
+    const never = { postMessage: () => new Promise<{ state?: string }>(() => {}) };
+    expect(await macSignsWindowIn(NOW, never, memory(), 10)).toBe(false);
+  });
+
   it("asks once a minute for a window: a sign-in that did not hold shows the sign-in page, never a loop", async () => {
     let asks = 0;
     const app = { postMessage: async () => (asks++, { state: "signedIn" }) };

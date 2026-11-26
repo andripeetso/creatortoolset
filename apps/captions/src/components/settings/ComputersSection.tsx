@@ -82,7 +82,7 @@ export function ComputersSection() {
   );
   const phones = (
     <>
-      {thisMac && inMac && <ConnectionsCard inMac={inMac} mac={bridge} />}
+      {thisMac && inMac && <ConnectionsCard mac={bridge} />}
       <PhonesSection create={phoning} onCreateChange={setPhoning} />
     </>
   );

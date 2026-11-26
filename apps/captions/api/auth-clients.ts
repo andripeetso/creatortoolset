@@ -252,7 +252,9 @@ authClientsApp.post("/clients/revoke", async (c) => {
 authClientsApp.post("/clients/revoke-others", (c) => {
   const who = accessCaller(c);
   if (who instanceof Response) return who;
-  return c.json({ ok: true, revoked: revokeOthers(who.sessionId, mayFor(who.user)) });
+  // the caller's own account only, an admin's too: one press never signs a whole team out (an admin ends another
+  // account's sign-in by its own Revoke)
+  return c.json({ ok: true, revoked: revokeOthers(who.sessionId, (subject) => subject === who.user.username) });
 });
 
 authClientsApp.get("/session", (c) => {

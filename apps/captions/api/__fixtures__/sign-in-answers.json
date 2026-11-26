@@ -43,7 +43,7 @@
   "login, the app's secret from the LAN": {
     "status": 403,
     "body": {
-      "error": "This computer's password isn't set yet. In Creator Toolset on this computer, open Settings → Computers and use Create link, then open that link here."
+      "error": "This computer's password isn't set yet. It opens in the Creator Toolset app on a phone: in Creator Toolset on this computer, open Settings → Computers and use Create link."
     },
     "cookie": null,
     "location": null,

@@ -21,7 +21,7 @@ export interface SearchRow {
   keywords?: readonly string[];
   /** Only shown where sign-in is required (this install has accounts). Not offered by search elsewhere. */
   /** server-admin: an admin on a hosted server (the server's own accounts, projects and keys). */
-  needs?: "sign-in" | "mac" | "mac-recorder" | "server-admin";
+  needs?: "sign-in" | "mac" | "this-mac" | "mac-recorder" | "server-admin";
 }
 
 /** The API key rows are one per service in contracts/service-keys.ts (MY_KEYS), so their ids come from it. */
@@ -93,10 +93,10 @@ const STATIC_ROWS = [
   { section: "devices", id: "add-computer", title: "Add computer", keywords: ["mac", "pair", "link", "command line"] },
   { section: "devices", id: "phones", title: "Signed-in devices", description: "Pairing links and the phones, iPads and browsers signed in here", keywords: ["phone", "iphone", "ipad", "qr", "qr code", "pair", "camera", "scan", "signed in", "devices", "revoke", "sessions"] },
   { section: "devices", id: "create-link", title: "Create link", description: "A one-time link a phone or iPad signs in with", keywords: ["phone", "iphone", "ipad", "qr", "pair", "pairing", "camera", "scan", "code", "link"] },
-  { section: "devices", id: "connections", title: "This computer", keywords: ["network", "address", "reachable", "lan", "vpn"], needs: "mac" },
-  { section: "devices", id: "network-access", title: "Network access", description: "Other devices on your network reach this computer", keywords: ["network", "wifi", "wi-fi", "lan", "local network", "remote", "other devices"], needs: "mac" },
-  { section: "devices", id: "reach-from-anywhere", title: "Reach from anywhere", description: "Your other devices reach this Mac through your account", keywords: ["account", "anywhere", "remote", "tunnel", "connect", "away from home"], needs: "mac" },
-  { section: "devices", id: "phone-notifications", title: "Send notifications to your phones", description: "Your phones are told when something waits on you", keywords: ["notifications", "push", "phone", "iphone", "alerts"], needs: "mac" },
+  { section: "devices", id: "connections", title: "This Mac", keywords: ["network", "address", "reachable", "lan", "vpn"], needs: "this-mac" },
+  { section: "devices", id: "network-access", title: "Network access", description: "Other devices on your network reach this computer", keywords: ["network", "wifi", "wi-fi", "lan", "local network", "remote", "other devices"], needs: "this-mac" },
+  { section: "devices", id: "reach-from-anywhere", title: "Reach from anywhere", description: "Your other devices reach this Mac through your account", keywords: ["account", "anywhere", "remote", "tunnel", "connect", "away from home"], needs: "this-mac" },
+  { section: "devices", id: "phone-notifications", title: "Send notifications to your phones", description: "Your phones are told when something waits on you", keywords: ["notifications", "push", "phone", "iphone", "alerts"], needs: "this-mac" },
   { section: "devices", id: "use-this-mac", title: "Take work from this server", keywords: ["mac app", "this mac", "switch", "use this mac", "ai on this mac", "ai jobs", "take work"], needs: "mac" },
   { section: "devices", id: "shared-drives", title: "Shared drives", keywords: ["nas", "network drive", "share", "smb", "connect", "reconnect", "office"], needs: "mac" },
   // Scheduled tasks
@@ -217,6 +217,8 @@ export function searchSettings(
   macRecorder = false,
   /** An admin on a hosted server (rows with needs "server-admin"). */
   serverAdmin = false,
+  /** In the Mac app with the server on this Mac in the window (rows with needs "this-mac": its own connections card). */
+  thisMac = false,
 ): SearchHit[] {
   const q = query.trim().toLowerCase().replace(/\s+/g, " ");
   if (!q) return [];
@@ -225,7 +227,7 @@ export function searchSettings(
   for (const r of index) {
     const sectionTitle = sections.get(r.section);
     const shown =
-      !r.needs || (r.needs === "mac" ? macApp : r.needs === "mac-recorder" ? macApp && macRecorder : r.needs === "server-admin" ? serverAdmin : signInRequired);
+      !r.needs || (r.needs === "mac" ? macApp : r.needs === "this-mac" ? thisMac : r.needs === "mac-recorder" ? macApp && macRecorder : r.needs === "server-admin" ? serverAdmin : signInRequired);
     if (sectionTitle !== undefined && shown) rows.push({ ...r, sectionTitle });
   }
   // a section by its own title (plug-in sections have no rows in the index)

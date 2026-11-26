@@ -79,11 +79,11 @@ async function untilAccess(on: boolean): Promise<Endpoint[] | null> {
 }
 
 /**
- * This computer's connections: Network access (other devices on the network reach it; the switch is the Mac app's), the
- * addresses it is reachable at, and in the Mac app Reach from anywhere. Drawn only for the server on this computer
- * (ComputersSection): another server's addresses are not this computer's, and the switch would change the wrong one.
+ * This Mac's connections, in its Mac app: Network access (other devices on the network reach it), the addresses it is
+ * reachable at, and Reach from anywhere. Drawn only for the server on this Mac (ComputersSection): another server's
+ * addresses are not this computer's, and the switch would change the wrong one.
  */
-export function ConnectionsCard({ inMac, mac }: { inMac: boolean; mac: ThisMacState | null }) {
+export function ConnectionsCard({ mac }: { mac: ThisMacState | null }) {
   const [endpoints, setEndpoints] = useState<Endpoint[] | null>(null);
   const [failed, setFailed] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -95,7 +95,6 @@ export function ConnectionsCard({ inMac, mac }: { inMac: boolean; mac: ThisMacSt
     );
   }, []);
   useEffect(load, [load]);
-  const here = inMac ? "this Mac" : "this computer";
   const lan = endpoints?.find((e) => e.kind === "lan");
   const turn = async (on: boolean) => {
     setBusy(true);
@@ -112,26 +111,26 @@ export function ConnectionsCard({ inMac, mac }: { inMac: boolean; mac: ThisMacSt
   const description = busy
     ? "Restarting…"
     : !endpoints
-      ? failed ? `Could not read the addresses of ${here}.` : "Loading…"
+      ? failed ? "Could not read the addresses of this Mac." : "Loading…"
       : lan
         ? `Reachable on your network at ${hostOf(lan.httpBaseUrl)}.`
-        : `Only ${here} can connect.`;
+        : "Only this Mac can connect.";
   return (
-    <Section id="connections" title={inMac ? "This Mac" : "This computer"}>
+    <Section id="connections" title="This Mac">
       <Card>
         <Row
           id="network-access"
           title="Network access"
           description={description}
           status={problem ? <Status tone="broken">{problem}</Status> : undefined}
-          control={<Switch checked={!!lan} disabled={!inMac || busy || !endpoints} aria-label="Network access" onCheckedChange={(on) => void turn(on)} />}
+          control={<Switch checked={!!lan} disabled={busy || !endpoints} aria-label="Network access" onCheckedChange={(on) => void turn(on)} />}
         />
         {(endpoints ?? [])
           .filter((e) => e !== lan)
           .map((e) => (
             <Row key={e.httpBaseUrl} title={e.kind === "tailnet" ? "Tailnet" : hostOf(e.httpBaseUrl)} description={`Reachable at ${e.httpBaseUrl}`} />
           ))}
-        <ReachFromAnywhereRow mac={inMac ? mac : null} />
+        <ReachFromAnywhereRow mac={mac} />
         <PhoneNotificationsRow />
       </Card>
     </Section>

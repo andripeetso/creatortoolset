@@ -104,7 +104,7 @@ when that session expires (the device renews and opens it again).
 ### `POST /api/auth/pairing-links/revoke` `{ id }` · `POST /api/auth/clients/revoke` `{ sessionId }` · `POST /api/auth/clients/revoke-others`
 
 Need `access`. 200 `{ "ok": true }` (revoke-others: `{ "ok": true, "revoked": n }`: every session of the caller's
-account but the caller's own; for an admin, every session on the server but its own). 404 `"Not found"` for an id the
+account but the caller's own, for an admin too; another account's ends only by its own revoke). 404 `"Not found"` for an id the
 caller may not see. Revoking a session ends its open change streams (`/api/sync/events`, `/api/auth/access/events`) at
 once; every later request with its token is 401 `SESSION_REVOKED`.
 

@@ -124,7 +124,7 @@ export default function SettingsPage({ onClose }: { onClose: () => void }) {
 
   const navList = withToolPages(navListFor(ctx), toolPages.map((t) => ({ id: t, title: HOME_TILE_NAMES[t], icon: t === "record" ? ScreenShare : TOOL_ICONS[t] })));
   const needle = query.trim();
-  const hits = needle ? searchSettings(needle, new Map(entries.map((s) => [s.id, s.title])), undefined, signsIn(required, me), ctx.mac, macRecorder, ctx.team && ctx.admin) : [];
+  const hits = needle ? searchSettings(needle, new Map(entries.map((s) => [s.id, s.title])), undefined, signsIn(required, me), ctx.mac, macRecorder, ctx.team && ctx.admin, ctx.mac && !ctx.team) : [];
   const activeIdx = Math.min(active, Math.max(hits.length - 1, 0));
   const name = me?.name ?? me?.username ?? "";
   const initial = (name.trim()[0] ?? "?").toUpperCase();

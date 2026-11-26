@@ -329,7 +329,7 @@ final class Shell: NSObject, ObservableObject {
             } else if ask == "signout" {
                 Task { done(await self.account.signOut()) }
             } else if ask == "window" {
-                Task { done(["state": await self.signInWithAccount() ? "signedIn" : "off"]) }
+                Task { done(["state": await self.signWindowIn() ? "signedIn" : "off"]) }
             } else if ask.hasPrefix("unlink:") {
                 Task { done(await self.account.unlink(String(ask.dropFirst(7)))) }
             } else if ask.hasPrefix("link:") {
@@ -527,6 +527,16 @@ final class Shell: NSObject, ObservableObject {
             return
         }
         AppLog.write("the window could not sign in as this Mac's owner: the sign-in page shows")
+    }
+
+    /// The sign-in page asked the app to sign its window in (src/lib/mac-window-sign-in.ts, "window"). On the server on
+    /// this Mac that is the owner's own sign-in again, as at start: another device can end the window's (Revoke in
+    /// Settings → Computers), and the owner has no password to type on that page. On another server it is the account's.
+    private func signWindowIn() async -> Bool {
+        guard runsHere else { return await signInWithAccount() }
+        await signIn()
+        let check: AuthCheck? = try? await client().get("/api/auth/check")
+        return check?.authed == true
     }
 
     /// A Server this app's Creator Toolset account signed in to: the account's ticket for it, swapped there for the
