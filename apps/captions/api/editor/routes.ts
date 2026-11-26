@@ -5,7 +5,7 @@ import { innerCall, jobTurn, type AuthVars } from "../auth";
 import { picturesInChat } from "../assistant";
 import { libraryDb } from "../library/db";
 import { enqueueJob } from "../library/jobs";
-import { onUploadDone } from "../library/routes";
+import { onUploadDone } from "../library/upload-done";
 import { ZipFile } from "yazl";
 import { exportGaps, handoverReadme } from "./carry";
 import { toFcp7Xml, toFcpxml } from "./fcpxml";

@@ -35,7 +35,8 @@ import { watchAllowed } from "./library/watch";
 import { clipsHere, librariesHere, libraryRole } from "./library/access";
 import { libraryDb } from "./library/db";
 import { intakeOf } from "./library/held";
-import { onUploadDone } from "./library/routes";
+// from its own file, never the library's routes: those and this file import each other (library/upload-done.ts)
+import { onUploadDone } from "./library/upload-done";
 import { inCurrentWorkspace } from "./lib/workspace-scope";
 import { exportsOf, FOLDER_LABELS, folderIn, sourcesOf, THIS_COMPUTER, type StorageFolder } from "../contracts/storage";
 import { onChatMoves, resolveProjectId, workspaceScope } from "./lib/workshop/workspace";

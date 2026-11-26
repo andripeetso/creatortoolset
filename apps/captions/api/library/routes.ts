@@ -47,6 +47,7 @@ import { fileRoll, rollFolder } from "./roll";
 import { IMPORT_WAIT_MS, takeFile, watchAllowed } from "./watch";
 import { dropMacFrames, indexOnMac, noPicture, parseOnMac, putSprite, putThumb, strayStrips } from "./on-mac";
 import { followUpload, type Made, parseMade, recordMade, sendLater, sendsFromComputer, UPLOAD_TAKES } from "./derived";
+import { onUploadDone } from "./upload-done";
 import { deviceForToken, deviceOf, isOnline, listDevices } from "../lib/devices";
 import { actionDone, goOnFor } from "../lib/action-done";
 import { addFolder } from "../devices-storage";
@@ -73,9 +74,6 @@ libraryApp.route("/", placesApp); // GET, POST /:id/places, GET /:id/places/gone
 
 const CHUNK_BYTES = 32 * 1024 * 1024;
 
-/** Told each finished upload's id and the version it became (a duplicate's current version): an edit waiting on it starts.
- *  The same version is kept on the upload's row (uploads.version_id), for a chat's ask that waits on it (assistant.ts). */
-export const onUploadDone: ((uploadId: string, versionId: string) => void)[] = [];
 const uploadDone = (uploadId: string, versionId: string | null | undefined) => {
   if (versionId) for (const f of onUploadDone) f(uploadId, versionId);
 };
