@@ -6,7 +6,8 @@ import type { AuthVars } from "./auth";
 import { viewFor } from "./providers";
 import { isCloud, serverKind } from "./lib/env";
 import { lastSignIns } from "./lib/local-ai";
-import { base, pingUrl, recentErrors, scrub } from "./lib/telemetry";
+import { matchedRoutes } from "hono/route";
+import { base, noteAction, pingUrl, recentErrors, scrub } from "./lib/telemetry";
 import { failuresOf, noteFailure } from "./lib/failures";
 import { libraryDb } from "./library/db";
 import { VISITOR, type SessionUser } from "./users";
@@ -86,9 +87,14 @@ export const noteFailures: MiddlewareHandler<{ Variables: AuthVars }> = async (c
   await next();
   const u = c.get("user");
   const { status } = c.res;
+  // the route as written in the code ("/api/library/assets/:id"), never the path asked for, which can hold a name: the
+  // last one matched that isn't a catch-all (the not-found answer "/api/*" matches every request, last)
+  const pattern = matchedRoutes(c).map((r) => r.path).filter((p) => !/^\/(api\/)?\*$/.test(p)).at(-1) ?? "";
+  const route = `${c.req.method} ${pattern || "other"}`;
+  if (u && u.role !== VISITOR.role) noteAction(c.req.method, pattern);
   if (status < 400 || !u || u.role === VISITOR.role || /^\/api\/(bug-report|telemetry)/.test(c.req.path)) return;
   const type = c.res.headers.get("content-type") ?? "";
-  const note = (error?: string) => noteFailure(u.username, "request", `${c.req.method} ${unhome(c.req.path)}`, { status, error });
+  const note = (error?: string) => noteFailure(u.username, "request", `${c.req.method} ${unhome(c.req.path)}`, { status, error, route });
   if (!/json|text\/plain/.test(type)) return note();
   // read off a copy, so the answer is not held up
   void c.res

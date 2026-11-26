@@ -7,6 +7,7 @@ import { env } from "./env";
 import { providerSettings } from "./providers";
 import { connectState } from "../connect/state";
 import { putBackFailureCounts, takeFailureCounts } from "./failures";
+import { libraryDb } from "../library/db";
 import type { AuthVars } from "../auth";
 
 /**
@@ -21,7 +22,11 @@ import type { AuthVars } from "../auth";
  * - a check-in at start and every 6 hours: a random install id ($DATA_DIR/install-id), the version, the system, how
  *   many pages were opened since the last one and which (by page name only, from PAGES), whether Connect is linked,
  *   and which AIs are set up (their kind: claude, codex…), and what failed since the last one (an action's name or a
- *   request's path with its ids taken out, the status and the error line with file paths taken out, how many times);
+ *   request's route with no ids in it, the status and the error line with file paths taken out, how many times), the
+ *   actions taken since (a request's route, as above, and how many times) and how big the Media Library is (clips,
+ *   hours, bytes);
+ * - events, every 15 minutes: each page opened, each AI run (the job's name, the model, its tokens and API-equivalent
+ *   cost) and each export (how it ended, how long it took), with the time it happened;
  * - a crash or an error: where (server or web), the message and the stack, with the home folder replaced by ~.
  * No name, account, content, file name or address.
  */
@@ -62,6 +67,32 @@ const post = (url: string, body: unknown) =>
 
 let opened = 0;
 let pages: Record<string, number> = {};
+let actions: Record<string, number> = {};
+const ACTION_KEYS = 200;
+const ACTIONS_SENT = 60;
+
+/** A request a signed-in person made, by its route ("POST /api/library/assets/:id/tags"): writes, exports and downloads. */
+export function noteAction(method: string, route: string): void {
+  if (!telemetryOn() || !route.startsWith("/api/") || /^\/api\/(telemetry|bug-report)/.test(route)) return;
+  if ((method === "GET" && !/export|download/.test(route)) || method === "HEAD" || method === "OPTIONS") return;
+  const key = `${method} ${route}`.slice(0, 120);
+  if (key in actions || Object.keys(actions).length < ACTION_KEYS) actions[key] = (actions[key] ?? 0) + 1;
+}
+
+/** How big the Media Library is: clips, hours and bytes (the newest version of each, trash left out). */
+function librarySize(): { clips: number; hours: number; gb: number } | undefined {
+  try {
+    const r = libraryDb()
+      .prepare(
+        `SELECT COUNT(*) AS n, IFNULL(SUM(json_extract(v.probe, '$.duration')), 0) AS secs, IFNULL(SUM(v.bytes), 0) AS bytes
+         FROM assets a JOIN asset_versions v ON v.id = a.current_version_id WHERE a.trashed_at IS NULL`,
+      )
+      .get() as { n: number; secs: number; bytes: number };
+    return { clips: r.n, hours: Math.round((r.secs / 3600) * 10) / 10, gb: Math.round((r.bytes / 1e9) * 10) / 10 };
+  } catch {
+    return undefined; // no library yet
+  }
+}
 
 /** One page opened in the app (the browser tells us, lib/telemetry.ts). */
 export function notePage(page: string): void {
@@ -69,24 +100,55 @@ export function notePage(page: string): void {
   const name = PAGES.has(page) ? page : "other";
   opened++;
   pages[name] = (pages[name] ?? 0) + 1;
+  track("page", { page: name });
 }
 
 export async function sendCheckin(): Promise<void> {
   if (!telemetryOn()) return;
-  const took = { opened, pages, failed: takeFailureCounts() };
+  const took = { opened, pages, failed: takeFailureCounts(), actions };
   opened = 0;
   pages = {};
+  actions = {};
+  const top = Object.fromEntries(Object.entries(took.actions).sort((a, b) => b[1] - a[1]).slice(0, ACTIONS_SENT));
+  const library = librarySize();
   let ai: string[] = [];
   try {
     ai = [...new Set(providerSettings().instances.filter((i) => i.enabled).map((i) => i.driver))].slice(0, 8);
   } catch {
     // unreadable settings: the check-in goes without
   }
-  const ok = await post(pingUrl(), { ...base(), opened: took.opened, connected: connectState() !== null, ai, tools: took.pages, ...(took.failed.length ? { failed: took.failed } : {}) });
+  const ok = await post(pingUrl(), { ...base(), opened: took.opened, connected: connectState() !== null, ai, tools: took.pages, ...(took.failed.length ? { failed: took.failed } : {}), actions: top, ...(library ? { library } : {}) });
   if (ok) return;
   putBackFailureCounts(took.failed);
+  for (const [k, n] of Object.entries(took.actions)) actions[k] = (actions[k] ?? 0) + n;
   opened += took.opened; // not delivered: they go with the next one
   for (const [k, n] of Object.entries(took.pages)) pages[k] = (pages[k] ?? 0) + n;
+}
+
+/* ---- events: one row per thing done, sent in batches ---- */
+
+type Props = Record<string, string | number | boolean>;
+const EVENTS_MAX = 1000;
+const EVENTS_MS = 15 * 60_000;
+const BATCH = 200;
+// shortcut: events wait in memory, so a quit loses up to 15 minutes of them; keep them on disk if the counts look low
+let events: Array<{ name: string; at: number; props: Props }> = [];
+
+/** One thing done ("page", "ai run", "export"), with numbers and names only: never a person's words, file or account. */
+export function track(name: string, props: Props = {}, now = Date.now()): void {
+  if (!telemetryOn() || events.length >= EVENTS_MAX) return;
+  events.push({ name, at: now, props });
+}
+
+export async function sendEvents(): Promise<void> {
+  if (!telemetryOn() || events.length === 0) return;
+  const took = events;
+  events = [];
+  for (let i = 0; i < took.length; i += BATCH) {
+    if (await post(`${pingUrl()}/events`, { ...base(), events: took.slice(i, i + BATCH) })) continue;
+    events = [...took.slice(i), ...events].slice(0, EVENTS_MAX); // not delivered: they go with the next batch
+    return;
+  }
 }
 
 /* ---- crashes ---- */
@@ -158,6 +220,7 @@ export function startTelemetry(): void {
   sendKeptFatal();
   void sendCheckin();
   setInterval(() => void sendCheckin(), CHECKIN_MS).unref();
+  setInterval(() => void sendEvents(), EVENTS_MS).unref();
 }
 
 /* ---- the app's side: the Settings switch, page opens and the page's errors ---- */

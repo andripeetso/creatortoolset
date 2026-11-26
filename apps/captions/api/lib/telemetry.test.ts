@@ -57,8 +57,9 @@ describe("usage and crash reports", () => {
   it("a check-in carries what failed since the last one, with no account, id or file path", async () => {
     process.env.CT_CHANNEL = "release";
     const { noteFailure } = await import("./failures");
-    noteFailure("ana", "request", "POST /api/projects/k3x9q/export", { status: 500, error: `no file ${homedir()}/Movies/Tia.mov` });
-    noteFailure("bo", "request", "POST /api/projects/zz81/export", { status: 500, error: `no file ${homedir()}/Movies/Tia.mov` });
+    const route = "POST /api/projects/:id/export";
+    noteFailure("ana", "request", "POST /api/projects/k3x9q/export", { status: 500, error: `no file ${homedir()}/Movies/Tia.mov`, route });
+    noteFailure("bo", "request", "POST /api/projects/zz81/export", { status: 500, error: `no file ${homedir()}/Movies/Tia.mov`, route });
     noteFailure("ana", "work", "Audio Enhancer", { error: "engine down" });
     await t.sendCheckin();
     expect(sent[0].body.failed).toEqual([
@@ -68,6 +69,42 @@ describe("usage and crash reports", () => {
     expect(JSON.stringify(sent[0].body)).not.toMatch(/ana|Tia/);
     await t.sendCheckin();
     expect(sent[1].body.failed).toBeUndefined();
+  });
+
+  it("a check-in counts actions by their route, never the path asked for, and says how big the Media Library is", async () => {
+    process.env.CT_CHANNEL = "release";
+    await t.sendCheckin(); // what the tests before left
+    await t.sendEvents();
+    sent.length = 0;
+    await req("PUT", "/api/telemetry/nothing-here"); // its own routes are never counted
+    await req("DELETE", "/api/exports/Tia-wedding"); // a real request: counted by its route
+    t.noteAction("POST", "/api/library/assets/:id/tags");
+    t.noteAction("POST", "/api/library/assets/:id/tags");
+    t.noteAction("GET", "/api/library/assets/:id"); // a read
+    t.noteAction("GET", "/api/drafts/:name/export");
+    await t.sendCheckin();
+    expect(sent[0].body.actions).toEqual({ "DELETE /api/exports/:id": 1, "POST /api/library/assets/:id/tags": 2, "GET /api/drafts/:name/export": 1 });
+    expect(sent[0].body.library).toEqual({ clips: 0, hours: 0, gb: 0 });
+  });
+
+  it("events go in batches to /events with the time each happened, and wait for the next batch when the site is down", async () => {
+    process.env.CT_CHANNEL = "release";
+    await t.sendCheckin(); // what the tests before left
+    await t.sendEvents();
+    sent.length = 0;
+    t.track("ai run", { job: "Caption Studio", model: "claude-sonnet-5-5", tokens: 1200 }, 1_000);
+    t.track("export", { ok: false, seconds: 12 }, 2_000);
+    fakeFetch.mockImplementationOnce(async () => new Response(null, { status: 503 }));
+    await t.sendEvents();
+    await t.sendEvents();
+    expect(sent).toHaveLength(1);
+    expect(sent[0].url).toBe("https://ping.test/api/ping/events");
+    expect(sent[0].body.events).toEqual([
+      { name: "ai run", at: 1_000, props: { job: "Caption Studio", model: "claude-sonnet-5-5", tokens: 1200 } },
+      { name: "export", at: 2_000, props: { ok: false, seconds: 12 } },
+    ]);
+    await t.sendEvents();
+    expect(sent).toHaveLength(1);
   });
 
   it("a crash goes at once with its file paths taken out, and its repeats within the hour fold into the next count", () => {

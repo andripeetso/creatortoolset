@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { track } from "./lib/telemetry";
 import { randomUUID } from "node:crypto";
 import { createReadStream, existsSync } from "node:fs";
 import {
@@ -352,6 +353,7 @@ export async function exportRendered(id: string, file: string): Promise<void> {
   if (job.status === "queued") job.status = move(EXPORT_MOVES, job.status, "running", "export job");
   job.status = move(EXPORT_MOVES, job.status, "done", "export job");
   job.progress = 1;
+  track("export", { ok: true, kind: job.kind, format: job.format, engine: job.engine, seconds: Math.round((Date.now() - job.createdAt) / 1000), mb: Math.round(st.size / 1e6) });
   job.bytes = st.size;
   job.finishedAt = Date.now();
   delete job.note;
@@ -371,6 +373,7 @@ export async function exportFailed(id: string, error: string): Promise<void> {
   if (!job || !canMove(EXPORT_MOVES, job.status, "error")) return;
   job.status = move(EXPORT_MOVES, job.status, "error", "export job");
   job.error = error;
+  track("export", { ok: false, kind: job.kind, format: job.format, engine: job.engine, seconds: Math.round((Date.now() - job.createdAt) / 1000) });
   job.finishedAt = Date.now();
   delete job.note;
   if (job.finals?.status === "waiting") job.finals = undefined; // it never got to Finals: nothing is on its way there

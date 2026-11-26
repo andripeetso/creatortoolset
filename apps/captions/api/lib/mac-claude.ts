@@ -1,4 +1,5 @@
 import { Hono, type Context } from "hono";
+import { track } from "./telemetry";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
@@ -162,6 +163,15 @@ export function usageWorkspace(): string | undefined {
  * instance, and by the workspace the call ran in. `workspace` null: in none (an answer whose request named none).
  */
 export async function recordUsage(label: string, u: MacUsage, instance?: string, scope: Scope = "workspace", workspace: string | null | undefined = usageWorkspace(), sink: Tally | undefined = jobTally.getStore()): Promise<void> {
+  track("ai run", {
+    job: /^[\w ()+.,'-]{1,60}$/.test(label) ? label : "other",
+    model: /^[\w.:@/-]{1,80}$/.test(u.model ?? "") ? u.model! : "unknown",
+    tokens: u.tokens,
+    input: u.input ?? 0,
+    output: u.output ?? 0,
+    cacheRead: u.cacheRead ?? 0,
+    costUsd: Math.round(u.costUsd * 1e4) / 1e4,
+  });
   if (sink) {
     sink.calls++;
     sink.tokens += u.tokens;
