@@ -464,6 +464,28 @@ describe("in the look job", () => {
       watchTiming.post = post;
     }
   });
+
+  it("on a Gemini key more than three videos are watched at once", async () => {
+    const vs = [];
+    for (const n of ["w1", "w2", "w3", "w4"]) vs.push((await seed(n)).v);
+    saveMyKey("local", "GEMINI_API_KEY", "gk-test");
+    gemini();
+    const answers: ((r: Response) => void)[] = [];
+    const post = watchTiming.post;
+    watchTiming.post = (url, headers, body) => (url.includes(":generateContent") ? new Promise<Response>((go) => answers.push(go)) : post(url, headers, body, 0));
+    try {
+      for (const v of vs) {
+        queueLook(libraryDb(), v, "local");
+        while (await tick(Date.now(), ["look"]));
+      }
+      expect(vs.every((v) => watching.has(v))).toBe(true);
+      while (answers.length < 4) await new Promise((go) => setTimeout(go, 10));
+      for (const go of answers) go(Response.json({ candidates: [{ content: { parts: [{ text: JSON.stringify({ events: wholePart(0, 12) }) }] } }], usageMetadata: {} }));
+      while (watching.size) await watched();
+    } finally {
+      watchTiming.post = post;
+    }
+  });
 });
 
 describe("in an edit's plan", () => {

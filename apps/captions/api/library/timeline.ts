@@ -80,7 +80,14 @@ const parkedOf = (key: string) => {
   const p = parked.get(key);
   return p && p.until > Date.now() ? p : null;
 };
-const WATCHES_AT_ONCE = 3;
+/**
+ * Videos watched at once on a Gemini key: a call can wait minutes in Gemini's queue, so many run side by side (a key's
+ * rate limit answers 429, which backs off and parks the key). On Antigravity three: each run starts a program on the Mac.
+ */
+const WATCHES_AT_ONCE = 16;
+const ANTIGRAVITY_AT_ONCE = 3;
+const watchesAtOnce = (db: DatabaseSync, libraryId: string, actor: string | null): number =>
+  libraryWatchModel(db, libraryId) === "antigravity" || onAntigravity(actor) ? ANTIGRAVITY_AT_ONCE : WATCHES_AT_ONCE;
 /** Parts of one video asked at once. */
 const PARTS_AT_ONCE = 3;
 /** A watch that failed is tried again this long after. */
@@ -683,13 +690,14 @@ export async function watchVersion(
 
 /**
  * After a look: the timeline of `versionId` when it wants one (wantsWatch), from the file `src` gives. It runs beside
- * the look lane, at most WATCHES_AT_ONCE at a time (one more waits for the sweep, sweepWatch; a copy a Mac sent, `sent`,
+ * the look lane, at most watchesAtOnce at a time (one more waits for the sweep, sweepWatch; a copy a Mac sent, `sent`,
  * is watched anyway: asked for again, the Mac would read the whole file again): the look's job is done when this starts. `src` is asked at once; the promise ends with the watch. A failure is kept on the version (tried
  * again RETRY_MS later) and never thrown. New words: its search by meaning is made again.
  * ponytail: a watch in flight when the server restarts is lost and asked again by the sweep, paid twice
  */
 export function watchAfter(db: DatabaseSync, versionId: string, src: () => Promise<string>, actor: string | null, sent = false): Promise<void> {
-  if (!actor || watching.has(versionId) || (!sent && !askedWatch.has(versionId) && watching.size >= WATCHES_AT_ONCE) || !wantsWatch(db, versionId, actor)) {
+  const lib = (db.prepare("SELECT a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(versionId) as { library_id: string } | undefined)?.library_id;
+  if (!actor || !lib || watching.has(versionId) || (!sent && !askedWatch.has(versionId) && watching.size >= watchesAtOnce(db, lib, actor)) || !wantsWatch(db, versionId, actor)) {
     if (!watching.has(versionId)) askedWatch.delete(versionId); // an ask this look cannot answer is not kept forever
     return Promise.resolve();
   }
@@ -706,8 +714,6 @@ export function watchAfter(db: DatabaseSync, versionId: string, src: () => Promi
       storeTimeline(db, versionId, { error: e instanceof Error ? e.message : String(e) });
       return;
     }
-    const lib = (db.prepare("SELECT a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(versionId) as { library_id: string } | undefined)?.library_id;
-    if (!lib) return;
     libraryChanged(lib); // an open clip panel shows the new timeline
     if (librarySetting(lib, "embed") && canEmbed(actor)) enqueueJob(db, lib, versionId, "embed", actor, true);
   })().finally(() => {
@@ -746,7 +752,7 @@ export function sweepWatch(db: DatabaseSync, queueLook: (versionId: string, acto
     // a failed watch waits RETRY_MS, unless Make for the missing was pressed since (What's made counts it queued then)
     if ((at !== undefined && at + RETRY_MS > now && r.pressed <= at) || watching.has(r.id)) continue;
     // no key or Antigravity for its uploader yet: passed over, not set aside, so a key saved later starts it on the next sweep
-    if (!canWatch(db, r.lib, r.actor)) continue;
+    if (!canWatch(db, r.lib, r.actor) || watching.size >= watchesAtOnce(db, r.lib, r.actor)) continue;
     swept.set(r.id, now);
     if (queueLook(r.id, r.actor)) return true;
   }
