@@ -91,11 +91,10 @@ const summaryOf = (handle: string, followers?: number) => [at(handle), followers
 const accountRow = (p: Platform, account: ConnectedAccount): PlatformRow => ({ platform: p.id, label: p.label, summary: summaryOf(account.handle, account.stats?.followers), account });
 const ownRow = (p: Platform, own: OwnInstagram): PlatformRow => ({ platform: p.id, label: p.label, summary: summaryOf(own.handle, own.followers), own });
 /**
- * A platform with no account. Only accounts the person signs in to: a platform without a sign-in here has no row (a
- * public account is followed where it is read, not here); one the sign-in service turned down (`off`: asked when Add was
- * pressed) says so, with nothing to press.
+ * A platform with no account: its Add. Only a platform the app has a sign-in for (owner, 2026-11-26: "keep what we
+ * can use"): X has none, so it is not offered. An X account added before keeps its row (accountRow).
  */
-const addRow = (p: Platform): PlatformRow[] => [{ platform: p.id, label: p.label, summary: "", button: "Add" }];
+const addRow = (p: Platform): PlatformRow[] => (p.login ? [{ platform: p.id, label: p.label, summary: "", button: "Add" }] : []);
 
 type RowsView = Pick<ConnectorsView, "logins" | "apify" | "accounts" | "instagram">;
 
@@ -495,6 +494,9 @@ function AddAccountDialog({ platform, signIn, busy, onClose, onSignIn, onAdd }: 
   const [handle, setHandle] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // what the dialog opens on: its main action. By itself it would open on the first thing that takes focus, the info
+  // mark, whose bubble then covered the dialog before anything was pressed
+  const first = useRef<HTMLElement | null>(null);
   useEffect(() => {
     setHandle("");
     setError(null);
@@ -516,7 +518,14 @@ function AddAccountDialog({ platform, signIn, busy, onClose, onSignIn, onAdd }: 
   };
   return (
     <SettingsDialog open={!!platform} onOpenChange={(o) => !o && onClose()}>
-      <SettingsDialogContent aria-describedby={undefined} className="gap-5 sm:max-w-md">
+      <SettingsDialogContent
+        aria-describedby={undefined}
+        className="gap-5 sm:max-w-md"
+        onOpenAutoFocus={(e) => {
+          e.preventDefault();
+          first.current?.focus();
+        }}
+      >
         <DialogHeader>
           <DialogTitle>{`Add ${label}`}</DialogTitle>
         </DialogHeader>
@@ -527,7 +536,7 @@ function AddAccountDialog({ platform, signIn, busy, onClose, onSignIn, onAdd }: 
                 With sign-in
                 <InfoTip label="With sign-in" text={platform === "instagram" ? `${gives}. ${IG_NEEDS}.` : `${gives}.`} />
               </div>
-              <Button type="button" className="w-full" disabled={busy} onClick={() => onSignIn(platform)}>
+              <Button ref={(el) => void (first.current = el)} type="button" className="w-full" disabled={busy} onClick={() => onSignIn(platform)}>
                 {/* Instagram signs in through the Facebook login */}
                 {`Sign in with ${platform === "instagram" ? "Facebook" : label}`}
               </Button>
@@ -553,7 +562,7 @@ function AddAccountDialog({ platform, signIn, busy, onClose, onSignIn, onAdd }: 
           <div className="flex gap-2">
             <div className={cn(inputCls, "flex h-9 min-w-0 flex-1 items-center gap-0.5 px-3 text-sm focus-within:border-violet-500")}>
               <span className="text-muted-foreground" aria-hidden>@</span>
-              <input id="add-account-handle" className="min-w-0 flex-1 bg-transparent outline-none" value={handle} onChange={(e) => setHandle(e.target.value)} required disabled={saving} />
+              <input id="add-account-handle" ref={(el) => void (el && !signIn && (first.current = el))} className="min-w-0 flex-1 bg-transparent outline-none" value={handle} onChange={(e) => setHandle(e.target.value)} required disabled={saving} />
             </div>
             <Button type="submit" variant={signIn ? "outline" : "default"} disabled={saving}>
               {saving ? "Adding" : "Add"}

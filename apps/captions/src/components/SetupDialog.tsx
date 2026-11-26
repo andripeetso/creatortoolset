@@ -67,7 +67,7 @@ const STEP: Record<SetupStep, { title: string; hint: string }> = {
     hint: "The folders with footage, music and sound effects, read by the Editor and the Media Library.",
   },
   how: { title: "How do you work best?", hint: "" },
-  social: { title: "Connect your social accounts", hint: "A sign-in lets the app read your own numbers." },
+  social: { title: "Connect your social accounts", hint: "A sign-in lets the app read your posts and numbers." },
   check: { title: "Setup checklist", hint: "What each tool turned on needs, and what else it can do." },
   own: { title: "Add Creator Toolset to an AI app", hint: "Installs Creator Toolset in the AI apps on this computer." },
   // the screen is a sign-in card with its own title and words (setup/AccountStep.tsx): this title is read out, not shown

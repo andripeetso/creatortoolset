@@ -26,18 +26,17 @@ it("a tool's setup form offers a sign-in only where this server has its own app:
   expect(signInItems(all, ["meta", "google", "tiktok"])).toEqual([]);
 });
 
-it("the platform list: every platform, each with its account or Add (sign-in or a handle, chosen in the dialog)", () => {
+it("the platform list: each platform the app has a sign-in for, with its account or Add (sign-in or a handle, chosen in the dialog); X has none, so no Add", () => {
   const rows = platformRows(view({ instagram: [{ id: "a1", handle: "tinyacrobatics", followers: 4120, mine: true, signedIn: false }] }));
   expect(row(rows, "instagram")).toMatchObject({ summary: "@tinyacrobatics · 4,120 followers", own: { id: "a1" } });
   expect(row(rows, "instagram")?.button).toBeUndefined();
-  // with or without this server's sign-ins, each platform with no account has Add
+  // with or without this server's sign-ins, each of the four with no account has Add
   for (const logins of [none, { meta: true, google: true, tiktok: true }]) {
     expect(platformRows(view({ logins })).map((r) => [r.platform, r.button])).toEqual([
       ["instagram", "Add"],
       ["facebook", "Add"],
       ["youtube", "Add"],
       ["tiktok", "Add"],
-      ["x", "Add"],
     ]);
   }
 });
@@ -56,7 +55,7 @@ it("each project shows its own account per platform; an account in no project sh
   expect(row(p1, "youtube")?.account?.handle).toBe("old");
   // an account already there keeps its row, sign-in or not
   expect(row(platformRows(view({ accounts }), "p2"), "x")?.account?.handle).toBe("tinyx");
-  expect(row(p1, "x")).toMatchObject({ button: "Add" });
+  expect(row(p1, "x")).toBeUndefined(); // and is not offered where there is none
 });
 
 it("Instagram follows the project: the account a project links, else the one marked Mine that no project links", () => {
@@ -92,7 +91,6 @@ it("All workspaces lists every account the person has, and Add only for a platfo
     ["youtube", "old"],
     ["tiktok", "brand-a"],
     ["tiktok", "brand-b"],
-    ["x", "Add"],
   ]);
 });
 
@@ -223,9 +221,12 @@ describe("an account's workspace", () => {
 
   it("Add without a sign-in takes the handle and reads the public page; with no sign-in here the dialog offers none", async () => {
     await open({});
-    await press(document.body.querySelector('button[aria-label="Add X"]') as HTMLElement);
+    expect(document.body.querySelector('button[aria-label="Add X"]')).toBeNull(); // no sign-in for X: not offered
+    await press(document.body.querySelector('button[aria-label="Add TikTok"]') as HTMLElement);
     const dialog = document.body.querySelector('[role="dialog"]')!;
-    expect(dialog.textContent).toContain("Add X");
+    expect(dialog.textContent).toContain("Add TikTok");
+    // the dialog opens on its main action (here the handle), never on an info mark, whose bubble would cover it
+    expect(document.activeElement).toBe(dialog.querySelector("input"));
     expect(dialog.textContent).not.toContain("Sign in");
     const input = dialog.querySelector("input")!;
     await act(async () => {
@@ -233,7 +234,7 @@ describe("an account's workspace", () => {
       input.dispatchEvent(new Event("input", { bubbles: true }));
     });
     await press(dialog.querySelector('button[type="submit"]') as HTMLElement);
-    expect(sent).toEqual([["POST /api/connectors/handles", { platform: "x", handle: "@tinyx", projectId: "p1" }]]);
+    expect(sent).toEqual([["POST /api/connectors/handles", { platform: "tiktok", handle: "@tinyx", projectId: "p1" }]]);
   });
 
   it("the row menu moves an account to another workspace: an account is one workspace's or none's", async () => {
