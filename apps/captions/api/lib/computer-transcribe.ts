@@ -98,6 +98,8 @@ interface Job {
   owner: string;
   model: string;
   languages: string[];
+  /** the words the person added (Settings → AI → Voice → Words): listened for; the computers do not take them yet */
+  terms: string[];
   /** the WAV the computer fetches, or the file it cuts the sound from itself */
   audio: string | OwnSound;
   /** the server's cut of an OwnSound, once a computer asked for the audio */
@@ -187,6 +189,7 @@ type Limits = { claimMs?: number; takeMs?: number; checkMs?: number; rank?: numb
 export function transcribeOnComputer(
   owner: string, model: string, languages: string[], audio: string | OwnSound,
   limits: Limits = {},
+  terms: string[] = [],
 ): Promise<TranscribeResult> {
   if (!onlineHolders(owner, model, !!limits.noMac, !!limits.soon).length) return Promise.reject(new ComputerOff(offLine(model)));
   // 16 kHz mono 16-bit: 32,000 bytes a second; `exact`: no longer for a longer recording
@@ -218,7 +221,7 @@ export function transcribeOnComputer(
       if (r instanceof Error) reject(r);
       else resolve(r);
     };
-    const j: Job = { id, owner, model, languages, audio, since: Date.now(), takeMs, rank: limits.rank ?? 0, noMac: !!limits.noMac, soon: !!limits.soon, end };
+    const j: Job = { id, owner, model, languages, terms, audio, since: Date.now(), takeMs, rank: limits.rank ?? 0, noMac: !!limits.noMac, soon: !!limits.soon, end };
     jobs.set(id, j);
     void wakeEditorPolls();
   });
@@ -244,13 +247,13 @@ function nextFor(d: Device, balance: Balance): Job | undefined {
 export const transcriptWaits = (d: Device, balance: Balance): boolean => !!nextFor(d, balance);
 
 /** A computer's claim: the transcript it gets, now its own. */
-export function claimTranscript(d: Device, balance: Balance): DeviceJob | null {
+export function claimTranscript(d: Device, balance: Balance): (DeviceJob & { words?: string[] }) | null {
   const j = nextFor(d, balance);
   if (!j) return null;
   j.device = d.id;
   j.since = Date.now();
   const own = typeof j.audio === "string" ? undefined : j.audio.options(d.id);
-  return { id: j.id, kind: TRANSCRIBE_KIND, editId: "", variant: "", model: j.model, languages: j.languages, ...(j.soon ? { soon: true } : {}), ...(own ? { options: own } : {}) };
+  return { id: j.id, kind: TRANSCRIBE_KIND, editId: "", variant: "", model: j.model, languages: j.languages, ...(j.soon ? { soon: true } : {}), ...(own ? { options: own } : {}), ...(j.terms.length ? { words: j.terms } : {}) };
 }
 
 /** The audio file of a transcript this computer holds (a library file's cut here only now, once), or null. */

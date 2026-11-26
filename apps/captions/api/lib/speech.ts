@@ -2,14 +2,40 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { env } from "./env";
 import { keyFor } from "../my-keys";
-import { deviceTranscribes } from "./device-transcribe";
-import { isMac, servesSoon, speechComputers } from "./computer-transcribe";
+import { ModelNotReady, deviceTranscribes } from "./device-transcribe";
+import { ComputerBusy, ComputerOff, isMac, servesSoon, speechComputers } from "./computer-transcribe";
 import { isOnline } from "./devices";
+import { isOutOfCredits } from "../credits";
+import { checkSpeechWords } from "./speech-words";
 import type { Device } from "../../contracts/providers";
 import {
-  DEFAULT_VOICE_PREFS, EDITOR_COMPUTER_MODEL, SPEECH_USES, STT_ENGINES, STT_MODELS, isLanguage,
-  type SpeechUse, type SttChoice, type SttEngine, type SttResolved, type VoicePrefs,
+  DEFAULT_VOICE_PREFS, EDITOR_COMPUTER_MODEL, SPEECH_USES, STT_ENGINES, STT_MODELS, isLanguage, speechReasonLine,
+  type SpeechReason, type SpeechUse, type SttChoice, type SttEngine, type SttResolved, type VoicePrefs,
 } from "../../contracts/voice";
+
+/** A speech call that failed for a reason the person can act on (422 SPEECH, api/transcribe.ts). Its message is the sentence. */
+export class SpeechFailure extends Error {
+  constructor(readonly reason: SpeechReason, readonly engine?: string) {
+    super(speechReasonLine(reason, engine));
+  }
+}
+
+/** A key service's answer to a failed call, as a reason: out of credit or over a limit, a key it refused, a model it lacks. */
+export function providerReason(status: number, detail: string): SpeechReason {
+  if (isOutOfCredits(status, detail) || status === 429) return "rate-limit";
+  if (status === 401 || status === 403) return "rejected-key";
+  if (status === 404 || /model/i.test(detail) && /not (found|available)|does not exist/i.test(detail)) return "model-unavailable";
+  return "unavailable";
+}
+
+/** Why a local run failed, as a reason: the person's computers off or busy, the server's model missing, else unavailable. */
+export function reasonOf(e: unknown): SpeechReason {
+  if (e instanceof SpeechFailure) return e.reason;
+  if (e instanceof ComputerOff || e instanceof ComputerBusy) return "computer-off";
+  if (e instanceof ModelNotReady) return "model-unavailable";
+  if (e instanceof Error && /did not transcribe it in/.test(e.message)) return "computer-off";
+  return "unavailable";
+}
 
 /**
  * The one place that decides which engine turns speech into text, for whom and for what (contracts/voice.ts). Every
@@ -25,7 +51,7 @@ const userOf = (actor: Actor) => (typeof actor === "string" ? actor : actor?.use
 export function readVoicePrefs(username: string): VoicePrefs {
   try {
     const kept = JSON.parse(readFileSync(fileOf(username), "utf-8")) as Partial<VoicePrefs>;
-    return { languages: kept.languages ?? [], stt: { default: kept.stt?.default ?? { engine: "auto" }, per: kept.stt?.per ?? {} } };
+    return { languages: kept.languages ?? [], stt: { default: kept.stt?.default ?? { engine: "auto" }, per: kept.stt?.per ?? {} }, words: kept.words ?? [] };
   } catch {
     return structuredClone(DEFAULT_VOICE_PREFS);
   }
@@ -44,6 +70,11 @@ export function writeVoicePrefs(username: string, b: Record<string, unknown>): V
   if (b.languages !== undefined) {
     if (!Array.isArray(b.languages) || !b.languages.every(isLanguage)) return "languages is a list of two-letter codes (empty: detect it)";
     next.languages = [...new Set(b.languages as string[])];
+  }
+  if (b.words !== undefined) {
+    const words = checkSpeechWords(b.words);
+    if (typeof words === "string") return words;
+    next.words = words;
   }
   const stt = b.stt as { default?: unknown; per?: Record<string, unknown> } | undefined;
   if (stt?.default !== undefined) {
@@ -141,9 +172,12 @@ function onDeepgram(actor: Actor, languages: string[], note: string): Speech | {
   return k.missing ? { needs: NEEDS.deepgram, key: "DEEPGRAM_API_KEY" } : { engine: "deepgram", model: "nova-3", key: k.key, languages, note };
 }
 
+/** `auto` order: the computers and This Mac's own model first (no key, no bill), then a key the person added. */
+const AUTO_ORDER: Engine[] = ["local", "deepgram", "openai"];
+
 /**
  * What `use` runs on for `actor`: their choice for that use, else their default; `auto` is the first that serves them
- * (Deepgram, OpenAI, a model on their own computers: localFor). `languages` (a workspace's or an edit's:
+ * (a model on their own computers or This Mac, then Deepgram, then OpenAI: localFor).`languages` (a workspace's or an edit's:
  * lib/video-languages.ts) win over the person's own list. Null + why when nothing can serve them.
  * The AI Editor runs on their computers only when they picked it on its own row (never on `auto` or the Default), with
  * EDITOR_COMPUTER_MODEL, for an edit in English alone; anything else is Deepgram, as the editor ran before (onDeepgram).
@@ -153,7 +187,7 @@ export function speechFor(actor: Actor, use: SpeechUse | "default", languages?: 
   const choice = (use !== "default" && prefs.stt.per[use]) || prefs.stt.default;
   const langs = languages?.length ? languages : prefs.languages;
   const can = availableEngines(actor, use === "default" ? "transcripts" : use);
-  const engine = choice.engine === "auto" ? can.find((e) => use !== "editor" || e !== "local") : choice.engine;
+  const engine = choice.engine === "auto" ? AUTO_ORDER.find((e) => can.includes(e) && (use !== "editor" || e !== "local")) : choice.engine;
   if (!engine) return { needs: "Add your Deepgram (or OpenAI) key in Settings → API keys", key: "DEEPGRAM_API_KEY" };
   // the default row stands for every use: a local model on it is read as the transcripts'
   const as: SpeechUse = use === "default" ? "transcripts" : use;

@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 process.env.DATA_DIR = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "speech-"));
 delete process.env.APP_SECRET; // the solo install: "local" is the admin, served by the server's keys
-const { speechFor, speechJob, writeVoicePrefs, readVoicePrefs, resolvedFor, resolvedOne } = await import("./speech");
+const { SpeechFailure, providerReason, reasonOf, speechFor, speechJob, writeVoicePrefs, readVoicePrefs, resolvedFor, resolvedOne } = await import("./speech");
 const { firstAsk } = await import("../transcribe");
 
 afterEach(() => {
@@ -80,5 +80,34 @@ describe("which engine turns speech into text", () => {
     expect(firstAsk(["et"])).toBe("et");
     expect(firstAsk(["et", "en"])).toBe("en");
     expect(firstAsk(["et", "fi"])).toBe("detect");
+  });
+});
+
+describe("no key anywhere", () => {
+  it("never asks for a key when This Mac's own model can write it, with Automatic and with a key added", () => {
+    process.env.CT_LOCAL = "1";
+    for (const use of ["mic", "captions", "transcripts", "default"] as const) {
+      expect(speechFor("local", use)).toMatchObject({ engine: "local", on: "server", model: "whisper-base" });
+    }
+    // Automatic goes to This Mac's model before a key the person added (no bill)
+    process.env.DEEPGRAM_API_KEY = "dg";
+    expect(speechFor("local", "mic")).toMatchObject({ engine: "local", on: "server" });
+    expect(speechFor("local", "captions")).toMatchObject({ engine: "local", on: "server" });
+  });
+
+  it("on a server with no computer of theirs and no key, the answer names the key to add (never a key asked for a computer that serves it)", () => {
+    expect(speechFor("local", "mic")).toEqual({ needs: "Add your Deepgram (or OpenAI) key in Settings → API keys", key: "DEEPGRAM_API_KEY" });
+  });
+
+  it("a failure from a key service is a reason, from its status; a local failure from its kind", () => {
+    expect(providerReason(401, "")).toBe("rejected-key");
+    expect(providerReason(403, "")).toBe("rejected-key");
+    expect(providerReason(429, "")).toBe("rate-limit");
+    expect(providerReason(400, "FORBIDDEN out of credits")).toBe("rate-limit");
+    expect(providerReason(404, "")).toBe("model-unavailable");
+    expect(providerReason(500, "")).toBe("unavailable");
+    expect(reasonOf(new SpeechFailure("rate-limit", "deepgram"))).toBe("rate-limit");
+    expect(reasonOf(new Error("Your computer did not transcribe it in 15 seconds."))).toBe("computer-off");
+    expect(reasonOf(new Error("ffmpeg exploded"))).toBe("unavailable");
   });
 });

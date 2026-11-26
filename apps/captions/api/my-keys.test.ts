@@ -97,8 +97,8 @@ describe("keyFor: whose key pays", () => {
     app.route("/", transcribeApp);
     expect(await (await app.request("/available")).json()).toMatchObject({ available: false, why: "Add your Deepgram key in Settings → API keys" });
     const res = await app.request("/", { method: "POST", headers: { "content-type": "audio/wav" }, body: new Uint8Array(100) });
-    expect(res.status).toBe(402);
-    expect(await res.json()).toEqual({ error: "Add your Deepgram key in Settings → API keys", code: "NEEDS_KEY" });
+    expect(res.status).toBe(422);
+    expect(await res.json()).toEqual({ error: "Add your Deepgram key in Settings → API keys.", code: "SPEECH", reason: "missing-key", engine: "deepgram" });
     expect(fetchMock).not.toHaveBeenCalled();
     // the Analyzer's and Clips' transcripts say the same
     expect(cloudTranscribeBlock(kim)).toBe("Add your Deepgram key in Settings → API keys");

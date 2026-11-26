@@ -212,7 +212,7 @@ describe("talking to the assistant on the person's own computers", () => {
     await app.request(`/api/devices/relay/transcribe/${job.id}`, json({ words: fromComputer, language: "et" }, pc.token));
     const res = await answer;
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ text: "Tere tulemast", language: "et" });
+    expect(await res.json()).toEqual({ text: "Tere tulemast", language: "et", engine: "computer" });
     expect(asked).toEqual([]);
   });
 
@@ -223,7 +223,7 @@ describe("talking to the assistant on the person's own computers", () => {
     const answer = say();
     const job = await claimJob();
     await app.request(`/api/devices/relay/transcribe/${job.id}/fail`, json({ error: "Out of memory" }, pc.token));
-    expect(await (await answer).json()).toEqual({ text: "Hello.", language: "en", note: "Your computers could not do it: written by Deepgram" });
+    expect(await (await answer).json()).toEqual({ text: "Hello.", language: "en", engine: "deepgram", note: "Your computers could not do it: written by Deepgram" });
     expect(asked).toHaveLength(1);
   });
 
@@ -239,7 +239,7 @@ describe("talking to the assistant on the person's own computers", () => {
     expect(asked).toEqual([expect.stringMatching(/\/audio\/transcriptions$/)]);
   }, 20_000);
 
-  it("computers off: the key at once; with no key, the plain need (the phone) that the dock writes in the browser", async () => {
+  it("computers off: the key at once; with no key, the computer-off reason (the phone's mic)", async () => {
     onComputers();
     vi.useFakeTimers({ toFake: ["Date"] });
     try {
@@ -250,8 +250,13 @@ describe("talking to the assistant on the person's own computers", () => {
       keys("", "");
       const asked = keyEngines();
       const res = await say();
-      expect(res.status).toBe(402);
-      expect(await res.json()).toEqual({ error: "Your computers are off. Needs a Deepgram key", code: "NEEDS_KEY", chosen: false, why: "Your computers are off" });
+      expect(res.status).toBe(422);
+      expect(await res.json()).toEqual({
+        error: "Needs one of your computers with a speech model, turned on. Turn one on, or add a Deepgram or OpenAI key in Settings → API keys.",
+        code: "SPEECH",
+        reason: "computer-off",
+        engine: "local",
+      });
       expect(asked).toEqual([]);
     } finally {
       vi.useRealTimers();
@@ -263,7 +268,7 @@ describe("talking to the assistant on the person's own computers", () => {
     keys("dg-test", "");
     const asked = keyEngines();
     await claim();
-    expect(await (await say()).json()).toEqual({ text: "Hello.", language: "en" });
+    expect(await (await say()).json()).toEqual({ text: "Hello.", language: "en", engine: "deepgram" });
     expect((await claim()).job).toBeNull();
     expect(asked).toHaveLength(1);
   });

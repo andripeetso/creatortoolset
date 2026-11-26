@@ -1,20 +1,22 @@
 import { randomUUID } from "node:crypto";
 import { rm, writeFile, mkdir } from "node:fs/promises";
 import path from "node:path";
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import type { AuthVars } from "./auth";
 import type { SessionUser } from "./users";
 import { bumpUsage } from "./users";
-import { creditBack, creditOut, isOutOfCredits, outOfCreditsMessage } from "./credits";
+import { creditBack, creditOut, isOutOfCredits } from "./credits";
 import { recordService } from "./lib/service-usage";
 import { keyFor } from "./my-keys";
 import { env } from "./lib/env";
-import { availableEngines, readVoicePrefs, speechFor } from "./lib/speech";
+import { SpeechFailure, providerReason, readVoicePrefs, reasonOf, speechFor } from "./lib/speech";
+import { deviceTranscribes } from "./lib/device-transcribe";
+import { speechCorrector, termsOf } from "./lib/speech-words";
 import { videoLanguages } from "./lib/video-languages";
 import { currentWorkspaceId } from "./lib/workspace-scope";
 import { NeedsKey, transcribeFile, type Route } from "./library/transcribe";
 import { CAPTION_LIMITS, ComputerBusy, ComputerOff, EDITOR_LIMITS, transcribeOnComputer } from "./lib/computer-transcribe";
-import { STT_MODELS } from "../contracts/voice";
+import { SPEECH_CODE, STT_MODELS, speechReasonLine, type SpeechReason } from "../contracts/voice";
 import type { TranscribeResult } from "../contracts/devices";
 import { captioning } from "./projects";
 
@@ -31,6 +33,10 @@ export const userMayCloudTranscribe = (u: AuthVars["user"]) =>
   u.role === "admin" || u.cloud;
 
 const mayUseCloud = userMayCloudTranscribe;
+
+/** A speech failure as the contract sends it (contracts/voice.ts SPEECH_REASONS): 422 `{ error, code: "SPEECH", reason, engine? }`. */
+const speechFail = (c: Context, reason: SpeechReason, engine?: string) =>
+  c.json({ error: speechReasonLine(reason, engine), code: SPEECH_CODE, reason, ...(engine ? { engine } : {}) }, 422);
 
 /** Why `user` can't transcribe in the cloud right now (locked, or no key serves them), or null. */
 export function cloudTranscribeBlock(user: AuthVars["user"]): string | null {
@@ -49,6 +55,12 @@ export function captionsComputer(user: AuthVars["user"], languages?: string[]): 
   return !("needs" in s) && s.engine === "local" && s.on === "computers" ? { model: s.model, languages: s.languages } : null;
 }
 
+/** What `owner`'s words are rewritten to, in what an engine wrote (speechCorrector): once, where its answer comes back. */
+const fixWords = <T extends TranscribeResult>(r: T, owner: string): T => {
+  const fix = speechCorrector(readVoicePrefs(owner).words);
+  return { ...r, words: r.words.map((w) => ({ ...w, text: fix(w.text) })) };
+};
+
 /** Why the person's computers did not write it, in a few words (the note a page shows). */
 const computersWhy = (e: unknown) =>
   e instanceof ComputerOff ? "Your computers are off" : e instanceof ComputerBusy ? "Your computers are busy" : "Your computers could not do it";
@@ -66,7 +78,8 @@ async function wordsFromComputer(
   const file = path.join(scratch, `${what}-${randomUUID()}.wav`);
   await writeFile(file, new Uint8Array(audio));
   try {
-    return await transcribeOnComputer(owner, pc.model, pc.languages, file, what === "editor" ? EDITOR_LIMITS : CAPTION_LIMITS);
+    const r = await transcribeOnComputer(owner, pc.model, pc.languages, file, what === "editor" ? EDITOR_LIMITS : CAPTION_LIMITS, termsOf(readVoicePrefs(owner).words));
+    return fixWords(r, owner);
   } catch (e) {
     console.warn(`[transcribe] ${what} for ${owner} not from their computers: ${e instanceof Error ? e.message : e}`);
     return { why: computersWhy(e) };
@@ -187,27 +200,29 @@ const DG_URL = "https://api.deepgram.com/v1/listen?model=nova-3&punctuate=true&u
  */
 export const SPARSE_WPS = 0.5;
 
-type Heard = { words: Word[]; language: string } | { error: string; status: number };
+/** `error`: what the provider said (logged, never shown); `reason`: what the person is told (speech.ts). */
+type Heard = { words: Word[]; language: string } | { error: string; reason: SpeechReason };
 
 /** The first ask for these languages: a code, or "detect". */
 export const firstAsk = (languages: string[]): string =>
   languages.length === 1 ? languages[0] : !languages.length || languages.includes("en") ? "en" : "detect";
 
-/** `fillers`: keep "um", "uh". The language is the one heard. */
-async function deepgramWords(key: string, audio: Uint8Array | ArrayBuffer, fillers = false, languages: string[] = []): Promise<Heard> {
+/** `fillers`: keep "um", "uh". The language is the one heard. `terms`: the person's words, listened for (keyterm). */
+async function deepgramWords(key: string, audio: Uint8Array | ArrayBuffer, fillers = false, languages: string[] = [], terms: string[] = []): Promise<Heard> {
   const ask = firstAsk(languages);
-  const first = await deepgramAsk(key, audio, fillers, ask);
+  const first = await deepgramAsk(key, audio, fillers, ask, terms);
   if ("error" in first || ask === "detect") return first;
   const wav = parseWav(new Uint8Array(audio));
   const seconds = wav ? wav.pcm.length / (wav.sampleRate * 2) : Math.max(0, audio.byteLength - 44) / 32000;
   if (first.words.length >= seconds * SPARSE_WPS) return first;
-  const other = await deepgramAsk(key, audio, fillers, "detect");
+  const other = await deepgramAsk(key, audio, fillers, "detect", terms);
   return "error" in other || other.words.length <= first.words.length ? first : other;
 }
 
-async function deepgramAsk(key: string, audio: Uint8Array | ArrayBuffer, fillers: boolean, ask: string): Promise<Heard> {
+async function deepgramAsk(key: string, audio: Uint8Array | ArrayBuffer, fillers: boolean, ask: string, terms: string[] = []): Promise<Heard> {
   const detect = ask === "detect";
-  const url = DG_URL + (detect ? "&detect_language=true" : `&language=${ask}`) + (fillers ? "&filler_words=true" : "");
+  const url = DG_URL + (detect ? "&detect_language=true" : `&language=${ask}`) + (fillers ? "&filler_words=true" : "")
+    + terms.map((t) => `&keyterm=${encodeURIComponent(t)}`).join("");
   const resp = await fetch(url, {
     method: "POST",
     headers: {
@@ -218,18 +233,8 @@ async function deepgramAsk(key: string, audio: Uint8Array | ArrayBuffer, fillers
   });
   if (!resp.ok) {
     const detail = await resp.text().catch(() => "");
-    if (isOutOfCredits(resp.status, detail)) {
-      console.warn(`[deepgram] out of credits (${resp.status}): ${detail.slice(0, 200)}`);
-      creditOut("DEEPGRAM_API_KEY", key, "Captions and transcripts");
-      return {
-        error: outOfCreditsMessage("Transcription"),
-        status: 502,
-      };
-    }
-    return {
-      error: `Deepgram ${resp.status}: ${detail.slice(0, 200)}`,
-      status: 502,
-    };
+    if (isOutOfCredits(resp.status, detail)) creditOut("DEEPGRAM_API_KEY", key, "Captions and transcripts");
+    return { error: `Deepgram ${resp.status}: ${detail.slice(0, 200)}`, reason: providerReason(resp.status, detail) };
   }
   const data = (await resp.json()) as {
     err_code?: string;
@@ -242,15 +247,8 @@ async function deepgramAsk(key: string, audio: Uint8Array | ArrayBuffer, fillers
   // Deepgram can report errors with a 200 status — surface them
   if (data.err_code) {
     const detail = `${data.err_code} ${data.err_msg || ""}`;
-    if (isOutOfCredits(200, detail)) {
-      console.warn(`[deepgram] out of credits: ${detail.slice(0, 200)}`);
-      creditOut("DEEPGRAM_API_KEY", key, "Captions and transcripts");
-      return {
-        error: outOfCreditsMessage("Transcription"),
-        status: 502,
-      };
-    }
-    return { error: `Deepgram: ${data.err_msg || data.err_code}`, status: 502 };
+    if (isOutOfCredits(200, detail)) creditOut("DEEPGRAM_API_KEY", key, "Captions and transcripts");
+    return { error: `Deepgram: ${detail}`, reason: isOutOfCredits(200, detail) ? "rate-limit" : "unavailable" };
   }
   creditBack("DEEPGRAM_API_KEY", key);
   return {
@@ -271,9 +269,13 @@ type Word = {
   timing?: "aligned";
 };
 
-type TranscriptionResult =
-  | { words: Word[]; language: string }
-  | { error: string; status: 402 | 502 };
+type TranscriptionResult = { words: Word[]; language: string } | { error: string; reason: SpeechReason };
+
+/** Deepgram's failure: logged in full, told as its sentence (never the provider's own text). */
+const failed = (r: { error: string; reason: SpeechReason }): TranscriptionResult => {
+  console.warn(`[transcribe] ${r.error}`);
+  return { error: speechReasonLine(r.reason, "deepgram"), reason: r.reason };
+};
 
 function fromDg(w: DgWord, start: number, end: number, utterance?: number): Word {
   const out: Word = {
@@ -349,9 +351,11 @@ export async function transcribeWav(
   user: SessionUser,
   { fillers = false, languages, label = "Caption Studio: captions" }: { fillers?: boolean; languages?: string[]; label?: string } = {},
 ): Promise<TranscriptionResult> {
-  const langs = languages?.length ? languages : readVoicePrefs(user.username).languages;
+  const prefs = readVoicePrefs(user.username);
+  const langs = languages?.length ? languages : prefs.languages;
+  const terms = termsOf(prefs.words);
   const route = keyFor(user, "DEEPGRAM_API_KEY");
-  if (route.missing) return { error: route.missing, status: 402 };
+  if (route.missing) return { error: speechReasonLine("missing-key", "deepgram"), reason: "missing-key" };
   const wav = parseWav(new Uint8Array(audio));
   const bytesPerSec = wav ? wav.sampleRate * 2 : 32000;
   const durationS = wav ? wav.pcm.length / bytesPerSec : 0;
@@ -371,11 +375,11 @@ export async function transcribeWav(
       });
     }
     const results = await Promise.all(
-      chunks.map((ch) => deepgramWords(route.key, wavWrap(ch.pcm, wav.sampleRate), fillers, langs)),
+      chunks.map((ch) => deepgramWords(route.key, wavWrap(ch.pcm, wav.sampleRate), fillers, langs, terms)),
     );
     const heard: { words: Word[]; language: string }[] = [];
     for (const r of results) {
-      if ("error" in r) return { error: r.error, status: 502 };
+      if ("error" in r) return failed(r);
       heard.push(r);
     }
     words = mergeOverlappingWindows(chunks.map((ch, k) => ({ offsetS: ch.offsetS, words: heard[k].words })));
@@ -384,11 +388,13 @@ export async function transcribeWav(
     for (const h of heard) count.set(h.language, (count.get(h.language) ?? 0) + h.words.length);
     language = [...count].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "en";
   } else {
-    const r = await deepgramWords(route.key, audio, fillers, langs);
-    if ("error" in r) return { error: r.error, status: 502 };
+    const r = await deepgramWords(route.key, audio, fillers, langs, terms);
+    if ("error" in r) return failed(r);
     words = r.words;
     language = r.language;
   }
+  const fix = speechCorrector(prefs.words);
+  words = words.map((w) => ({ ...w, text: fix(w.text) }));
 
   // usage: audio length ≈ last word end; fall back to the WAV byte
   // length (16 kHz mono 16-bit) for silent clips
@@ -413,10 +419,7 @@ transcribeApp.post("/", async (c) => {
   const languages = await hereLanguages(user);
   const pc = captionsComputer(user, languages);
   const accessError = pc ? null : cloudTranscribeBlock(user);
-  if (accessError) {
-    const locked = !mayUseCloud(user);
-    return c.json({ error: accessError, code: locked ? "CLOUD_LOCKED" : "NEEDS_KEY" }, locked ? 403 : 402);
-  }
+  if (accessError) return mayUseCloud(user) ? speechFail(c, "missing-key", "deepgram") : c.json({ error: accessError, code: "CLOUD_LOCKED" }, 403);
   const audio = await c.req.arrayBuffer();
   if (!audio.byteLength) return c.json({ error: "No audio" }, 400);
   // on their own computers; when those can't, their Deepgram key, else the page's own model (USE_BROWSER), said quietly
@@ -428,20 +431,23 @@ transcribeApp.post("/", async (c) => {
     note = `${r.why}: written by Deepgram`;
   }
   const result = await transcribeWav(audio, user, { languages });
-  if ("error" in result) return c.json({ error: result.error }, result.status);
+  if ("error" in result) return speechFail(c, result.reason, "deepgram");
   return c.json(note ? { ...result, note } : result);
 });
 
 /**
- * What writes the mic down when the person's computers can't: the first engine that serves them without a computer
- * (their Deepgram key, their OpenAI key, the server's own model when it runs on its owner's computer), and its name for
- * the note; null when there is none.
+ * What writes the mic down when the person's own computers can't: This Mac's own model when this server is This Mac
+ * (lib/device-transcribe.ts), else the first key the person added (Deepgram, then OpenAI); null when there is none. A
+ * server that is not This Mac never writes a recording with its own model.
  */
 function micFallback(user: AuthVars["user"]): { route: Route; by: string } | null {
-  const e = availableEngines(user).find((x) => x === "local" || mayUseCloud(user));
-  if (e === "local") return { route: { provider: "device" }, by: "written by this server's model" };
-  if (!e) return null;
-  return { route: { provider: e, key: keyFor(user, e === "deepgram" ? "DEEPGRAM_API_KEY" : "OPENAI_API_KEY").key }, by: `written by ${e === "deepgram" ? "Deepgram" : "OpenAI"}` };
+  if (deviceTranscribes()) return { route: { provider: "device" }, by: "written by this server's model" };
+  if (!mayUseCloud(user)) return null;
+  for (const e of ["deepgram", "openai"] as const) {
+    const k = keyFor(user, e === "deepgram" ? "DEEPGRAM_API_KEY" : "OPENAI_API_KEY");
+    if (!k.missing) return { route: { provider: e, key: k.key }, by: `written by ${e === "deepgram" ? "Deepgram" : "OpenAI"}` };
+  }
+  return null;
 }
 
 /** Longest recording the mic takes: two minutes are 3.8 MB as the browser's WAV, under 1 MB as the phone's AAC. */
@@ -449,22 +455,17 @@ const MIC_MAX_BYTES = 10 * 1024 * 1024;
 
 /**
  * Talking to the assistant (the web dock's mic and the phone's): a short recording in any common sound format (WAV, the
- * phone's m4a) → `{ text, language }`, written down by the engine the person chose for `mic` (Settings → AI → Voice,
- * speechFor) in their languages. With no engine it answers NEEDS_KEY and what to add. On their own computers, when
- * those can't (off, busy, slow, failing: MIC_LIMITS) it is written another way (micFallback) with a `note` saying so,
- * and with no other way it answers NEEDS_KEY with `why`, never `chosen`, so the web dock writes it in the browser.
- * The text is never sent anywhere from here: it goes into the message box.
+ * phone's m4a) → `{ text, language, engine }`, written down by the engine the person chose for `mic` (Settings → AI →
+ * Voice, speechFor) in their languages. Auto is their computers or This Mac's model first, then a key they added. On
+ * their own computers, when those can't (off, busy, slow, failing: MIC_LIMITS) it is written another way (micFallback)
+ * with a `note` saying so. A failure answers 422 SPEECH with its reason (speechFail). The text is never sent anywhere
+ * from here: it goes into the message box.
  */
 transcribeApp.post("/mic", async (c) => {
   const user = c.get("user");
   const s = speechFor(user, "mic");
-  if ("needs" in s) {
-    // `chosen`: the person picked this engine (Settings → AI → Voice), so a page says what it needs instead of
-    // quietly writing it down another way; on Automatic it may still use a model in the browser
-    const prefs = readVoicePrefs(user.username);
-    const chosen = (prefs.stt.per.mic ?? prefs.stt.default).engine !== "auto";
-    return c.json({ error: s.needs, code: "NEEDS_KEY", chosen }, 402);
-  }
+  // no engine: the key to add, or a computer with a speech model to turn on
+  if ("needs" in s) return "key" in s && s.key ? speechFail(c, "missing-key") : speechFail(c, "computer-off", "local");
   if (s.engine !== "local" && !mayUseCloud(user)) return c.json({ error: "Transcription is locked for this account", code: "CLOUD_LOCKED" }, 403);
   if (Number(c.req.header("content-length") ?? 0) > MIC_MAX_BYTES) return c.json({ error: "That recording is too long" }, 413);
   const audio = new Uint8Array(await c.req.arrayBuffer());
@@ -475,24 +476,24 @@ transcribeApp.post("/mic", async (c) => {
   const src = path.join(scratch, `mic-${randomUUID()}`);
   await writeFile(src, audio);
   const said = (t: Awaited<ReturnType<typeof transcribeFile>>, note?: string) =>
-    c.json({ text: t.segments.map((seg) => seg.text).join(" ").trim(), language: t.language, ...(note ? { note } : {}) });
+    c.json({ text: t.segments.map((seg) => seg.text).join(" ").trim(), language: t.language, engine: t.provider, ...(note ? { note } : {}) });
   try {
     if (s.engine === "local" && s.on === "computers") {
       try {
         return said(await transcribeFile(src, user.username, scratch, src, { use: "mic", fillers: false, soon: true }));
       } catch (e) {
-        const why = computersWhy(e);
         console.warn(`[transcribe] mic for ${user.username} not from their computers: ${e instanceof Error ? e.message : e}`);
         const other = micFallback(user);
-        if (!other) return c.json({ error: `${why}. Needs a Deepgram key`, code: "NEEDS_KEY", chosen: false, why }, 402);
-        return said(await transcribeFile(src, user.username, scratch, src, { use: "mic", fillers: false, soon: true, route: other.route }), `${why}: ${other.by}`);
+        if (!other) return speechFail(c, reasonOf(e), "local");
+        return said(await transcribeFile(src, user.username, scratch, src, { use: "mic", fillers: false, soon: true, route: other.route }), `${computersWhy(e)}: ${other.by}`);
       }
     }
     return said(await transcribeFile(src, user.username, scratch, src, { use: "mic", fillers: false, soon: true }));
   } catch (e) {
-    if (e instanceof NeedsKey) return c.json({ error: e.message, code: "NEEDS_KEY" }, 402);
+    if (e instanceof NeedsKey) return speechFail(c, "missing-key");
+    if (e instanceof SpeechFailure) return speechFail(c, e.reason, e.engine);
     console.warn(`[transcribe] mic for ${user.username} failed: ${e instanceof Error ? e.message : e}`);
-    return c.json({ error: "Could not write down the recording" }, 500);
+    return speechFail(c, reasonOf(e), s.engine);
   } finally {
     await rm(src, { force: true });
   }

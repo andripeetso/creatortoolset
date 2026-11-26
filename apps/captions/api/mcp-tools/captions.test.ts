@@ -356,8 +356,8 @@ describe("a video dropped in the chat and sent to Caption Studio", () => {
     const heard = notices.length;
     const refused = await captionThis(cookie, "Loud");
     await refused.end();
-    await until(async () => expect(await refused.card()).toMatchObject({ status: "failed", detail: "Deepgram 500: quota" }));
-    expect(await lastLine()).toEqual(["The captions for “Loud” were not made: Deepgram 500: quota.", undefined]);
+    await until(async () => expect(await refused.card()).toMatchObject({ status: "failed", detail: "Deepgram could not write this down. Try again" }));
+    expect(await lastLine()).toEqual(["The captions for “Loud” were not made: Deepgram could not write this down. Try again.", undefined]);
     expect((await projectOf(cookie, refused.sent.id)).revision).toBe(0);
     // nothing was saved, and the open page is told all the same: it offers Transcribe again
     await until(async () => expect(noticesSince(heard).at(-1)?.captioning.includes(refused.sent.id)).toBe(false));

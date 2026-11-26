@@ -178,3 +178,20 @@ describe("dictation (its own page) and the models on a Mac", () => {
     expect(out).not.toContain("Needs Accessibility");
   });
 });
+
+describe("words and the microphone test", () => {
+  it("each word shows what it sounds like, with its Remove; with none, the form says so", () => {
+    expect(html(view())).toContain("No words");
+    const got = html(view({ words: [{ term: "Tiny Acrobatics", soundsLike: ["tiny acro"] }] }));
+    expect(got).toContain("Tiny Acrobatics");
+    expect(got).toContain("Sounds like tiny acro");
+    expect(got).toContain('aria-label="Remove Tiny Acrobatics"');
+  });
+
+  it("the microphone test is one row of the Microphone section, with its Record button", () => {
+    const got = html(view());
+    expect(got).toContain("Microphone");
+    expect(got).toContain("Records five seconds");
+    expect(got).toContain(">Record<");
+  });
+});

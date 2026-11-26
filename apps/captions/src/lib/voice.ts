@@ -1,4 +1,4 @@
-import { STT_MODELS, type SpeechUse, type SttChoice, type SttEngine, type SttModel, type SttResolved, type VoicePrefs, type VoiceView } from "@contracts/voice";
+import { STT_MODELS, speechReasonLine, type SpeechUse, type SpeechWord, type SttChoice, type SttEngine, type SttModel, type SttResolved, type VoicePrefs, type VoiceView } from "@contracts/voice";
 import { useCachedLoad } from "./local-cache";
 
 /** Settings → AI → Voice's calls (api/voice-prefs.ts, contracts/voice.ts). */
@@ -11,9 +11,20 @@ async function json<T>(res: Response): Promise<T> {
 
 export const getVoice = () => fetch("/api/voice-prefs").then((r) => json<VoiceView>(r));
 
-/** A change: languages, the default, or one use (`null` = back to the default). Answers the whole view. */
-export const putVoice = (body: { languages?: string[]; stt?: { default?: SttChoice; per?: Partial<Record<SpeechUse, SttChoice | null>> } }) =>
+/** A change: languages, the default, one use (`null` = back to the default), or the words. Answers the whole view. */
+export const putVoice = (body: { languages?: string[]; stt?: { default?: SttChoice; per?: Partial<Record<SpeechUse, SttChoice | null>> }; words?: SpeechWord[] }) =>
   fetch("/api/voice-prefs", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).then((r) => json<VoiceView>(r));
+
+/** What a recording was written down as (POST /api/transcribe/mic): the words, the engine that wrote them, a note when it was not the first choice. */
+export interface WrittenDown { text: string; language: string | null; engine: string; note?: string }
+
+/** A recording written down the way the assistant's voice input is. A failure throws its reason's sentence (SPEECH 422). */
+export async function writeDown(recording: Blob): Promise<WrittenDown> {
+  const res = await fetch("/api/transcribe/mic", { method: "POST", headers: { "Content-Type": recording.type || "application/octet-stream" }, body: recording });
+  const j = (await res.json().catch(() => null)) as (Partial<WrittenDown> & { error?: string; reason?: Parameters<typeof speechReasonLine>[0] }) | null;
+  if (!res.ok) throw new Error(j?.reason ? speechReasonLine(j.reason, j.engine) : j?.error || `Request failed (${res.status})`);
+  return j as WrittenDown;
+}
 
 /** Download (keep) or remove a model on one of the person's computers (api/voice-prefs.ts PUT /models). */
 export const putModel = (computer: string, model: string, keep: boolean) =>

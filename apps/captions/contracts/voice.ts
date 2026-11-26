@@ -152,6 +152,27 @@ export const SPEECH_REASONS = ["missing-key", "rejected-key", "rate-limit", "mod
 export type SpeechReason = (typeof SPEECH_REASONS)[number];
 export const SPEECH_CODE = "SPEECH";
 
+/** The sentence a person reads for a speech failure, with its next step (the server sends it as `error`; clients share it). */
+export function speechReasonLine(reason: SpeechReason, engine?: string): string {
+  const who = engine === "deepgram" ? "Deepgram" : engine === "openai" ? "OpenAI" : "The speech service";
+  switch (reason) {
+    case "missing-key":
+      return engine === "deepgram" || engine === "openai"
+        ? `Add your ${who} key in Settings → API keys.`
+        : "Add a Deepgram or OpenAI key in Settings → API keys, or put a speech model on one of your computers.";
+    case "rejected-key":
+      return `${who} rejected the key. Check it in Settings → API keys.`;
+    case "rate-limit":
+      return `${who} has no credit left or hit its limit. Check the account, or use a speech model on one of your computers.`;
+    case "model-unavailable":
+      return "The speech model is not available. Choose another in Settings → AI → Voice.";
+    case "computer-off":
+      return "Needs one of your computers with a speech model, turned on. Turn one on, or add a Deepgram or OpenAI key in Settings → API keys.";
+    case "unavailable":
+      return engine === "deepgram" || engine === "openai" ? `${who} could not write this down. Try again.` : "Could not write this down. Try again.";
+  }
+}
+
 export interface VoicePrefs {
   /** ISO 639-1 codes, the ones this person speaks: dictation, talking to the assistant, and the videos of a workspace with no language of its own. */
   languages: string[];

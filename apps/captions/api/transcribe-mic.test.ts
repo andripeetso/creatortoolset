@@ -58,7 +58,7 @@ describe("POST /api/transcribe/mic: talking to the assistant", () => {
     const asked = engines();
     const res = await say();
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ text: "Hello, um world.", language: "en" });
+    expect(await res.json()).toEqual({ text: "Hello, um world.", language: "en", engine: "deepgram" });
     expect(asked).toHaveLength(1);
     expect(asked[0].type).toBe("audio/wav");
     expect(asked[0].url).toMatch(/language=en/);
@@ -71,7 +71,7 @@ describe("POST /api/transcribe/mic: talking to the assistant", () => {
     writeVoicePrefs(LOCAL_USER.username, { stt: { per: { mic: { engine: "openai" } } } });
     const asked = engines();
     const res = await say();
-    expect(await res.json()).toEqual({ text: "Tere, maailm.", language: "estonian" });
+    expect(await res.json()).toEqual({ text: "Tere, maailm.", language: "estonian", engine: "openai" });
     expect(asked.map((a) => a.url)).toEqual([expect.stringMatching(/\/audio\/transcriptions$/)]);
   });
 
@@ -81,8 +81,20 @@ describe("POST /api/transcribe/mic: talking to the assistant", () => {
     writeVoicePrefs(LOCAL_USER.username, { stt: { per: { mic: { engine: "deepgram" } } } });
     const asked = engines();
     const res = await say();
-    expect(res.status).toBe(402);
-    expect(await res.json()).toEqual({ error: "Needs a Deepgram key", code: "NEEDS_KEY", chosen: true });
+    expect(res.status).toBe(422);
+    expect(await res.json()).toEqual({ error: "Add a Deepgram or OpenAI key in Settings → API keys, or put a speech model on one of your computers.", code: "SPEECH", reason: "missing-key" });
     expect(asked).toEqual([]);
+  });
+
+  it("a key the service refuses is a reason, never the service's own text", async () => {
+    vi.stubEnv("DEEPGRAM_API_KEY", "dg-test");
+    vi.stubEnv("OPENAI_API_KEY", "");
+    writeVoicePrefs(LOCAL_USER.username, { stt: { per: { mic: null } } });
+    vi.stubGlobal("fetch", async () => new Response("INVALID_AUTH secret detail", { status: 401 }));
+    const res = await say();
+    expect(res.status).toBe(422);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body).toEqual({ error: "Deepgram rejected the key. Check it in Settings → API keys.", code: "SPEECH", reason: "rejected-key", engine: "deepgram" });
+    expect(JSON.stringify(body)).not.toMatch(/INVALID_AUTH|401/);
   });
 });

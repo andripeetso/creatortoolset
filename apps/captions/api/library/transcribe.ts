@@ -1,4 +1,6 @@
 import { creditBack, creditOut, isOutOfCredits } from "../credits";
+import { SpeechFailure, providerReason, readVoicePrefs, speechFor } from "../lib/speech";
+import { promptOf, speechCorrector, termsOf } from "../lib/speech-words";
 import { mkdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
@@ -8,7 +10,6 @@ import { transcribeWav } from "../transcribe";
 import { DEVICE_AUDIO, transcribeOnDevice } from "../lib/device-transcribe";
 import { MIC_LIMITS, needComputerOn, transcribeOnComputer, type OwnSound } from "../lib/computer-transcribe";
 import { isThisMachine } from "../lib/devices";
-import { readVoicePrefs, speechFor } from "../lib/speech";
 import { videoLanguages } from "../lib/video-languages";
 import type { SpeechUse } from "../../contracts/voice";
 import { isAdminActor, keyFor } from "../my-keys";
@@ -122,10 +123,16 @@ export type Transcribed = { segments: Segment[]; words: TimedWord[]; language: s
 async function deepgram(file: string, actor: string, fillers: boolean, languages?: string[]): Promise<Transcribed> {
   const role = isAdminActor(actor) ? "admin" : (findUser(actor)?.role ?? "user");
   const r = await transcribeWav(await readFile(file), { username: actor, role, cloud: true, off: [] }, { fillers, languages, label: "Media Library: transcripts" });
-  if ("error" in r) throw new Error(r.error);
+  if ("error" in r) throw new SpeechFailure(r.reason, "deepgram");
   const words = r.words.map((w) => ({ w: w.text, s: w.start, e: w.end, ...(w.confidence !== undefined ? { c: w.confidence } : {}) }));
   return { segments: wordsToSegments(r.words), words, language: r.language };
 }
+
+/** The person's words written as they are said (speechCorrector), once, where a provider's answer comes back. */
+const fixed = (t: Transcribed, actor: string | null | undefined): Transcribed => {
+  const fix = speechCorrector(actor ? readVoicePrefs(actor).words : undefined);
+  return { ...t, segments: t.segments.map((s) => ({ ...s, text: fix(s.text) })), words: t.words.map((w) => ({ ...w, w: fix(w.w) })) };
+};
 
 // ponytail: OpenAI's endpoint takes 25 MB, about 100 minutes of the 32 kbps audio sent here; longer files need chunks
 async function openai(file: string, key: string, languages?: string[], actor?: string | null): Promise<Transcribed> {
@@ -133,6 +140,8 @@ async function openai(file: string, key: string, languages?: string[], actor?: s
   form.set("file", new Blob([await readFile(file)], { type: "audio/mp4" }), "audio.m4a");
   form.set("model", process.env.OPENAI_TRANSCRIBE_MODEL || "whisper-1");
   if (languages?.length === 1) form.set("language", languages[0]!);
+  const terms = termsOf(actor ? readVoicePrefs(actor).words : undefined);
+  if (terms.length) form.set("prompt", promptOf(terms));
   form.set("response_format", "verbose_json");
   // both, or the answer has words and no segments; this model drops most false starts
   form.append("timestamp_granularities[]", "segment");
@@ -146,7 +155,8 @@ async function openai(file: string, key: string, languages?: string[], actor?: s
   if (!r.ok) {
     const said = (await r.text().catch(() => "")).slice(0, 200);
     if (isOutOfCredits(r.status, said)) creditOut("OPENAI_API_KEY", key, "Media Library transcripts");
-    throw new Error(`Transcription ${r.status}: ${said}`);
+    console.warn(`[transcribe] OpenAI ${r.status}: ${said}`);
+    throw new SpeechFailure(providerReason(r.status, said), "openai");
   }
   creditBack("OPENAI_API_KEY", key);
   const data = (await r.json()) as {
@@ -158,20 +168,20 @@ async function openai(file: string, key: string, languages?: string[], actor?: s
   void recordService({ service: "OPENAI_API_KEY", key, actor, label: "Media Library: transcripts", units: (data.duration ?? 0) / 60, unit: "audio minutes" });
   const segments = (data.segments ?? []).map((s) => ({ start: s.start, end: s.end, text: s.text.trim() })).filter((s) => s.text);
   const words = (data.words ?? []).map((w) => ({ w: w.word.trim(), s: w.start, e: w.end })).filter((w) => w.w);
-  return { segments, words, language: data.language ?? null };
+  return fixed({ segments, words, language: data.language ?? null }, actor);
 }
 
 /** On this computer: `status` names the run for whoever shows what it is doing (deviceStatus). */
-async function device(file: string, status: string): Promise<Transcribed> {
+async function device(file: string, status: string, actor: string | null): Promise<Transcribed> {
   const { words, language } = await transcribeOnDevice(file, status);
-  return { segments: wordsToSegments(words), words: words.map((w) => ({ w: w.text, s: w.start, e: w.end })), language };
+  return fixed({ segments: wordsToSegments(words), words: words.map((w) => ({ w: w.text, s: w.start, e: w.end })), language }, actor);
 }
 
 /** On one of the person's own computers (lib/computer-transcribe.ts): `file` is the WAV it fetches, or the library file it cuts the sound from itself; `soon`: the mic's limits. */
 async function computer(file: string | OwnSound, actor: string, model: string, languages: string[], soon: boolean, editor: boolean): Promise<Transcribed> {
   // the editor's never go to a Mac (computer-transcribe.ts isMac)
-  const { words, language } = await transcribeOnComputer(actor, model, languages, file, soon ? MIC_LIMITS : { noMac: editor });
-  return { segments: wordsToSegments(words), words: words.map((w) => ({ w: w.text, s: w.start, e: w.end })), language };
+  const { words, language } = await transcribeOnComputer(actor, model, languages, file, soon ? MIC_LIMITS : { noMac: editor }, termsOf(readVoicePrefs(actor).words));
+  return fixed({ segments: wordsToSegments(words), words: words.map((w) => ({ w: w.text, s: w.start, e: w.end })), language }, actor);
 }
 
 /**
@@ -214,7 +224,7 @@ export async function transcribeFile(
   try {
     if (!(route.provider === "computer" && own)) await cutHere();
     const t =
-      route.provider === "device" ? await device(out, status)
+      route.provider === "device" ? await device(out, status, actor)
       : route.provider === "computer" ? await computer(own ? { ...own, cut: cutHere } : out, actor ?? "", route.model, languages?.length ? languages : route.languages, soon, use === "editor")
       : route.provider === "deepgram" ? await deepgram(out, actor ?? "", fillers, languages)
       : await openai(out, route.key, languages, actor);

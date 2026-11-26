@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { expect, it } from "vitest";
-import { STT_MODELS } from "./voice";
+import { SPEECH_REASONS, STT_MODELS, speechReasonLine } from "./voice";
 
 // The Linux helper (public/helper/helper.py) keeps its own map of what to download: it must be the catalog's.
 it("the helper downloads exactly the catalog's computer models, from their `download` repositories", () => {
@@ -24,4 +24,12 @@ it("the Mac app runs exactly the catalog's `coreml` models, under the same ids",
   expect(mac).toEqual(catalog);
   // every one a computer downloads: a Mac's has no `computer`-less entry, and each has a source
   for (const m of STT_MODELS.filter((x) => x.computer)) expect(m.download || m.coreml, m.id).toBeTruthy();
+});
+
+it("every speech reason has its sentence, with the next step, and names the engine only when it has one", () => {
+  for (const reason of SPEECH_REASONS) expect(speechReasonLine(reason)).toMatch(/\.$/);
+  expect(speechReasonLine("missing-key", "deepgram")).toBe("Add your Deepgram key in Settings → API keys.");
+  expect(speechReasonLine("rejected-key", "openai")).toBe("OpenAI rejected the key. Check it in Settings → API keys.");
+  expect(speechReasonLine("unavailable")).toBe("Could not write this down. Try again.");
+  expect(speechReasonLine("computer-off", "local")).toMatch(/computers/);
 });

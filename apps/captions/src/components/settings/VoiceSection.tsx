@@ -1,12 +1,16 @@
-import { SPEECH_USES, SPEECH_USE_NAMES, STT_MODELS, runsOn, sizeOn, type SpeechUse, type SttComputer, type SttEngine, type SttModel, type SttResolved, type VoiceView } from "@contracts/voice";
+import { useState } from "react";
+import { SPEECH_USES, SPEECH_USE_NAMES, STT_MODELS, runsOn, sizeOn, type SpeechUse, type SpeechWord, type SttComputer, type SttEngine, type SttModel, type SttResolved, type VoiceView } from "@contracts/voice";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { canSpeak, useReadAloud } from "@/lib/read-aloud";
-import { LANGUAGES, SAME, engineOptions, languageName, modelOf, needWords, putModel, putVoice, useVoice, withLanguage } from "@/lib/voice";
+import { LANGUAGES, SAME, engineOptions, languageName, modelOf, needWords, putModel, putVoice, useVoice, withLanguage, writeDown, type WrittenDown } from "@/lib/voice";
 import { Card, EmptyRow, ErrorRow, ListRow, LoadingRow, Row, Section, SettingsSelect, Status, markSave, saveFailed } from "./ui";
 import { msg } from "./helpers";
 
 type Body = Parameters<typeof putVoice>[0];
+/** Saves a change at once; resolves false when it failed (the form keeps what was typed). */
+type Save = (body: Body, shown: VoiceView) => Promise<boolean> | void;
 
 /**
  * Settings → Voice: the languages the person speaks, which engine turns speech into text (a default and one per use),
@@ -24,13 +28,15 @@ export function VoiceSection() {
         <TextToSpeech />
       </div>
     );
-  const save = async (body: Body, shown: VoiceView) => {
+  const save = async (body: Body, shown: VoiceView): Promise<boolean> => {
     set(shown);
     try {
       set(await markSave(putVoice(body)));
+      return true;
     } catch (e) {
       set(data);
       saveFailed(msg(e));
+      return false;
     }
   };
   const want = async (computer: string, model: string, keep: boolean) => {
@@ -40,10 +46,10 @@ export function VoiceSection() {
       saveFailed(msg(e));
     }
   };
-  return <VoiceBody view={data} save={(body, shown) => void save(body, shown)} want={(c, m, k) => void want(c, m, k)} />;
+  return <VoiceBody view={data} save={save} want={(c, m, k) => void want(c, m, k)} />;
 }
 
-export function VoiceBody({ view, save, want = () => {} }: { view: VoiceView; save: (body: Body, shown: VoiceView) => void; want?: (computer: string, model: string, keep: boolean) => void }) {
+export function VoiceBody({ view, save, want = () => {} }: { view: VoiceView; save: Save; want?: (computer: string, model: string, keep: boolean) => void }) {
   const setLanguages = (languages: string[]) => save({ languages }, { ...view, languages });
   const setChoice = (use: SpeechUse | "default", value: string) => {
     if (use === "default") {
@@ -114,10 +120,133 @@ export function VoiceBody({ view, save, want = () => {} }: { view: VoiceView; sa
         </Card>
       </Section>
 
+      <WordsSection view={view} save={save} />
+
       <SpeechModels computers={view.computers} want={want} />
+
+      <MicrophoneTest />
 
       <TextToSpeech />
     </div>
+  );
+}
+
+/**
+ * Names and terms every engine listens for, and what they are misheard as (contracts/voice.ts SpeechWord). Each add or
+ * remove saves at once; a word that fails to save stays in the form.
+ */
+function WordsSection({ view, save }: { view: VoiceView; save: Save }) {
+  const words = view.words ?? [];
+  const [term, setTerm] = useState("");
+  const [like, setLike] = useState("");
+  const [missing, setMissing] = useState<string | null>(null);
+  const put = (next: SpeechWord[]) => save({ words: next }, { ...view, words: next });
+  const add = async () => {
+    const t = term.trim();
+    if (!t) return setMissing("Type the word first");
+    setMissing(null);
+    const soundsLike = like.split(",").map((s) => s.trim()).filter(Boolean);
+    if ((await put([...words, { term: t, soundsLike }])) !== false) {
+      setTerm("");
+      setLike("");
+    }
+  };
+  return (
+    <Section title="Custom words">
+      <Card>
+        {words.length ? (
+          words.map((w) => (
+            <ListRow
+              key={w.term}
+              title={w.term}
+              subtitle={w.soundsLike.length ? `Sounds like ${w.soundsLike.join(", ")}` : undefined}
+              actions={
+                <Button size="sm" variant="outline" aria-label={`Remove ${w.term}`} onClick={() => void put(words.filter((x) => x !== w))}>
+                  Remove
+                </Button>
+              }
+            />
+          ))
+        ) : (
+          <EmptyRow title="No words" description="Names and terms the speech engines should get right." />
+        )}
+        <Row title="Word" control={<Input aria-label="Word" value={term} onChange={(e) => setTerm(e.target.value)} className="w-56" />} />
+        <Row
+          title="Sounds like"
+          description="Misheard spellings, separated by commas."
+          status={missing ? <Status tone="attention">{missing}</Status> : undefined}
+          control={
+            <div className="flex items-center gap-2">
+              <Input aria-label="Sounds like" value={like} onChange={(e) => setLike(e.target.value)} className="w-56" />
+              <Button size="sm" variant="outline" onClick={() => void add()}>
+                Add word
+              </Button>
+            </div>
+          }
+        />
+      </Card>
+    </Section>
+  );
+}
+
+const WROTE: Record<string, string> = { device: "This Mac's model", computer: "your computer", deepgram: "Deepgram", openai: "OpenAI" };
+
+/** Records five seconds and writes them down the way the assistant's voice input does; shows the words and what wrote them. */
+function MicrophoneTest() {
+  const [phase, setPhase] = useState<"idle" | "recording" | "writing">("idle");
+  const [result, setResult] = useState<WrittenDown | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const test = async () => {
+    setError(null);
+    setResult(null);
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") return setError("Microphone testing is unavailable in this browser.");
+    let stream: MediaStream | undefined;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+      const chunks: Blob[] = [];
+      recorder.addEventListener("dataavailable", (e) => e.data.size && chunks.push(e.data));
+      const stopped = new Promise<void>((resolve) => recorder.addEventListener("stop", () => resolve(), { once: true }));
+      recorder.start();
+      setPhase("recording");
+      await new Promise((resolve) => setTimeout(resolve, 5_000));
+      recorder.stop();
+      await stopped;
+      setPhase("writing");
+      setResult(await writeDown(new Blob(chunks, { type: recorder.mimeType })));
+    } catch (e) {
+      setError(msg(e));
+    } finally {
+      stream?.getTracks().forEach((t) => t.stop());
+      setPhase("idle");
+    }
+  };
+  return (
+    <Section title="Microphone">
+      <Card>
+        <Row
+          title="Test"
+          description="Records five seconds and writes them down as the assistant does."
+          status={
+            error ? (
+              <Status tone="attention">{error}</Status>
+            ) : result ? (
+              <>
+                {result.text ? `“${result.text}”` : "No words heard"} · written by {WROTE[result.engine] ?? result.engine}
+                {result.note ? ` · ${result.note}` : ""}
+              </>
+            ) : phase !== "idle" ? (
+              phase === "recording" ? "Recording" : "Writing it down"
+            ) : undefined
+          }
+          control={
+            <Button size="sm" variant="outline" disabled={phase !== "idle"} onClick={() => void test()}>
+              Record
+            </Button>
+          }
+        />
+      </Card>
+    </Section>
   );
 }
 
