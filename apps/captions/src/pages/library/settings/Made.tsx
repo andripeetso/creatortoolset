@@ -101,18 +101,16 @@ function State({ tone, text, rest }: { tone: Tone; text: string; rest: string })
 }
 
 /**
- * What's made: one row per kind the library makes for its files, what it is, its state (done, waiting and why, failed
- * with Retry, off), how many have it, what it costs, and Make for the missing (the one thing that fills the files
- * already here; a confirm first when it costs). With `save` (Settings → Media Library) a kind with a switch has it,
- * "New files": made for each new file. Without (the library's Status view) `onSettings` opens the settings. One
- * component for both places. Blurred copies shows only with Face Blur (`faceBlur`: on in the settings' workspace; left
- * out, the window's) or in a library that blurs already; its New files switch is Blur faces (`onBlur`, which asks about
- * the files already here). Proxies' New files switch is Generate proxies (`onProxy`, which turns Upload's Proxies off with it).
+ * What's made, in Library status: one row per kind the library makes for its files, its state (done, waiting and why,
+ * failed with Retry, off), how many have it, what it costs, and the work on the files already here: Make for the missing
+ * (a confirm first when it costs), Retry, Cancel, and for Transcripts whether Make takes B-roll too (`onBroll`). What is
+ * made for new files is set in Settings (`MadeSwitches`), which `onSettings` opens. Blurred copies shows only with Face
+ * Blur on in the window's workspace or in a library that blurs already.
  */
-export function Made({ library, save, onSettings, faceBlur, onBlur, onProxy }: { library: LibrarySummary; save?: (s: Partial<LibrarySettings>) => Promise<unknown>; onSettings?: () => void; faceBlur?: boolean; onBlur?: (on: boolean) => void; onProxy?: (on: boolean) => void }) {
+export function Made({ library, onSettings, onBroll }: { library: LibrarySummary; onSettings?: () => void; onBroll?: (on: boolean) => Promise<unknown> }) {
   const me = useMe();
   const blurHere = useWorkspace((st) => faceBlurOn(me, st.pluginsOff, st.currentProjectId));
-  const blurs = (faceBlur ?? blurHere) || !!library.settings.blurFaces;
+  const blurs = blurHere || !!library.settings.blurFaces;
   const [made, setMade] = useState<LibraryMade[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -170,7 +168,9 @@ export function Made({ library, save, onSettings, faceBlur, onBlur, onProxy }: {
           // off: stopped or failed jobs are not wanted (no Retry); proxies and blurred copies off are not made at all (no Make)
           const retry = on && !!(m.failed || m.stopped);
           const makes = m.missing > 0 && !k.auto && (on || (k.kind !== "proxy" && !blur));
-          const change = blur ? onBlur : k.kind === "proxy" && onProxy ? onProxy : k.setting && save ? (v: boolean) => void save({ [k.setting!]: v }) : undefined;
+          const broll = k.kind === "transcribe" && onBroll ? library.settings.transcribeBroll !== false : undefined;
+          // off: Make leaves clips sorted as B-roll out (made.ts); offered while some of the missing are B-roll, or while off
+          const brollButton = broll === true ? !!m.broll : broll === false;
           return (
             <Row
               key={m.kind}
@@ -183,25 +183,8 @@ export function Made({ library, save, onSettings, faceBlur, onBlur, onProxy }: {
                   {why && <span>{why}</span>}
                 </span>
               }
-              control={
-                change && (
-                  <span className="flex flex-col items-end gap-2">
-                    <label className="flex items-center gap-2 text-xs text-muted-foreground">
-                      New files
-                      <Switch aria-label={`${k.label} for new files`} checked={on} onCheckedChange={change} />
-                    </label>
-                    {/* off: Make for the missing leaves clips sorted as B-roll out (made.ts) */}
-                    {k.kind === "transcribe" && save && (
-                      <label className="flex items-center gap-2 text-xs text-muted-foreground">
-                        B-roll
-                        <Switch aria-label="Transcripts for B-roll" checked={library.settings.transcribeBroll !== false} onCheckedChange={(v) => void save({ transcribeBroll: v }).then(load)} />
-                      </label>
-                    )}
-                  </span>
-                )
-              }
             >
-              {(retry || (m.queued > 0 && ((m.why && m.href) || (!k.auto && !k.ready && !blur))) || makes) && (
+              {(retry || (m.queued > 0 && ((m.why && m.href) || (!k.auto && !k.ready && !blur))) || makes || brollButton) && (
                 <span className="flex flex-wrap items-center gap-2">
                   {retry && (
                     <Button variant="outline" size="sm" disabled={busy !== null} onClick={() => void run(`retry-${m.kind}`, "retry", () => retryFailed(library.id, m.kind))}>
@@ -224,11 +207,42 @@ export function Made({ library, save, onSettings, faceBlur, onBlur, onProxy }: {
                       {busy === `make-${m.kind}` ? "Queueing" : `Make ${n(m.missing)} missing`}
                     </Button>
                   )}
+                  {brollButton && (
+                    <Button variant="outline" size="sm" disabled={busy !== null} onClick={() => void run("broll", broll ? "skip B-roll" : "include B-roll", () => onBroll!(!broll))}>
+                      {broll ? "Skip B-roll" : "Include B-roll"}
+                    </Button>
+                  )}
                 </span>
               )}
             </Row>
           );
         })}
+      </Card>
+    </Section>
+  );
+}
+
+/**
+ * What's made, in Settings → Media Library: what is made for each new file, one switch per kind. Proxies and blurred
+ * copies are Proxy workflow's switches, and the state and the work on the files already here are Library status's (`Made`).
+ */
+export function MadeSwitches({ library, save }: { library: LibrarySummary; save: (s: Partial<LibrarySettings>) => Promise<unknown> }) {
+  return (
+    <Section title={LIBRARY_WORDS.madeTitle}>
+      <Card>
+        {MADE_KINDS.filter((k) => k.setting && k.kind !== "proxy").map((k) => (
+          <Row
+            key={k.kind}
+            title={k.label}
+            description={k.about}
+            control={
+              <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                New files
+                <Switch aria-label={`${k.label} for new files`} checked={onFor(k, library)} onCheckedChange={(v) => void save({ [k.setting!]: v })} />
+              </label>
+            }
+          />
+        ))}
       </Card>
     </Section>
   );

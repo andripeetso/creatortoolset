@@ -14,7 +14,7 @@ import { thisComputer, storeName } from "../LibraryStorage";
 import { LibraryCopies } from "./Copies";
 import { MemberSettings, OwnerDownloads } from "./MemberSettings";
 import { Effort } from "./settings/Effort";
-import { Made } from "./settings/Made";
+import { MadeSwitches } from "./settings/Made";
 import { Models } from "./settings/Models";
 import { OwnerFolders } from "./settings/OwnerFolders";
 import { RadioList } from "./settings/RadioList";
@@ -82,7 +82,7 @@ export function LibrarySettingsBody({ library, onChange, onError, workspace }: B
     markSave(updateLibrary(library.id, { settings }))
       .then((l) => (onChange(l), true))
       .catch((e: unknown) => (onError(message(e)), false));
-  // Generate proxies, the one switch (Proxy workflow, and What's made's Proxies row). Off turns Upload's Proxies part off
+  // Generate proxies, the one switch (Proxy workflow). Off turns Upload's Proxies part off
   // in the same save (its row goes with it, ./settings/Hosted.tsx); that part cannot be seen any more, so Undo puts both back.
   const setProxy = async (v: boolean) => {
     const was = hostedOf(s);
@@ -93,7 +93,7 @@ export function LibrarySettingsBody({ library, onChange, onError, workspace }: B
       // switch keeps its time and the proxies that were waiting are asked for again (api/library/routes.ts)
       undoable(LIBRARY_WORDS.proxiesOff, () => save({ proxy: true, proxyBack: true, ...hostedSettings({ ...hostedOf(latest.current), proxies: true }, latest.current.finalsUpload) }));
   };
-  // Blur faces, the one switch (Proxy workflow, and What's made's Blurred copies row). Turning it on asks once whether
+  // Blur faces, the one switch (Proxy workflow). Turning it on asks once whether
   // the files already here are blurred too (blurExisting) or left as they are; either way the Blurred part of Upload
   // (the mix's originals) starts off, and no other setting changes.
   const setBlur = async (v: boolean) => {
@@ -121,7 +121,7 @@ export function LibrarySettingsBody({ library, onChange, onError, workspace }: B
       <Section title={LIBRARY_WORDS.analysisTitle}>
         <Effort library={library} save={save} />
       </Section>
-      <Made library={library} save={save} faceBlur={faceBlur} onBlur={(v) => void setBlur(v)} onProxy={(v) => void setProxy(v)} />
+      <MadeSwitches library={library} save={save} />
       {level !== "off" && (
         <Section title={LIBRARY_WORDS.modelsTitle}>
           <Models settings={s} save={save} />

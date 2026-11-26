@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Card, ErrorRow, LoadingRow, Row, Section, Status } from "@/components/settings/ui";
 import { hiddenLine, leftOutLine } from "@/components/LibraryProcessing";
-import { getMade, getStatus, getUnreadable, retryUnreadable } from "@/lib/library";
+import { getMade, getStatus, getUnreadable, retryUnreadable, updateLibrary } from "@/lib/library";
 import { cn } from "@/lib/utils";
 import { healthOf, Made } from "./settings/Made";
 
@@ -47,22 +47,22 @@ export function LibraryHealthButton({ library, open, onOpen }: { library: Librar
 /**
  * Library status, a dialog over the library (More → Library status, and the status button): its files against what
  * its folders hold, what is missing or could not be read, and What's made: every kind with its state, what it waits for
- * and which computer makes it, Retry and Make for the missing (the same list as Settings → Media Library, whose
- * switches `onSettings` opens). ✕, Esc and a click outside close it; the library stays as it was underneath.
+ * and which computer makes it, Retry and Make for the missing (what is made for new files is Settings → Media Library's, which
+ * `onSettings` opens). ✕, Esc and a click outside close it; the library stays as it was underneath.
  */
-export function LibraryStatusDialog({ library, watch, onClose, onSettings, onOpenClip }: { library: LibrarySummary; watch: WatchStatus | null; onClose: () => void; onSettings?: () => void; onOpenClip?: (id: string) => void }) {
+export function LibraryStatusDialog({ library, watch, onClose, onSettings, onOpenClip, onChange }: { library: LibrarySummary; watch: WatchStatus | null; onClose: () => void; onSettings?: () => void; onOpenClip?: (id: string) => void; onChange?: (l: LibrarySummary) => unknown }) {
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
         <DialogTitle>Library status</DialogTitle>
         <DialogDescription className="sr-only">What the library has made for its files, and what waits</DialogDescription>
-        <LibraryHealth library={library} watch={watch} onSettings={onSettings} onOpenClip={onOpenClip} />
+        <LibraryHealth library={library} watch={watch} onSettings={onSettings} onOpenClip={onOpenClip} onChange={onChange} />
       </DialogContent>
     </Dialog>
   );
 }
 
-function LibraryHealth({ library, watch, onSettings, onOpenClip }: { library: LibrarySummary; watch: WatchStatus | null; onSettings?: () => void; onOpenClip?: (id: string) => void }) {
+function LibraryHealth({ library, watch, onSettings, onOpenClip, onChange }: { library: LibrarySummary; watch: WatchStatus | null; onSettings?: () => void; onOpenClip?: (id: string) => void; onChange?: (l: LibrarySummary) => unknown }) {
   const [s, setS] = useState<LibraryStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const load = useCallback(() => {
@@ -99,7 +99,9 @@ function LibraryHealth({ library, watch, onSettings, onOpenClip }: { library: Li
           )}
         </Card>
       </Section>
-      {!library.readOnly && <Made library={library} onSettings={onSettings} />}
+      {!library.readOnly && (
+        <Made library={library} onSettings={onSettings} onBroll={onChange && ((v) => updateLibrary(library.id, { settings: { transcribeBroll: v } }).then(onChange))} />
+      )}
     </div>
   );
 }

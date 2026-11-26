@@ -154,7 +154,7 @@ vi.mock("@/lib/library", async (importOriginal) => ({
   },
   getEstimate: async () => ({ clips: 1, minutes: 0, seconds: 0, steps: [{ step: "describe", route: "provider", usd: 0, seconds: 1, measured: false }] }),
   getStatus: async () => ({ clips: 3, unreadable: 0, stages: [{ kind: "transcribe", done: 2, failed: 1, open: 0, of: 3 }] }),
-  getMade: async () => [{ kind: "transcribe", have: 2, missing: 1, queued: 0, failed: 1, cost: "free" }],
+  getMade: async () => [{ kind: "transcribe", have: 2, missing: 1, queued: 0, failed: 1, cost: "free", broll: 1 }],
   retryFailed: async (_: string, kind: string) => {
     server.retried.push(kind);
     return { files: 1 };
@@ -332,6 +332,10 @@ describe("Media Library page", () => {
     expect(dialog.textContent).toContain("1 file failed · 2 of 4 made");
     await act(async () => [...dialog.querySelectorAll("button")].find((b) => b.textContent === "Retry")!.click());
     expect(server.retried).toEqual(["transcribe"]);
+    // the missing are B-roll: Skip B-roll beside Make saves the library's choice; the switches are Settings' alone
+    expect(dialog.querySelector('[role="switch"]')).toBeNull();
+    await act(async () => [...dialog.querySelectorAll("button")].find((b) => b.textContent === "Skip B-roll")!.click());
+    expect(server.patched.at(-1)).toEqual({ settings: { transcribeBroll: false } });
     await act(async () => {
       dialog.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     });
@@ -457,7 +461,7 @@ describe("Media Library page", () => {
     await act(async () => moreItem("Library settings")!.click());
     await act(async () => new Promise((r) => setTimeout(r, 0)));
     expect(sheet()).toContain("Organization");
-    expect(sheet()).not.toContain("Search by meaning");
+    expect(sheet()).toContain("Search by meaning"); // What's made: one New files switch per kind
   });
 
   it("the A-roll and B-roll tabs ask the server for that roll, so the whole library is narrowed", async () => {

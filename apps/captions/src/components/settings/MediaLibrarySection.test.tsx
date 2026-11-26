@@ -238,26 +238,15 @@ describe("Settings → Media Library, the owner's page", () => {
     expect(headings()).not.toContain(LIBRARY_WORDS.modelsTitle);
   });
 
-  it("What's made: a switch saves only its setting and queues nothing; Make for the missing says its cost first", async () => {
-    made = [
-      { kind: "describe", have: 10, missing: 4, queued: 0, cost: "tokens", usd: 2, engine: "Claude", where: "the AI provider sign-in" },
-      { kind: "thumb", have: 14, missing: 0, queued: 0, cost: "free" },
-    ];
-    const asks: string[] = [];
-    vi.stubGlobal("confirm", (m: string) => (asks.push(m), false));
+  it("What's made: one switch per kind for new files, saving only its setting; no Make here (Library status has it)", async () => {
     await render(<LibrarySettingsBody library={library} watch={watch} onChange={() => {}} onError={() => {}} />);
-    expect(bodyText()).toContain("4 missing · 10 of 14 made");
-    expect(bodyText()).toContain("Done");
-    expect(bodyText()).not.toContain("14 of 14");
     const sw = host!.querySelector('[aria-label="Descriptions and tags for new files"]') as HTMLButtonElement;
     await act(async () => sw.click());
     expect(patches.at(-1)).toEqual({ settings: { describe: !library.settings.describe } });
     expect(asked.some(([r]) => r.startsWith("POST"))).toBe(false);
-    const button = [...host!.querySelectorAll("button")].find((b) => b.textContent === "Make 4 missing")!;
-    await act(async () => button.click());
-    expect(asks[0]).toContain("Claude on the AI provider sign-in, about $2.00 of plan usage, queues 4 jobs");
-    expect(asked.some(([r]) => r.startsWith("POST"))).toBe(false); // Cancel queues nothing
-    expect([...host!.querySelectorAll("button")].some((b) => b.textContent?.startsWith("Make 0"))).toBe(false);
+    expect([...host!.querySelectorAll("button")].some((b) => b.textContent?.startsWith("Make "))).toBe(false);
+    // proxies and blurred copies are Proxy workflow's switches, not again here
+    expect(host!.querySelector('[aria-label="Proxies for new files"]')).toBeNull();
   });
 
   it("Blur faces and Generate proxies are two switches of Proxy workflow; Upload offers Blurred and Proxies, never Originals", async () => {
@@ -270,9 +259,6 @@ describe("Settings → Media Library, the owner's page", () => {
     for (const words of ["Generate proxies", LIBRARY_WORDS.proxiesFromBlurred, "Proxy quality"]) expect(bodyText()).toContain(words);
     const row = (label: string) => host!.querySelector(`button[role="switch"][aria-label="${label}"]`);
     expect([!!row("Blurred"), !!row("Proxies"), !!row("Originals")]).toEqual([true, true, false]);
-    // What's made has the blurred copies' row, its New files switch the same Blur faces
-    expect(bodyText()).toContain("Blurred copies");
-    expect(row("Blurred copies for new files")?.getAttribute("aria-checked")).toBe("true");
     // off: Blurred (the Originals part) does not become Originals, and Generate proxies is left as it is
     await act(async () => (sw[0] as HTMLButtonElement).click());
     expect(patches.at(-1)).toEqual({ settings: { blurFaces: false, upload: "proxies", finalsUpload: expect.any(String) } });
@@ -293,8 +279,7 @@ describe("Settings → Media Library, the owner's page", () => {
     expect([!!row("Final exports"), !!row("Proxies"), !!row("Originals")]).toEqual([true, false, true]);
   });
 
-  it("Generate proxies off turns Upload's Proxies off in the same save, and Undo puts both back; What's made's switch is the same one", async () => {
-    made = [{ kind: "proxy", have: 3, missing: 0, queued: 0, cost: "free" }];
+  it("Generate proxies off turns Upload's Proxies off in the same save, and Undo puts both back", async () => {
     const hosts: LibrarySummary = { ...library, settings: { ...SETTINGS, upload: "all", finalsUpload: "all" } };
     await render(<LibrarySettingsBody library={hosts} watch={watch} onChange={() => {}} onError={() => {}} />);
     await press(toggle(LIBRARY_WORDS.generateProxies.label));
@@ -303,9 +288,6 @@ describe("Settings → Media Library, the owner's page", () => {
     await act(async () => void (await undos[0]!.back()));
     // Undo says it is one (proxyBack), so the switch keeps its time and the proxies that were waiting come back
     expect(patches.at(-1)).toEqual({ settings: { proxy: true, proxyBack: true, upload: "all", finalsUpload: "all" } });
-    await press(toggle("Proxies for new files"));
-    expect(patches.at(-1)).toEqual({ settings: { proxy: false, upload: "originals", finalsUpload: "all" } });
-    expect(undos).toHaveLength(2);
   });
 
   it("Generate proxies off where Upload sent no proxies saves only itself and offers no Undo: the switch shows it all", async () => {

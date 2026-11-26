@@ -1331,6 +1331,7 @@ export default function LibraryPage() {
                     library={library}
                     watch={watch ?? null}
                     onClose={() => setStatusOpen(false)}
+                    onChange={(l) => organize.organized(l).catch((e) => setError(message(e)))}
                     onOpenClip={(id) => {
                       setStatusOpen(false);
                       const p = new URLSearchParams(linked);
