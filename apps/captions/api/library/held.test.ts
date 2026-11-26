@@ -276,7 +276,8 @@ describe("the main computer pulls it, and only then is it processed", () => {
     for (const [i, name] of [[held[0]!, "Handstand"], [held[1]!, "Cartwheel"]] as const) {
       const copy = await blurred(i.versionId, name);
       expect(copy.assetId).toBe(i.assetId);
-      expect(existsSync(heldFile(i.versionId))).toBe(false);
+      // the hold ends just behind the answer that recorded the copy (routes.ts: once its transaction is in), not within it
+      await vi.waitFor(() => expect(existsSync(heldFile(i.versionId))).toBe(false));
       // the original is where its master is, on the main computer, and nowhere on the server
       expect(version(i.versionId)).toMatchObject({ held: null, source_key: `mac:${i.versionId}`, mac_device: main.id });
       // Upload → Blurred: the blurred copy's computer sends it
