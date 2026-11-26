@@ -67,6 +67,9 @@ final class AccountSignInTests: XCTestCase {
         XCTAssertNil(try decode(AccountToken.self, #"{"token":"tok-2","name":"Jo Tiny","email":null}"#).email)
         XCTAssertEqual(try decode(RelayToken.self, #"{"token":"relay-1","expiresIn":3600}"#).token, "relay-1")
         XCTAssertEqual(API.message(Data(#"{"error":"Connect is not set up on this site"}"#.utf8), status: 503), "Connect is not set up on this site")
+        // a proxy's own page (Cloudflare's 502) never shows its status or its HTML
+        XCTAssertEqual(API.message(Data("<!DOCTYPE html><title>502</title>".utf8), status: 502), "Could not reach the server")
+        XCTAssertEqual(API.message(Data(), status: 500), "Could not finish that on the server")
     }
 
     func testMeWithAndWithoutServers() throws {

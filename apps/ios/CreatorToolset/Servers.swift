@@ -248,13 +248,15 @@ struct API {
         return [json?["code"], json?["error"]].contains { ($0 as? String)?.lowercased() == "busy" }
     }
 
-    /// The server's `{ error }`, or its plain-text answer, or the status.
+    /// The server's `{ error }`, or its plain-text answer, or what the status means. A 502/503/504 with no `{ error }`
+    /// is a proxy's own page (the server sends its own failures as 500 with a message): the server was not reached.
     static func message(_ data: Data, status: Int) -> String {
         if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any], let error = json["error"] as? String {
             return error
         }
+        if [502, 503, 504].contains(status) { return "Could not reach the server" }
         let text = String(data: data.prefix(300), encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return text.isEmpty || text.hasPrefix("<") ? "The server answered \(status)" : text
+        return text.isEmpty || text.hasPrefix("<") ? "Could not finish that on the server" : text
     }
 }
 

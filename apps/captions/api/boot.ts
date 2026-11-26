@@ -119,6 +119,17 @@ console.log(
 const app = new Hono<{ Bindings: HttpBindings; Variables: AuthVars }>();
 
 /**
+ * The app's own 502/504 go out as 500 with their message: a proxy in front (Cloudflare on a server and on the Connect
+ * tunnel) puts its own blank page in place of a 502 or 504, and the apps read those as "the server can't be reached".
+ */
+export const ownFailure = (status: number) => (status === 502 || status === 504 ? 500 : status);
+app.use(async (c, next) => {
+  await next();
+  const status = ownFailure(c.res.status);
+  if (status !== c.res.status) c.res = new Response(c.res.body, { status, headers: c.res.headers });
+});
+
+/**
  * The names a server on this Mac (CT_LOCAL=1) answers to: loopback, the Mac's own name, its addresses and the
  * PUBLIC_ORIGIN host (a tailnet or relay name). Anything else is a page that pointed its DNS at this Mac to read it.
  */
