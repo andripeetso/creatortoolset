@@ -30,8 +30,10 @@ export function ClientRow({ session, now, mine, onRevoke }: { session: ClientSes
   const [revoking, setRevoking] = useState(false);
   const { client } = session;
   const said = fromUserAgent(client.userAgent);
-  const Icon = ICONS[client.deviceType && client.deviceType !== "unknown" ? client.deviceType : (said?.kind ?? "unknown")] ?? Monitor;
-  const about = [mine && session.subject !== mine ? session.subject : null, client.os ?? said?.os, client.appVersion, session.scopes.includes("write") ? null : accessName(session.scopes)].filter(Boolean).join(" · ");
+  const os = client.os ?? said?.os;
+  // a Mac app's window that signed in before it said what it is was saved as a phone: its system says it is a Mac
+  const Icon = ICONS[os?.startsWith("macOS") ? "desktop" : client.deviceType && client.deviceType !== "unknown" ? client.deviceType : (said?.kind ?? "unknown")] ?? Monitor;
+  const about = [mine && session.subject !== mine ? session.subject : null, os, client.appVersion, session.scopes.includes("write") ? null : accessName(session.scopes)].filter(Boolean).join(" · ");
   const revoke = async () => {
     setRevoking(true);
     await onRevoke(session.sessionId).catch((e: Error) => toast.error("Could not revoke it", { description: e.message }));

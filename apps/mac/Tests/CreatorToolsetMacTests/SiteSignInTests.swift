@@ -53,6 +53,7 @@ final class SiteSignInTests: XCTestCase {
     func testThePageSwapsTheCodeAndGoesBack() {
         let js = siteSignInScript(code: "c\"1", verifier: "v", back: "/admin")
         XCTAssertTrue(js.contains(#"fetch("/api/auth/app""#))
+        XCTAssertTrue(js.contains(#""deviceType":"desktop""#))   // a computer's sign-in, never listed as a phone
         XCTAssertTrue(js.contains(#"\"c\\\"1\""#) || js.contains(#"c\"1"#))
         XCTAssertTrue(js.contains(#"["\/admin"]"#) || js.contains(#"["/admin"]"#))
     }

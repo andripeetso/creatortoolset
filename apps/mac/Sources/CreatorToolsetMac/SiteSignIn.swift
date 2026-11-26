@@ -48,8 +48,10 @@ func siteSignInResult(_ url: URL) -> Result<String, SiteSignInError>? {
 struct SiteSignInError: Error, Equatable { let message: String }
 
 /// The page's own call that swaps the code for the window's session, then goes to `back` (with the error, if any).
+/// `client` says what signs in (a computer, by name): the route is the iPhone app's too, and its sessions are a phone's.
 func siteSignInScript(code: String, verifier: String, back: String) -> String {
-    let body = (try? JSONSerialization.data(withJSONObject: ["code": code, "verifier": verifier])).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+    let client = ["deviceType": "desktop", "os": "macOS", "label": Host.current().localizedName ?? macHostName(), "appVersion": appVersion]
+    let body = (try? JSONSerialization.data(withJSONObject: ["code": code, "verifier": verifier, "client": client])).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
     let to = (try? JSONSerialization.data(withJSONObject: [back], options: .fragmentsAllowed)).map { String(decoding: $0, as: UTF8.self) } ?? "[\"/\"]"
     return """
     (async () => {

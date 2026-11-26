@@ -29,8 +29,8 @@ const VERIFIER = "v".repeat(43);
 const pkce = (v: string) => createHash("sha256").update(v).digest("base64url");
 const APP = `app=1&challenge=${pkce(VERIFIER)}`;
 const cookieOf = (res: Response) => (res.headers.get("set-cookie") ?? "").split(";")[0];
-const redeem = (code: unknown, verifier: unknown = VERIFIER) =>
-  app.request("/api/auth/app", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code, verifier }) });
+const redeem = (code: unknown, verifier: unknown = VERIFIER, client?: unknown) =>
+  app.request("/api/auth/app", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code, verifier, client }) });
 const REFUSED = { error: "That sign-in code is used or expired" };
 
 /** The sign-in service's challenge for the sign-in in flight (its redeem pays out only to that verifier). */
@@ -119,6 +119,10 @@ describe("a sign-in an app started (for=site&app=1&challenge=…)", () => {
     // another account's, and a token nobody was given
     expect(isAppSession(appCookie, "admin")).toBe(false);
     expect(isAppSession(`cap_auth=cts_${"0".repeat(43)}`, "cy")).toBe(false);
+    // the Mac app's window signs in the same way and says it is a computer: never a phone's session
+    const mac = await redeem(codeOf(await github(`for=site&${APP}`)), VERIFIER, { deviceType: "desktop", os: "macOS" });
+    expect(mac.status).toBe(200);
+    expect(isAppSession(cookieOf(mac), "cy")).toBe(false);
   });
 
   it("refuses a wrong verifier, and that try uses the code up", async () => {

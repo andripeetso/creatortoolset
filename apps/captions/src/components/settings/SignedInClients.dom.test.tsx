@@ -145,6 +145,13 @@ it("lists the other sign-ins: name, os and app version, how they are connected; 
   expect(button("Revoke others").disabled).toBe(false);
 });
 
+it("draws a Mac app's window saved as a phone (an older app's sign-in) as a computer", async () => {
+  await show();
+  FakeSource.last!.send("clientUpserted", { ...signIn, sessionId: "s-mac", client: { deviceType: "mobile", userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)" } });
+  const row = [...document.querySelectorAll("[class*=grid]")].find((r) => r.textContent?.includes("Creator Toolset"))!;
+  expect(row.querySelector("svg")?.getAttribute("class")).toContain("lucide-laptop");
+});
+
 it("names a browser's sign-in from what the browser says of itself, and says whose it is when it is another account's", async () => {
   const { useAuth } = await import("@/lib/auth");
   useAuth.setState({ me: { username: "admin" } as never });

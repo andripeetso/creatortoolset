@@ -353,7 +353,7 @@ export const secureAttr = (c: Context) => {
 export const sessionCookieFor = (username: string, app: boolean, client: Partial<ClientMetadata> = {}): string | null => {
   const user = findUser(username);
   if (!user) return null;
-  // `desktop`: only a route says it (the Mac app's sign-in through the account), never a browser
+  // `desktop`: only a route says it (the Mac app's sign-ins: through the account, and its window's at /api/auth/app), never a browser
   const deviceType = app ? (client.deviceType === "tablet" ? "tablet" : "mobile") : client.deviceType === "desktop" ? "desktop" : "unknown";
   return `${COOKIE}=${issueSession({ subject: user.username, scopes: [...STANDARD], cookie: true, client: { ...client, deviceType } }).token}`;
 };
@@ -590,15 +590,15 @@ function signInByLink(c: Context, code: string) {
  */
 export const APP_CHALLENGE = /^[A-Za-z0-9_-]{43}$/; // base64url of a sha256
 
-/** What an app says of its device in a sign-in's body (`client`), for the list in Settings: its name, system, model and version; a tablet when it says so. */
-export function clientSaid(raw: unknown): { words: Partial<ClientMetadata>; tablet: boolean } {
+/** What an app says of its device in a sign-in's body (`client`), for the list in Settings: its name, system, model and version; a tablet or a computer when it says so. */
+export function clientSaid(raw: unknown): { words: Partial<ClientMetadata>; tablet: boolean; desktop: boolean } {
   const said = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
   const words: Partial<ClientMetadata> = {};
   for (const k of ["label", "os", "model", "appVersion"] as const) {
     const v = said[k];
     if (typeof v === "string" && v.trim()) words[k] = v.trim().slice(0, 80);
   }
-  return { words, tablet: said.deviceType === "tablet" };
+  return { words, tablet: said.deviceType === "tablet", desktop: said.deviceType === "desktop" };
 }
 const APP_VERIFIER = /^[A-Za-z0-9._~-]{43,128}$/;
 const appCodes = new Map<string, { username: string; hash: string; challenge: string; expiresAt: number }>();
@@ -626,7 +626,8 @@ authApp.post("/app", async (c) => {
   if (!user || stamp(user) !== hit!.hash) return c.json({ error: "That sign-in code is used or expired" }, 400);
   bumpUsage(user.username, { logins: 1 });
   const said = clientSaid(b?.client);
-  setLoginCookie(c, user, true, { ...said.words, ...(said.tablet ? { deviceType: "tablet" as const } : {}) });
+  // the Mac app's window signs in here too and says it is a computer: its word only gives up a phone's session, so it is taken
+  setLoginCookie(c, user, !said.desktop, { ...said.words, ...(said.desktop ? { deviceType: "desktop" as const } : said.tablet ? { deviceType: "tablet" as const } : {}) });
   return c.json({ ok: true, user: withLogins(sessionOf(user)) });
 });
 
