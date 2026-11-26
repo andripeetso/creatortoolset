@@ -18,7 +18,7 @@ import { emitEvent } from "../lib/events";
 import { pluginDeviceJobs } from "../lib/plugin";
 import { rootAt } from "../lib/storage";
 import { accountOf, libraryChanged } from "./access";
-import { blobs, fileBlur, libraryDb, libraryUploadStored } from "./db";
+import { blobs, fileBlur, libraryDb, librarySetting, libraryUploadStored } from "./db";
 import { enqueueJob } from "./jobs";
 
 const dir = () => path.join(env.dataDir, "library", "held");
@@ -86,9 +86,17 @@ export async function heldLanded(
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'verified', 'scan')`,
   ).run(versionId, device, folder, x.path, x.size, x.quick, now, now, now);
   if (x.thumb) await (await import("./on-mac")).putThumb(v.lib, versionId, x.thumb);
+  // from here it is a file on that computer, processed as one indexed there (on-mac.ts): its transcript is made there, as
+  // the library's own account whoever sent the file (a member's computer does not have it)
+  const home = (d.prepare("SELECT workspace_id AS home FROM libraries WHERE id = ?").get(v.lib) as { home: string } | undefined)?.home;
+  if (v.kind === "video" && librarySetting(v.lib, "transcribe")) enqueueJob(d, v.lib, versionId, "transcribe", (home && accountOf(home)) || v.by);
   const f = fileBlur(versionId);
   if (f?.blur === "yes" && !f.blurredVersionId) emitEvent("library.version.blur", { libraryId: v.lib, versionId, owner: v.by });
-  else await settleHeld(versionId);
+  else {
+    // decided before it landed (kept as filmed, Blur faces off since): settled now, and it follows Upload as a file added now
+    await settleHeld(versionId);
+    (await import("./derived")).followUpload(versionId);
+  }
   libraryChanged(v.lib);
 }
 
@@ -151,8 +159,12 @@ export async function dropHeld(versions: string[]): Promise<void> {
  * can end ends (a stop between an answer and its file), and each file not on the main computer yet is asked for again.
  */
 export async function resumeHeld(): Promise<void> {
+  // the folder is listed before the rows are read, and no file goes while an upload is finishing: a finish moves its file
+  // in a moment before it writes its row (routes.ts), and in a deploy's swap the old process may be doing just that
+  const names = await readdir(dir()).catch(() => [] as string[]);
   const held = new Map((db().prepare("SELECT id, mac_path FROM asset_versions WHERE held = 1").all() as { id: string; mac_path: string | null }[]).map((r) => [r.id, r.mac_path]));
-  for (const name of await readdir(dir()).catch(() => [] as string[])) if (!held.has(name)) await rm(path.join(dir(), name), { force: true });
+  const finishing = () => !!db().prepare("SELECT 1 FROM uploads WHERE state = 'finishing' LIMIT 1").get();
+  for (const name of names) if (!held.has(name) && !finishing()) await rm(path.join(dir(), name), { force: true });
   for (const [id, placed] of held) await (placed ? settleHeld(id) : pullHeld(id));
 }
 

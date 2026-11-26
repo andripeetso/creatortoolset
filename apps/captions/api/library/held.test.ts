@@ -312,6 +312,19 @@ describe("the main computer pulls it, and only then is it processed", () => {
     expect((await keptAsFilmed(dropped.assetId!)).status).toBe(200);
     expect(version(dropped.versionId!)).toMatchObject({ held: null, source_key: `mac:${dropped.versionId}`, mac_path: path.join(main.imports, "Ball.mp4") });
     expect(onServer("a ball, no faces, dropped")).toEqual([]);
+    // and from there it follows Upload as a file added now: Proxies is on, so its computer is asked to send
+    expect(jobsOf(dropped.versionId!)).toEqual(["send"]);
+    // decided before it landed: once its master is there the held file goes, it is processed as a file indexed on that
+    // computer (its transcript, as the library's own account) and follows Upload the same way
+    d.prepare("UPDATE libraries SET settings = json_set(settings, '$.transcribe', json('true')) WHERE id = ?").run(LIB);
+    const early = await upload("Kite.mp4", "a kite, no faces, early");
+    expect((await keptAsFilmed(early.assetId!)).status).toBe(200);
+    expect(await main.takes()).toBe("done");
+    expect(version(early.versionId!)).toMatchObject({ held: null, source_key: `mac:${early.versionId}` });
+    expect(onServer("a kite, no faces, early")).toEqual([]);
+    expect(jobsOf(early.versionId!)).toEqual(["send", "transcribe"]);
+    expect((d.prepare("SELECT actor FROM jobs WHERE version_id = ? AND kind = 'transcribe'").get(early.versionId!) as { actor: string }).actor).toBe("tinyacrobatics");
+    d.prepare("UPDATE libraries SET settings = json_set(settings, '$.transcribe', json('false')) WHERE id = ?").run(LIB);
     stored("originals");
   });
 

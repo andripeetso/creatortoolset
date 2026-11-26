@@ -1215,7 +1215,7 @@ libraryApp.post("/:id/made/:kind", async (c) => {
     // only under Blur faces: a file marked yes plays nowhere but on its own computer until Face Blur has covered it
     if (!blursFaces(libraryId)) return c.json({ error: "Needs Blur faces", code: "invalid" }, 400);
     // the files left as they were when Blur faces went on, and no other: marked yes, then asked for as Blur all files does
-    const files = Number(db().prepare("UPDATE assets SET blur = 'yes', blur_note = NULL WHERE library_id = ? AND trashed_at IS NULL AND blur = 'no' AND blur_note = 'skipped'").run(libraryId).changes);
+    const files = Number(db().prepare("UPDATE assets SET blur = 'yes', blur_note = NULL WHERE library_id = ? AND trashed_at IS NULL AND blur = 'no' AND blur_note = 'skipped' AND kind IN ('video', 'image')").run(libraryId).changes);
     if (files) await blurAll(libraryId);
     return c.json({ files });
   }

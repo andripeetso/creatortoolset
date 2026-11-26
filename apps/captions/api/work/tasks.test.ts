@@ -116,6 +116,16 @@ describe("computer tasks", () => {
   });
 });
 
+describe("a long run of tasks a computer can't take", () => {
+  it("never hides the one behind it: sixty files held for another computer, then a task of this one's", async () => {
+    taskKind<{ mine: boolean }, null>("test-picky", { onComputer: true, can: (_d, t) => t.input.mine, run: async () => ({ result: null }), apply: () => {} });
+    for (let i = 0; i < 60; i++) await startTask("test-picky", `away-${i}`, "tiny", null, { mine: false });
+    await startTask("test-picky", "here", "tiny", null, { mine: true });
+    expect(await claim(["test-picky"])).toMatchObject({ task: { kind: "test-picky" }, input: { mine: true } });
+    expect(taskFor("test-picky", "away-0")?.state).toBe("queued"); // the others wait on, untouched
+  });
+});
+
 describe("an input's file on this computer", () => {
   it("is used where the task names it, and with its size given only while the file there is still that size", () => {
     const dir = mkdtempSync(path.join(tmpdir(), "ct-local-input-"));

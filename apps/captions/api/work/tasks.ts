@@ -269,17 +269,25 @@ function fail(t: TaskRow, error: string, final = false): void {
   if (changed && last) kinds.get(t.kind)?.failed?.(t, error.slice(0, 500));
 }
 
+/**
+ * The queued tasks matching `where`, oldest first, read 50 at a time until the caller stops: a long run of tasks it can't
+ * take (files held for a main computer that is away wait with no end, library/held.ts) never hides the ones behind it.
+ */
+function* queuedTasks(where: string, params: (string | number)[]): Generator<TaskRow> {
+  for (let after = 0; ; ) {
+    const page = db().prepare(`SELECT * FROM computer_tasks WHERE state = 'queued' AND id > ? AND ${where} ORDER BY id LIMIT 50`).all(after, ...params) as unknown as Raw[];
+    for (const r of page) yield rowOf(r)!;
+    if (page.length < 50) return;
+    after = page.at(-1)!.id;
+  }
+}
+
 /** The task computer `d` takes now, with its package, or null: its owner's oldest queued one of a kind it runs. */
 export function claimTask(d: Device, now = Date.now()): TaskPackage | null {
   const mine = d.work?.tasks?.filter((k) => kinds.has(k)) ?? [];
   if (!mine.length || d.work?.libraryOnly || offOf(d.owner).has(d.id)) return null;
   expire(now);
-  const rows = (
-    db()
-      .prepare(`SELECT * FROM computer_tasks WHERE state = 'queued' AND run_after <= ? AND actor = ? AND kind IN (${mine.map(() => "?").join(", ")}) ORDER BY id LIMIT 50`)
-      .all(now, d.owner, ...mine) as unknown as Raw[]
-  ).map((r) => rowOf(r)!);
-  for (const t of rows) {
+  for (const t of queuedTasks(`run_after <= ? AND actor = ? AND kind IN (${mine.map(() => "?").join(", ")})`, [now, d.owner, ...mine])) {
     if (!(kinds.get(t.kind)!.can?.(d, t) ?? true)) continue;
     const claim = randomUUID();
     const got = db()
@@ -297,11 +305,8 @@ export function claimTask(d: Device, now = Date.now()): TaskPackage | null {
 export function tasksWait(d: Device, now = Date.now()): boolean {
   const mine = d.work?.tasks?.filter((k) => kinds.has(k)) ?? [];
   if (!mine.length || d.work?.libraryOnly || offOf(d.owner).has(d.id)) return false;
-  return (
-    db()
-      .prepare(`SELECT * FROM computer_tasks WHERE state = 'queued' AND run_after <= ? AND actor = ? AND kind IN (${mine.map(() => "?").join(", ")}) LIMIT 50`)
-      .all(now, d.owner, ...mine) as unknown as Raw[]
-  ).some((r) => kinds.get(r.kind)!.can?.(d, rowOf(r)!) ?? true);
+  for (const t of queuedTasks(`run_after <= ? AND actor = ? AND kind IN (${mine.map(() => "?").join(", ")})`, [now, d.owner, ...mine])) if (kinds.get(t.kind)!.can?.(d, t) ?? true) return true;
+  return false;
 }
 
 /** A hold whose computer stopped beating: tried again (or failed after three). */
@@ -320,8 +325,7 @@ export async function taskTick(now = Date.now()): Promise<void> {
   ticking = true;
   try {
     expire(now);
-    const queued = (db().prepare("SELECT * FROM computer_tasks WHERE state = 'queued' AND run_after <= ? ORDER BY id LIMIT 50").all(now) as unknown as Raw[]).map((r) => rowOf(r)!);
-    for (const t of queued) {
+    for (const t of queuedTasks("run_after <= ?", [now])) {
       if (!kinds.has(t.kind)) continue;
       const waits = kinds.get(t.kind)!.ttlMs;
       const ttl = typeof waits === "function" ? waits(t) : waits;
