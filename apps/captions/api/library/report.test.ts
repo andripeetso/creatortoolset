@@ -172,4 +172,25 @@ describe("location agents: the computers report, the server records", () => {
     const ix = await app.request("/api/devices/relay/index", { method: "POST", headers: auth, body: JSON.stringify({ folder, name: "p.mp4", path: `${DIR}/p.mp4`, size: 10, quick: quick(20), frames: [] }) });
     expect(ix.status).toBe(200);
   });
+
+  it("writes a page of a listing as one commit, so a long page never holds the server a flush a file", async () => {
+    const { device, token } = await pair("machine-eeee-5555");
+    const auth = { ...json, authorization: `Bearer ${token}` };
+    const dir = "/Volumes/Tiny Footage/One Commit";
+    await app.request("/api/devices/storage/folders", { method: "POST", headers: { ...json, cookie }, body: JSON.stringify({ role: "footage", host: device.id, path: dir }) });
+    const folder = ((await (await app.request("/api/devices/relay/folders", { headers: auth })).json()) as { folders: { id: string; path: string }[] }).folders.find((f) => f.path === dir)!.id;
+    const files = [1, 2, 3].map((n) => ({ path: `${dir}/${n}.mp4`, bytes: 500 + n, mtime: 1_700_000_000_000, quick: quick(900 + n) }));
+    for (const f of files) await app.request("/api/devices/relay/index", { method: "POST", headers: auth, body: JSON.stringify({ folder, name: path.basename(f.path), path: f.path, size: f.bytes, quick: f.quick, frames: 0 }) });
+    const d = libraryDb();
+    const exec = d.exec.bind(d);
+    const said: string[] = [];
+    d.exec = (sql: string) => (said.push(sql), exec(sql));
+    try {
+      await app.request("/api/devices/relay/report", { method: "POST", headers: auth, body: JSON.stringify({ reportVersion: 2, folders: [{ id: folder, state: "ok", scan: "one", page: 0, complete: true, files }] }) });
+    } finally {
+      d.exec = exec;
+    }
+    expect(said.filter((x) => x === "BEGIN IMMEDIATE" || x === "COMMIT")).toEqual(["BEGIN IMMEDIATE", "COMMIT"]);
+    expect(d.prepare("SELECT COUNT(*) AS n FROM version_places WHERE device = ? AND state = 'verified'").get(device.id)).toEqual({ n: 3 });
+  });
 });

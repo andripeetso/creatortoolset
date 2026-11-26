@@ -781,4 +781,7 @@ export const MIGRATIONS: string[] = [
   // Originals could not be stored under Blur faces before it
   `UPDATE libraries SET settings = json_set(settings, '$.upload', 'proxies', '$.proxy', json('true'), '$.proxySince', CAST(strftime('%s', 'now') AS INTEGER) * 1000)
      WHERE json_extract(settings, '$.blurFaces') = 1 AND json_extract(settings, '$.upload') = 'originals' AND json_extract(settings, '$.proxy') = 0;`,
+  // a computer's folder listing looks each file up by its path (report.ts applyFolder): without this every file read
+  // every place row of its folder, so a page's time grew with the square of the library
+  `CREATE INDEX IF NOT EXISTS version_places_path ON version_places(device, path);`,
 ];

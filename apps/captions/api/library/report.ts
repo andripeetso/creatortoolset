@@ -448,6 +448,22 @@ function upsert(versionId: string, device: string, folder: string, f: ReportFile
   mergeSamePath(versionId, device);
 }
 
+/**
+ * `f`'s writes as one commit. Each commit is a flush to the disk, and node:sqlite stops every request while it runs: a
+ * page of 2,000 files, one commit a file, held the whole server for 25 s. `f` never awaits (another request's writes
+ * would join it).
+ */
+function inOne(d: ReturnType<typeof db>, f: () => void): void {
+  d.exec("BEGIN IMMEDIATE");
+  try {
+    f();
+    d.exec("COMMIT");
+  } catch (e) {
+    d.exec("ROLLBACK");
+    throw e;
+  }
+}
+
 /** One folder's page of a listing from computer `device`: place rows written, the files no version matched answered. */
 async function applyFolder(dev: Device, folder: StorageFolder, libraries: FolderLibrary[], r: ReportFolder, now: number, index: ReportAnswer["index"], touched: Set<string>, keepOut: string[], filmed: ReportAnswer["filmed"], media: StorageFolder[], settle: Set<string>, copies: () => Set<string>): Promise<void> {
   const d = db();
@@ -463,7 +479,7 @@ async function applyFolder(dev: Device, folder: StorageFolder, libraries: Folder
     // not readable now: what was here is not checked, never gone
     d.prepare("UPDATE version_places SET state = 'unchecked', checked_at = ? WHERE device = ? AND folder_id = ? AND state IN ('verified','found')").run(now, device, folder.id);
     libs.forEach((l) => touched.add(l));
-  } else {
+  } else inOne(d, () => {
     const key = `${device}|${folder.id}|${r.scan ?? ""}`;
     if (r.scan) scanStart.begin(key, now, r.page);
     // only files inside the folder (its own path on this computer, or inside its container)
@@ -580,7 +596,7 @@ async function applyFolder(dev: Device, folder: StorageFolder, libraries: Folder
       // numbers no pages, never settles a clip waiting on it
       if (whole) listed.set(`${device}|${folder.id}`, start ?? now);
     } else if (left.size) leftSeen.set(key, left);
-  }
+  });
   const was = folder.folderState;
   if (was !== state || !folder.checkedAt || now - folder.checkedAt > 5 * 60_000)
     await updateFolder(dev.owner, folder.id, (f) => ({ ...f, folderState: state, checkedAt: now }));
