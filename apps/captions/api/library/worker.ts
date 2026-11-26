@@ -265,6 +265,17 @@ export function leftHere(j: JobRow & { source_key?: string | null }): "computer"
   return false;
 }
 
+/**
+ * Each queued job's answer from leftHere and when it was worked out. Working it out reads the clip, the uploader's
+ * folders and every one of their computers; every lane loop asked again for up to 500 jobs every 2 s, which with a few
+ * hundred jobs waiting for a computer held the server's only thread at 100% (2026-11-26). A job is placed again after
+ * PLACE_MS, so a computer that comes or goes moves its jobs within that; a job not placed yet is placed at once.
+ */
+const placed = new Map<string, { how: ReturnType<typeof leftHere>; at: number }>();
+export const PLACE_MS = 15_000;
+/** Forget every job's place (tests that change a computer or a setting between ticks). */
+export const forgetPlaces = () => placed.clear();
+
 /** The queued jobs of `kinds` this server leaves to a computer now, or leaves waiting while its video work is off. */
 function leftToComputers(db: ReturnType<typeof libraryDb>, now: number, kinds: readonly string[]): number[] {
   const test = leaveToComputers.test;
@@ -281,7 +292,15 @@ function leftToComputers(db: ReturnType<typeof libraryDb>, now: number, kinds: r
     .all(now, ...all) as unknown as (JobRow & { source_key: string | null })[];
   const out: number[] = [];
   for (const j of queued) {
+    // by id, kind and clip: an id SQLite gives again after a delete is another job
+    const key = `${j.id}:${j.kind}:${j.version_id}`;
+    const known = placed.get(key);
+    if (known && now - known.at < PLACE_MS) {
+      if (known.how) out.push(j.id);
+      continue;
+    }
     const how = (on.includes(j.kind) || decodes.includes(j.kind)) && leftHere(j);
+    placed.set(key, { how, at: now });
     if (how === "computer") {
       // a computer can take it now: its old "waits for" line goes, or the Activity counts it as away until a claim
       if (j.error === WAITS_FOR_COMPUTER || j.error === WAITS_FOR_SERVER || /^(Only .+ can read |No computer can read )/.test(j.error ?? ""))
@@ -296,6 +315,8 @@ function leftToComputers(db: ReturnType<typeof libraryDb>, now: number, kinds: r
       if (j.error !== line) db.prepare("UPDATE jobs SET error = ? WHERE id = ?").run(line, j.id);
     }
   }
+  // jobs that ran or left the queue: their places go once they are old
+  if (placed.size > 5000) for (const [key, p] of placed) if (now - p.at >= PLACE_MS) placed.delete(key);
   return out;
 }
 

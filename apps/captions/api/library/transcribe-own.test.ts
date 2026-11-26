@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { TRANSCRIBE_KIND } from "../../contracts/devices";
 import { WORK_V, type LibraryPackage } from "../../contracts/work";
 
@@ -44,7 +44,8 @@ const { blobs, libraryDb } = await import("./db");
 const { enqueueJob } = await import("./jobs");
 const { probe } = await import("./media/probe");
 const { soundArgs } = await import("./transcribe");
-const { tick } = await import("./worker");
+const { forgetPlaces, tick } = await import("./worker");
+beforeEach(() => forgetPlaces()); // the tests change keys and computers between ticks
 const { runLibraryJob } = await import("../work/library");
 const { CLAIM_POLL } = await import("../work/routes");
 

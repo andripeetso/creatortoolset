@@ -438,3 +438,24 @@ it("gives the server a pause after a background chore, none after a queued job",
   expect(nextTurnMs(true, true)).toBeGreaterThan(0);
   expect(nextTurnMs(false, false)).toBeGreaterThan(nextTurnMs(true, true));
 });
+
+it("works out where a waiting job goes once per PLACE_MS, not on every tick of every lane", async () => {
+  const { PLACE_MS, leaveToComputers } = await import("./worker");
+  const db = libraryDb();
+  const before = { kinds: leaveToComputers.kinds, test: leaveToComputers.test };
+  let asked = 0;
+  leaveToComputers.kinds = ["proxy"];
+  leaveToComputers.test = () => (asked++, true); // a computer takes it
+  try {
+    enqueueJob(db, "lib_place", "ver_place", "proxy", null);
+    const t = Date.now();
+    await tick(t, ["proxy"]);
+    await tick(t + 1000, ["proxy"]);
+    expect(asked).toBe(1);
+    await tick(t + PLACE_MS, ["proxy"]);
+    expect(asked).toBe(2);
+  } finally {
+    Object.assign(leaveToComputers, before);
+    db.exec("DELETE FROM jobs WHERE version_id = 'ver_place'");
+  }
+});

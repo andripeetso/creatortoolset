@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Hono } from "hono";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 // the studio suite runs hosted (CT_MODE=hosted), where a server does video work only by a plug-in's grant (serverWorks):
 // this file's server is its own, so the mode is cleared here and put back after
@@ -320,6 +320,7 @@ describe.skipIf(rootReplaced)("the AI Editor's video steps", () => {
 });
 
 describe("the Media Library's work", () => {
+  beforeEach(() => library.forgetPlaces()); // each test changes the switch or a computer between ticks
   beforeAll(async () => {
     if (!cookies.lib) await login("lib");
     await file("lib", "ver_l");
@@ -362,6 +363,7 @@ describe("the Media Library's work", () => {
     db.prepare("INSERT INTO descriptions (version_id, source, text, provider, created_at) VALUES ('ver_l', 'ai', 'A boss fight', 'x', 1)").run();
     // (a description waits for its transcript: that one is through here)
     db.exec("UPDATE jobs SET state = 'done' WHERE version_id = 'ver_l' AND kind = 'transcribe'");
+    library.forgetPlaces(); // the clip changed: placed again now, not PLACE_MS later
     expect(await library.tick(Date.now(), ["describe"])).toBe(true);
     expect(job("describe").error).not.toBe(library.WAITS_FOR_SERVER);
     // that Mac is handed the look with the path the file was sent from

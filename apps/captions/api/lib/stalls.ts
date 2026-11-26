@@ -53,8 +53,9 @@ export function startStallWatch(overMs = 2000): void {
     if (++turns < 60) return;
     if (lateTurns >= 30 && now - profiledAt > 3_600_000) {
       profiledAt = now;
+      const lateOf60 = lateTurns; // counted afresh while the profile runs
       void cpuProfile(10_000, 6, 8)
-        .then((p) => console.warn(`[busy] the server was late ${lateTurns} of 60 s; idle ${p.idle}%; where the time went:\n${busyLines(p)}`))
+        .then((p) => console.warn(`[busy] the server was late ${lateOf60} of 60 s; idle ${p.idle}%; where the time went:\n${busyLines(p)}`))
         .catch(() => {});
     }
     turns = lateTurns = 0;
