@@ -166,8 +166,9 @@ final class Account: ObservableObject {
         }
     }
 
+    /// The account's own sign-in sends `create=0`: a phone never makes an account (only a Mac links computers to one).
     static func loginURL(_ server: URL, _ provider: String, challenge: String, forSite: Bool = false) -> URL {
-        API(server: server, cookie: nil).url("/api/account/login/\(provider)?\(forSite ? "for=site&" : "")app=1&challenge=\(challenge)")
+        API(server: server, cookie: nil).url("/api/account/login/\(provider)?\(forSite ? "for=site&" : "")app=1\(forSite ? "" : "&create=0")&challenge=\(challenge)")
     }
 
     /// Whether a sign-in start answers with its redirect to Apple or Google (anything else: no sign-in there).

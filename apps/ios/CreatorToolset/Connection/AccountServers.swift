@@ -141,8 +141,11 @@ final class AccountServers: ObservableObject {
             await adoptHosted(listed)
             hosted = listed
         }
+        var step = "/v1/client/dpop-token" // which call failed, for the trace
         do {
-            let listed = try JSONDecoder().decode(Listed.self, from: try await call("/v1/computers"))
+            _ = try await relayAccess()
+            step = "/v1/computers"
+            let listed = try JSONDecoder().decode(Listed.self, from: try await call(step))
             computers = listed.computers.compactMap { one in
                 guard one.id.wholeMatch(of: #/[A-Za-z0-9_-]{8,128}/#) != nil else { return nil }
                 let old = computers.first { $0.id == one.id }
@@ -152,7 +155,7 @@ final class AccountServers: ObservableObject {
             }
         } catch {
             failures += 1
-            traceId = Self.trace(error)
+            traceId = "\(step) \(Self.trace(error))"
             if computers.isEmpty { computers = known() }
             // the servers already known stay shown; the warning is for a list with nothing at all in it
             problem = computers.isEmpty && hosted.isEmpty ? "Could not load your computers" : nil

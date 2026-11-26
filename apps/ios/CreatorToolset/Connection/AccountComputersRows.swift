@@ -14,13 +14,13 @@ struct AccountComputersRows: View {
             if accountServers.loading, accountServers.computers.isEmpty {
                 HStack(spacing: 10) {
                     ProgressView()
-                    Text("Loading your computers.").foregroundStyle(.secondary)
+                    Text("Loading your computers").foregroundStyle(.secondary)
                 }
                 .padding(.vertical, 12)
             } else if let failed = accountServers.problem {
                 VStack(alignment: .leading, spacing: 8) {
                     Problem(text: failed)
-                    Button("Try again") { Task { await accountServers.refresh() } }
+                    Button("Retry") { Task { await accountServers.refresh() } }
                         .buttonStyle(.bordered)
                     if let trace = accountServers.traceId {
                         DisclosureGroup("Details") {

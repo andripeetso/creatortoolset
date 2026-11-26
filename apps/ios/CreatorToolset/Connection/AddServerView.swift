@@ -284,10 +284,7 @@ struct FirstRunView: View {
                 if account.profile != nil, !accountServers.loading, accountServers.problem == nil, accountServers.computers.isEmpty, accountServers.hosted.isEmpty {
                     NoComputerYet()
                 } else if account.profile != nil {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("Your computers").font(.largeTitle.bold())
-                        Text("Each connects by itself, at home or away.").foregroundStyle(.secondary)
-                    }
+                    Text("Your computers").font(.largeTitle.bold())
                     AccountComputersRows()
                 } else {
                     VStack(alignment: .leading, spacing: 10) {

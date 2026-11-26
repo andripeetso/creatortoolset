@@ -41,7 +41,7 @@ final class AccountSignInTests: XCTestCase {
 
     func testSignInAddresses() {
         XCTAssertEqual(Account.loginURL(Account.site, "apple", challenge: "C").absoluteString,
-                       "https://creatortoolset.com/api/account/login/apple?app=1&challenge=C")
+                       "https://creatortoolset.com/api/account/login/apple?app=1&create=0&challenge=C")
         XCTAssertEqual(Account.loginURL(URL(string: "https://studio.example.test/")!, "google", challenge: "C", forSite: true).absoluteString,
                        "https://studio.example.test/api/account/login/google?for=site&app=1&challenge=C")
     }
