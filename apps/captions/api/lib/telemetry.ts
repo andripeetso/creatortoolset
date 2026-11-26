@@ -105,10 +105,11 @@ export function notePage(page: string): void {
 
 export async function sendCheckin(): Promise<void> {
   if (!telemetryOn()) return;
-  const took = { opened, pages, failed: takeFailureCounts(), actions };
+  const took = { opened, pages, failed: takeFailureCounts(), actions, used };
   opened = 0;
   pages = {};
   actions = {};
+  used = { models: {}, jobs: {}, exports: { done: 0, failed: 0, seconds: 0 } };
   const top = Object.fromEntries(Object.entries(took.actions).sort((a, b) => b[1] - a[1]).slice(0, ACTIONS_SENT));
   const library = librarySize();
   let ai: string[] = [];
@@ -117,10 +118,11 @@ export async function sendCheckin(): Promise<void> {
   } catch {
     // unreadable settings: the check-in goes without
   }
-  const ok = await post(pingUrl(), { ...base(), opened: took.opened, connected: connectState() !== null, ai, tools: took.pages, ...(took.failed.length ? { failed: took.failed } : {}), actions: top, ...(library ? { library } : {}) });
+  const ok = await post(pingUrl(), { ...base(), opened: took.opened, connected: connectState() !== null, ai, tools: took.pages, ...(took.failed.length ? { failed: took.failed } : {}), actions: top, used: took.used, ...(library ? { library } : {}) });
   if (ok) return;
   putBackFailureCounts(took.failed);
   for (const [k, n] of Object.entries(took.actions)) actions[k] = (actions[k] ?? 0) + n;
+  used = took.used; // shortcut: what came in while this one was on its way is dropped; merge if it matters
   opened += took.opened; // not delivered: they go with the next one
   for (const [k, n] of Object.entries(took.pages)) pages[k] = (pages[k] ?? 0) + n;
 }
@@ -136,8 +138,29 @@ let events: Array<{ name: string; at: number; props: Props }> = [];
 
 /** One thing done ("page", "ai run", "export"), with numbers and names only: never a person's words, file or account. */
 export function track(name: string, props: Props = {}, now = Date.now()): void {
-  if (!telemetryOn() || events.length >= EVENTS_MAX) return;
-  events.push({ name, at: now, props });
+  if (!telemetryOn()) return;
+  tally(name, props);
+  if (events.length < EVENTS_MAX) events.push({ name, at: now, props });
+}
+
+/* the same AI runs and exports as totals in the check-in, so the board has them with no event store */
+type Use = { runs: number; tokens: number; costUsd: number };
+let used: { models: Record<string, Use>; jobs: Record<string, Use>; exports: { done: number; failed: number; seconds: number } } = { models: {}, jobs: {}, exports: { done: 0, failed: 0, seconds: 0 } };
+const KEYS_MAX = 40;
+function tally(name: string, p: Props): void {
+  const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+  if (name === "ai run") {
+    for (const [map, key] of [[used.models, String(p.model)], [used.jobs, String(p.job)]] as const) {
+      if (!(key in map) && Object.keys(map).length >= KEYS_MAX) continue;
+      const u = (map[key] ??= { runs: 0, tokens: 0, costUsd: 0 });
+      u.runs++;
+      u.tokens += num(p.tokens);
+      u.costUsd = Math.round((u.costUsd + num(p.costUsd)) * 1e4) / 1e4;
+    }
+  } else if (name === "export") {
+    used.exports[p.ok ? "done" : "failed"]++;
+    used.exports.seconds += num(p.seconds);
+  }
 }
 
 export async function sendEvents(): Promise<void> {

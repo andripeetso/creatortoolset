@@ -98,6 +98,13 @@ describe("usage and crash reports", () => {
     await t.sendEvents();
     await t.sendEvents();
     expect(sent).toHaveLength(1);
+    await t.sendCheckin();
+    expect(sent[1].body.used).toEqual({
+      models: { "claude-sonnet-5-5": { runs: 1, tokens: 1200, costUsd: 0 } },
+      jobs: { "Caption Studio": { runs: 1, tokens: 1200, costUsd: 0 } },
+      exports: { done: 0, failed: 1, seconds: 12 },
+    });
+    sent.length = 1;
     expect(sent[0].url).toBe("https://ping.test/api/ping/events");
     expect(sent[0].body.events).toEqual([
       { name: "ai run", at: 1_000, props: { job: "Caption Studio", model: "claude-sonnet-5-5", tokens: 1200 } },
