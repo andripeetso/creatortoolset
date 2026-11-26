@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 import { Switch } from "@/components/ui/switch";
 import { Row } from "@/components/settings/ui";
 import { HOSTED_DEFAULT, HOSTED_OFF, LIBRARY_WORDS, hostedOn, type HostedMix } from "@contracts/library";
@@ -23,6 +23,11 @@ const BLURRED: Part = { key: "originals", label: LIBRARY_WORDS.blurred, tip: LIB
 export function HostedSwitches({ value, onChange, blurFaces, onBlurFaces, proxies = true }: { value: HostedMix; onChange: (m: HostedMix) => void; blurFaces?: boolean; onBlurFaces?: (on: boolean, m: HostedMix) => void; proxies?: boolean }) {
   const last = useRef<HostedMix | null>(hostedOn(value) ? value : null);
   const on = hostedOn(value);
+  // Blur faces switched: the mix remembered for the master loses its Originals part, which means another thing now, so
+  // the master on again never starts sending originals (or blurred copies) nobody chose
+  useEffect(() => {
+    if (last.current) last.current = { ...last.current, originals: false };
+  }, [blurFaces]);
   const master = (v: boolean) => {
     if (!v) last.current = value;
     // the mix brought back never turns on Proxies while its row is not shown

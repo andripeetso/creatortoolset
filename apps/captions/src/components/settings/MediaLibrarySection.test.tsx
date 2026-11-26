@@ -301,7 +301,8 @@ describe("Settings → Media Library, the owner's page", () => {
     expect(patches).toEqual([{ settings: { proxy: false, upload: "originals", finalsUpload: "all" } }]);
     expect(undos.map((u) => u.what)).toEqual([LIBRARY_WORDS.proxiesOff]);
     await act(async () => void (await undos[0]!.back()));
-    expect(patches.at(-1)).toEqual({ settings: { proxy: true, upload: "all", finalsUpload: "all" } });
+    // Undo says it is one (proxyBack), so the switch keeps its time and the proxies that were waiting come back
+    expect(patches.at(-1)).toEqual({ settings: { proxy: true, proxyBack: true, upload: "all", finalsUpload: "all" } });
     await press(toggle("Proxies for new files"));
     expect(patches.at(-1)).toEqual({ settings: { proxy: false, upload: "originals", finalsUpload: "all" } });
     expect(undos).toHaveLength(2);

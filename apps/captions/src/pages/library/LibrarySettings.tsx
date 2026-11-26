@@ -1,3 +1,4 @@
+import { useRef } from "react";
 import { LIBRARY_WORDS, PROXY_QUALITIES, hostedOf, hostedSettings, levelOf, makesProxies, organizeOf, proxyQualityOf, type LibrarySettings as Settings, type LibrarySpace, type LibraryStorage, type LibrarySummary, type WatchStatus } from "@contracts/library";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
@@ -70,11 +71,14 @@ export function LibrarySettingsBody({ library, onChange, onError, workspace }: B
   const windowWorkspace = useWorkspace((s) => s.currentProjectId);
   const me = useMe();
   const faceBlur = useWorkspace((st) => faceBlurOn(me, st.pluginsOff, workspace ?? st.currentProjectId));
+  // the settings as they are now, for an Undo pressed a few seconds after its change
+  const latest = useRef(library.settings);
+  latest.current = library.settings;
   if (library.readOnly) return <MemberSettings library={library} />;
   const s = library.settings;
   const level = levelOf(s);
   // true once the server has it
-  const save = (settings: Partial<Settings> & { blurExisting?: boolean }) =>
+  const save = (settings: Partial<Settings> & { blurExisting?: boolean; proxyBack?: boolean }) =>
     markSave(updateLibrary(library.id, { settings }))
       .then((l) => (onChange(l), true))
       .catch((e: unknown) => (onError(message(e)), false));
@@ -84,7 +88,10 @@ export function LibrarySettingsBody({ library, onChange, onError, workspace }: B
     const was = hostedOf(s);
     const both = !v && was.proxies;
     if ((await save({ proxy: v, ...(both ? hostedSettings({ ...was, proxies: false }, s.finalsUpload) : {}) })) && both)
-      undoable(LIBRARY_WORDS.proxiesOff, () => save({ proxy: true, ...hostedSettings(was, s.finalsUpload) }));
+      // Undo puts back the two this switch turned off and nothing else: the rest of Upload is read at the press (Blur faces
+      // may have been switched since, which takes the Originals part with it), and proxyBack says it is an Undo, so the
+      // switch keeps its time and the proxies that were waiting are asked for again (api/library/routes.ts)
+      undoable(LIBRARY_WORDS.proxiesOff, () => save({ proxy: true, proxyBack: true, ...hostedSettings({ ...hostedOf(latest.current), proxies: true }, latest.current.finalsUpload) }));
   };
   // Blur faces, the one switch (Proxy workflow, and What's made's Blurred copies row). Turning it on asks once whether
   // the files already here are blurred too (blurExisting) or left as they are; either way the Blurred part of Upload

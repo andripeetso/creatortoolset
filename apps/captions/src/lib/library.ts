@@ -121,7 +121,7 @@ export const stopLibrary = (libraryId: string) => send<{ files: number }>(`/api/
 export const retryFailed = (libraryId: string, kind: string) => send<{ files: number }>(`/api/library/${libraryId}/retry/${kind}`, "POST");
 
 /** The owner's switches for a library: AI descriptions, shot descriptions, search by meaning. */
-export const updateLibrary = (libraryId: string, patch: { name?: string; settings?: Partial<LibrarySettings> & { blurExisting?: boolean } }) =>
+export const updateLibrary = (libraryId: string, patch: { name?: string; settings?: Partial<LibrarySettings> & { blurExisting?: boolean; proxyBack?: boolean } }) =>
   send<LibrarySummary>(`/api/library/${libraryId}`, "PATCH", patch);
 
 /** Where the library's files live and how much its bucket holds (the owner only). */

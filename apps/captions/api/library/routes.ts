@@ -16,7 +16,7 @@ import { currentWorkspaceId } from "../lib/workspace-scope";
 import { sharedHere, workspaceScope } from "../lib/workshop/workspace";
 import { expandCollection } from "./collections";
 import { libraryMade, makeMissing, retryFailed, retryUnreadable, stopQueued, unreadableOf } from "./made";
-import { blobs, BLUR_SQL, blursFaces, proxyAsked, type ProxyAnswer, finalsUpload, isBlurred, keepsOnlyOriginals, libraryDb, librarySetting, libraryStore, libraryUpload, libraryUploadStored, meter, newLibrarySettings, proxiesInCloud, SETTING_DEFAULTS, SINCE, uploadOf } from "./db";
+import { blobs, BLUR_SQL, blursFaces, proxyAsked, type ProxyAnswer, finalsUpload, isBlurred, keepsOnlyOriginals, libraryDb, makesProxyOf, librarySetting, libraryStore, libraryUpload, libraryUploadStored, meter, newLibrarySettings, proxiesInCloud, SETTING_DEFAULTS, SINCE, uploadOf } from "./db";
 import { estimate, libraryStatus, progress } from "./estimate";
 import { sendFile } from "../lib/send-file";
 import { emitEvent, notifyLibraryChanges } from "../lib/events";
@@ -1335,8 +1335,14 @@ async function patchLibrary(c: Context<{ Variables: AuthVars }>, libraryId: stri
   // Switched on: proxies for the files added from now on (db.ts SINCE, makesProxyOf); the ones already here take
   // What's made → Make for the missing, so no save ever queues a library's worth of proxies
   const proxy = b?.settings?.proxy;
-  if (proxy === true && !settingOn(libraryId, "proxy")) put(SINCE.proxy, Date.now());
+  // proxyBack (a request flag, never stored): the Undo of the switch going off. It is as if it never went off: its time
+  // stays, and the files added since it went on get back the proxy job the off took away below. Never a file from
+  // before the switch, so only where its time is known
+  const since = (db().prepare(`SELECT json_extract(settings, '$.${SINCE.proxy}') AS v FROM libraries WHERE id = ?`).get(libraryId) as { v: number | null } | undefined)?.v;
+  const back = proxy === true && s.proxyBack === true && !settingOn(libraryId, "proxy") && typeof since === "number";
+  if (proxy === true && !settingOn(libraryId, "proxy") && !back) put(SINCE.proxy, Date.now());
   if (typeof proxy === "boolean") put("proxy", proxy);
+  if (back) for (const v of unproxied(libraryId, undefined, hostsProxies(libraryUploadStored(libraryId)))) if (makesProxyOf(libraryId, v.id)) enqueueJob(db(), libraryId, v.id, "proxy", v.created_by);
   // proxies kept in the cloud are made for every video whatever the switch says (its row is hidden then). Where the
   // server keeps only proxies, a file it holds itself (uploaded by hand) keeps its waiting proxy: it is all that plays
   // of it, queued whatever the switch says (worker.ts onlyProxy), and nothing would queue it again

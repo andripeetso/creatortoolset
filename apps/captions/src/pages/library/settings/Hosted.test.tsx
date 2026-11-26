@@ -56,6 +56,23 @@ describe("HostedSwitches and Blur faces", () => {
     expect(seen.at(-1)).toEqual({ finals: true, proxies: false, originals: true });
   });
 
+  it("the master on again never brings back Originals over a Blur faces switch: the part means another thing then", () => {
+    const seen: HostedMix[] = [];
+    function Held({ blurFaces }: { blurFaces: boolean }) {
+      const [m, setM] = useState(ALL);
+      return <HostedSwitches value={m} onChange={(x) => (seen.push(x), setM(x))} blurFaces={blurFaces} />;
+    }
+    const el = document.createElement("div");
+    document.body.append(el);
+    const root = createRoot(el);
+    const master = () => act(() => el.querySelector<HTMLElement>('[aria-label="Upload to server"]')!.click());
+    act(() => root.render(<Held blurFaces />)); // Blurred on (the Originals part)
+    master(); // off
+    act(() => root.render(<Held blurFaces={false} />)); // Blur faces off meanwhile
+    master(); // on again
+    expect(seen.at(-1)).toEqual({ finals: true, proxies: true, originals: false });
+  });
+
   it("turning it on turns Originals off with it", () => {
     const flip = vi.fn();
     const el = draw(false, flip);

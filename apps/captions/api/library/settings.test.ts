@@ -143,6 +143,25 @@ describe("the library settings PATCH", () => {
     expect(proxyJobs(hosted)).toBe(1);
   });
 
+  it("an Undo of Generate proxies off is as if it never went off: its time stays and the waiting proxies come back, never one from before the switch", async () => {
+    const d = libraryDb();
+    d.prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES ('lib_undo', 'local', 'Undo', 'local', ?, 0)").run(JSON.stringify({ upload: "proxies", proxy: true, proxySince: 1000 }));
+    const [old, fresh] = [clip("lib_undo", "undo-old", 1280, 720), clip("lib_undo", "undo-fresh", 1280, 720)];
+    d.prepare("UPDATE asset_versions SET created_at = 2000 WHERE id = ?").run(fresh); // added since the switch went on; `old` (1) is from before
+    d.prepare("INSERT INTO jobs (library_id, version_id, kind, state, actor) VALUES ('lib_undo', ?, 'proxy', 'queued', 'local')").run(fresh);
+    await patch("lib_undo", { proxy: false, upload: "none" });
+    expect(proxyJobs(fresh)).toBe(0); // the off takes the waiting ones away
+    await patch("lib_undo", { proxy: true, proxyBack: true, upload: "proxies" });
+    expect(stored("lib_undo")).toMatchObject({ proxy: true, proxySince: 1000, upload: "proxies" });
+    expect(stored("lib_undo").proxyBack).toBeUndefined(); // a request flag, never stored
+    expect([proxyJobs(fresh), proxyJobs(old)]).toEqual([1, 0]);
+    // the switch turned on by hand, no Undo: from now on, and nothing queued
+    await patch("lib_undo", { proxy: false, upload: "none" });
+    await patch("lib_undo", { proxy: true });
+    expect(Number(stored("lib_undo").proxySince)).toBeGreaterThan(1000);
+    expect(proxyJobs(fresh)).toBe(0);
+  });
+
   it("under Hosted proxies Generate proxies still turns off: hosting never forces it (owner, 2026-11-25)", async () => {
     await patch("lib_set", { upload: "all", proxy: false });
     expect(stored("lib_set")).toMatchObject({ upload: "all", proxy: false });

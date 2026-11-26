@@ -199,7 +199,9 @@ function Panel({ libraryId, asset, startAt, serverPlays, inTrash, readOnly, mayK
   }, [sharing, onPrev, onNext]);
 
   const saved = (x: AssetCard) => {
-    setDetail(x as AssetDetail); // the PATCH answers with the whole detail
+    // the PATCH answers with the whole detail, but for its proxy, which only the read says: kept, so the File row and a
+    // playing proxy stay as they are
+    setDetail((d) => ({ ...(x as AssetDetail), ...(d?.proxy ? { proxy: d.proxy } : {}) }));
     onSaved(x);
   };
   const seek = (s: number) => {
@@ -243,7 +245,7 @@ function Panel({ libraryId, asset, startAt, serverPlays, inTrash, readOnly, mayK
   // the files that play on this computer, in the chain's order; the File row shows when there is a choice
   const files: FileKind[] = [...(filmed ? (["original"] as const) : []), ...(currentHere ? [currentKind] : []), ...(proxy ? (["proxy"] as const) : [])];
   // nothing picked: what the player takes by itself, the clip's own file when it plays here, else its proxy
-  const shown = files.length < 2 ? undefined : picked && files.includes(picked) ? picked : (currentHere && check.url) || !proxy ? currentKind : "proxy";
+  const shown = !detail || files.length < 2 ? undefined : picked && files.includes(picked) ? picked : (currentHere && check.url) || !proxy ? currentKind : "proxy";
   const showOriginal = !!filmed && shown === "original";
   const showProxy = !!proxy && shown === "proxy";
   const path = showOriginal ? filmed.path : detail?.sourcePath;
