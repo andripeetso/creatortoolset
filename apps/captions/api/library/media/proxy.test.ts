@@ -108,7 +108,7 @@ describe.skipIf(!ffmpegHere)("makeProxy: never bigger than its source, at every 
 
   it("a clip of uneven frame times (a phone's): its proxy keeps every frame at its own time", async () => {
     // 30 frames a second on average, each up to 7/600 s off its even place
-    const src = sample("uneven.mp4", "30", 90, ["-vf", "settb=1/600,setpts='N*20+round(7*sin(N*1.7))'", "-fps_mode", "vfr", "-video_track_timescale", "600"]);
+    const src = sample("uneven.mp4", "30", 90, ["-vf", "settb=1/600,setpts='N*20+round(7*sin(N*1.7))'", "-fps_mode", "passthrough", "-enc_time_base:v", "1:600", "-video_track_timescale", "600"]);
     const out = path.join(dir, "uneven-proxy.mp4");
     expect(await makeProxy(src, out, false, "low", 3)).toBe(true);
     expect(times(src)).toHaveLength(90);
