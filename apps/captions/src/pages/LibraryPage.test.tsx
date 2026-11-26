@@ -949,6 +949,26 @@ describe("Media Library layout, tabs, instant moves and menus", () => {
     expect(where()).toBe("?f=col_a");
   });
 
+  it("with All hidden, Photos to B-roll never draws All on the way (it flashed and sent the page to the first tab)", async () => {
+    localStorage.setItem("library:view", "gallery");
+    localStorage.setItem("ct.library.hiddenTabs.lib_tiny", JSON.stringify(["all"]));
+    server.folders = folders;
+    server.items = [clip("pic", { kind: "image" })];
+    const host = await mount();
+    await settle();
+    await act(async () => tab(host, "photos")!.click());
+    let drewAll = false;
+    // the records, not the page: the observer is told after both renders, when All is gone again
+    const isAll = (n: Node) => n instanceof Element && (n.matches('[data-tab="all"]') || !!n.querySelector('[data-tab="all"]'));
+    const seen = new MutationObserver((rs) => void (drewAll ||= rs.some((r) => [...r.addedNodes].some(isAll))));
+    seen.observe(host, { childList: true, subtree: true, attributes: true });
+    await act(async () => tab(host, "b")!.click());
+    await settle();
+    seen.disconnect();
+    expect(drewAll).toBe(false);
+    expect(where()).toBe("?f=col_b");
+  });
+
   it("a kind picked on a Gallery tab goes with the tabs when the view changes", async () => {
     localStorage.setItem("library:view", "gallery");
     const host = await mount();
