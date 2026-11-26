@@ -84,14 +84,15 @@ enum AssistantUpload {
         let parts: [Int]
     }
 
-    /// A message's videos, stamped with its chat's server and workspace (`api`) as it is sent, and with the road
-    /// they take: `add`, into that workspace's Media Library. One stamped before keeps its road.
-    static func stamped(_ videos: [QueuedMessage.Video]?, api: ToolsetAPI?, add: Bool = false) -> [QueuedMessage.Video]? {
+    /// A message's videos, stamped with its chat's server and workspace (`api`) as it is sent. The road they take is
+    /// not known here (the server may not have said yet): one with no upload has none until its upload begins
+    /// (`AssistantModel.road`), and one whose upload began keeps its own.
+    static func stamped(_ videos: [QueuedMessage.Video]?, api: ToolsetAPI?) -> [QueuedMessage.Video]? {
         videos?.map { video in
             var video = video
             video.server = api?.key ?? api?.server.absoluteString
             video.workspace = api?.workspace
-            if video.file == nil { video.add = add ? true : nil }
+            if video.file == nil { video.add = nil }
             return video
         }
     }

@@ -15,6 +15,8 @@ counts what waits there). The app follows the phone's light or dark look:
   it is ("Uploading · 40%", "Waiting for the main computer", "Blurring") and the reply what it waits for; one that
   failed says why, with Retry. The message can be sent and the app closed: the server starts the reply by itself. On
   an older server, and in a workspace whose Media Library is a plug-in's, a video goes up as the chat's own file.
+  Which of the two is asked of the server as the upload begins, never guessed: with no connection the message waits,
+  Queued, and nothing of it goes up. A file taken off in Upload's Activity before it was in marks its message Not sent.
 - **Edits**: each video in Review and each New edit as a card, with the picture of its newest cut, its step and a
   badge when it waits on you; the ones that wait on top, then Working and Done. Swipe a card to dismiss it, or to
   delete a Review video (it stays in Review's trash for 30 days). **New edit** at the top: pick clips from Photos (in
@@ -25,7 +27,8 @@ counts what waits there). The app follows the phone's light or dark look:
   line that tells the phone what changed is closed while the app is in the background.
 - **Upload** is the camera roll. Pick clips and press Upload; they keep going with the phone locked. On a server whose
   Media Library belongs to a plug-in, the clips go there with the same sign-in. The Media Library sits beside the roll.
-  A file the server holds for its blur says in Activity how far it is, as in a chat, until it is ready. A file to
+  A file the server holds for its blur says in Activity how far it is, as in a chat, until it is ready (read every 5
+  seconds while it changes, up to a minute apart while it doesn't, and not at all once it failed, until Retry). A file to
   blur always goes up as it is, never as the phone's own 720p copy: the main computer needs the original.
 - **Finals** shows what is ready to post and every finished piece: save it to Photos, copy its post description, split
   it into stories, send it to the team or mark it published.

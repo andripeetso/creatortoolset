@@ -28,12 +28,145 @@ final class ChatAddsTests: XCTestCase {
         XCTAssertEqual(own["later"] as? Bool, true)
     }
 
-    func testAVideoIsStampedWithItsRoadOnceAndKeepsIt() {
-        let stamped = AssistantUpload.stamped([video("New.mov"), video("Begun.mov", file: "f1")], api: nil, add: true)
-        XCTAssertEqual(stamped?.map(\.add), [true, nil]) // one that began as the chat's own upload stays that
-        let back = AssistantUpload.stamped([video("Add.mov", file: "u1", add: true)], api: nil, add: false)
-        XCTAssertEqual(back?.map(\.add), [true]) // taken back and sent again: its upload goes on
-        XCTAssertEqual(AssistantUpload.stamped([video("Own.mov")], api: nil)?.map(\.add), [nil])
+    func testAVideoHasNoRoadAtSendAndOneThatBeganKeepsItsOwn() {
+        let stamped = AssistantUpload.stamped([video("New.mov"), video("Begun.mov", file: "f1"), video("Add.mov", file: "u1", add: true)], api: nil)
+        // one that began keeps its road (the chat's own upload, an add taken back and sent again)
+        XCTAssertEqual(stamped?.map(\.add), [nil, nil, true])
+        // taken back before its upload began and sent again, maybe in another workspace: asked again
+        XCTAssertEqual(AssistantUpload.stamped([video("Back.mov", add: false)], api: nil)?.map(\.add), [nil])
+    }
+
+    // MARK: The road is asked when the upload begins
+
+    /// A server as the model sees it: `online` says whether it answers, `adds` whether it takes Media Library adds.
+    /// `began` hears each video as its upload begins.
+    private func server(adds: Bool = true, online: @escaping @MainActor () -> Bool = { true },
+                        began: @escaping @MainActor (QueuedMessage.Video) -> Void) -> AssistantServer {
+        AssistantServer(queue: nil, call: { @MainActor _, _, _ in
+            guard online() else { throw ToolsetAPI.Failure.offline }
+            return Data(#"{"id":"c1","provider":"claude","sendNow":true,"adds":\#(adds),"messages":[]}"#.utf8)
+        }, uploader: .init(begin: { @MainActor video in
+            began(video)
+            return "u-" + video.name
+        }, send: { video, _, _ in video.file ?? "" }))
+    }
+
+    private func until(_ what: String, _ done: () -> Bool) async {
+        for _ in 0..<500 where !done() { try? await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertTrue(done(), what)
+    }
+
+    func testAFileSentBeforeTheServerAnsweredWaitsForItsRoad() async {
+        // written with no connection right after the app opened: nothing is known of the server yet
+        var online = false
+        var began: [Bool?] = []
+        let model = AssistantModel()
+        model.ownLibrary = { _ in true }
+        model.server = { self.server(online: { online }) { began.append($0.add) } }
+        await model.load()
+        model.send(QueuedMessage(text: "Edit this", videos: [video("Beach.mov")]))
+        await model.outbox.settled()
+        // nothing of it goes up on the chat's own road meanwhile: it waits, as any queued message does, and says so
+        XCTAssertTrue(began.isEmpty)
+        XCTAssertTrue(model.offline)
+        XCTAssertEqual(model.outbox.shown.map(\.failed), [nil])
+        XCTAssertEqual(model.outbox.items.first?.videos?.map(\.add), [nil])
+        // the connection is back: the server takes adds and the workspace's uploads go to its own library
+        online = true
+        await model.load()
+        await until("it began as a Media Library add") { began == [true] }
+    }
+
+    func testAnOlderServerAndAPlugInsLibraryAreAnswersAndTakeTheChatsOwnRoad() async {
+        var began: [Bool?] = []
+        var asked = 0
+        // an older server takes no adds: the workspace is not even asked about
+        let older = AssistantModel()
+        older.ownLibrary = { _ in
+            asked += 1
+            return true
+        }
+        older.server = { self.server(adds: false) { began.append($0.add) } }
+        await older.load()
+        older.send(QueuedMessage(text: "Caption this", videos: [video("Clip.mov")]))
+        await until("it began as the chat's own upload") { began == [false] }
+        XCTAssertEqual(asked, 0)
+        // a workspace whose uploads go to a plug-in's library
+        let plugin = AssistantModel()
+        plugin.ownLibrary = { _ in false }
+        plugin.server = { self.server { began.append($0.add) } }
+        await plugin.load()
+        plugin.send(QueuedMessage(text: "Caption this", videos: [video("Other.mov")]))
+        await until("it began as the chat's own upload") { began == [false, false] }
+    }
+
+    func testAFileNeverWaitsForEverForItsRoad() async {
+        var began = 0
+        // a refusal that says nothing of the road (signed out): Not sent, with the reason and Try again
+        let refused = AssistantModel()
+        refused.ownLibrary = { _ in throw ToolsetAPI.Failure.signedOut }
+        refused.server = { self.server { _ in began += 1 } }
+        await refused.load()
+        refused.send(QueuedMessage(text: "Edit this", videos: [video("Beach.mov")]))
+        await until("it is marked Not sent") { refused.outbox.items.first?.failed != nil }
+        XCTAssertEqual(refused.outbox.items.first?.failed, ToolsetAPI.Failure.signedOut.message)
+        // a server that keeps failing the question: asked again a few times, then Not sent
+        let failing = AssistantModel()
+        failing.ownLibrary = { _ in throw ToolsetAPI.Failure(status: 503, message: "The server is restarting") }
+        failing.server = { self.server { _ in began += 1 } }
+        await failing.load()
+        failing.send(QueuedMessage(text: "Edit this", videos: [video("Pier.mov")]))
+        await failing.outbox.settled()
+        XCTAssertEqual(failing.outbox.shown.map(\.failed), [nil])
+        for _ in 1..<AssistantOutbox.maxStalls {
+            await failing.load()
+            await failing.outbox.settled()
+        }
+        XCTAssertEqual(failing.outbox.items.first?.failed, "The server is restarting")
+        XCTAssertEqual(began, 0)
+    }
+
+    // MARK: A file taken off the uploads
+
+    func testAFileTakenOffTheUploadsIsNotTakenForOneThatLanded() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("chat-adds-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let transfers = Transfers(configuration: .ephemeral)
+        defer {
+            transfers.session.invalidateAndCancel()
+            try? FileManager.default.removeItem(at: folder)
+        }
+        let engine = UploadEngine(transfers: transfers, store: UploadStore(file: folder.appendingPathComponent("uploads.json")))
+        func add(_ id: UUID, upload: String) -> QueuedMessage.Video {
+            .init(id: id.uuidString, name: "Beach.mov", copy: "copy", file: upload, add: true)
+        }
+        /// In the queue in `state`, then removed as Activity removes it.
+        func removed(_ state: UploadItem.State, upload: String) async throws -> UUID {
+            var item = UploadItem(id: UUID(), filename: "Beach.mov", size: 200, server: "s", state: state)
+            item.uploadId = upload
+            engine.store.add(item)
+            engine.remove(item.id)
+            for _ in 0..<500 where engine.store.item(item.id) != nil { try await Task.sleep(for: .milliseconds(10)) }
+            return item.id
+        }
+        // one that landed is cleared from the queue: the message names it, and the server says what became of it
+        let cleared = try await AssistantAdd.send(add(UUID(), upload: "u1"), engine: engine) { _ in }
+        XCTAssertEqual(cleared, "u1")
+        // Stop and remove in Activity, on a file the chat is not waiting on yet: it never landed
+        let stopped = try await removed(.sending, upload: "u2")
+        do {
+            _ = try await AssistantAdd.send(add(stopped, upload: "u2"), engine: engine) { _ in }
+            XCTFail("a file taken off the uploads counted as landed")
+        } catch let failure as ToolsetAPI.Failure {
+            XCTAssertEqual(failure.status, 410)
+            XCTAssertEqual(failure.message, "Beach.mov was taken off the uploads: add it again")
+        }
+        // it is still known after the app closed
+        XCTAssertTrue(UploadEngine(transfers: transfers, store: engine.store).removed.contains(stopped.uuidString))
+        // one removed from Recently uploaded did land
+        let landed = try await removed(.done, upload: "u3")
+        let named = try await AssistantAdd.send(add(landed, upload: "u3"), engine: engine) { _ in }
+        XCTAssertEqual(named, "u3")
     }
 
     func testTryAgainAsksForAnAddsUploadAgain() {
@@ -135,6 +268,46 @@ final class ChatAddsTests: XCTestCase {
         await watch.read() // nothing is on its way: nothing is asked
         XCTAssertEqual(asked.count, before)
         XCTAssertEqual(asked.last, ["a1"])
+    }
+
+    func testTheIntakeIsAskedLessOftenWhileNothingChangesAndNotAtAllOnceNothingIsOnItsWay() async {
+        let watch = IntakeWatch()
+        let api = API(server: URL(string: "https://intake.example.test/")!, cookie: nil)
+        var steps = ["held", "held", "held", "held", "held", "held", "blurring", "failed", "blurring", "done"]
+        var asked = 0
+        var waits: [Double] = []
+        watch.pause = { waits.append($0) }
+        watch.ask = { _, _, _ in
+            asked += 1
+            return [Intake(assetId: "a1", versionId: "v1", step: steps.removeFirst(), waiting: nil, failed: nil, error: nil)]
+        }
+        watch.watch(["a1"], library: "lib_a", api: api)
+        await watch.settled()
+        // 5 seconds after a read that changed something, twice as long after each that changed nothing, a minute at most
+        XCTAssertEqual(waits, [5, 10, 20, 40, 60, 60, 5])
+        // it failed: not on its way, so nothing asks about it, however long the screen stays
+        XCTAssertEqual(watch.steps["a1"]?.line, "Could not blur")
+        await watch.read()
+        XCTAssertEqual(asked, 8)
+        // Retry: read now, at the shortest wait again, until it is ready
+        watch.watch(["a1"], library: "lib_a", api: api)
+        await watch.settled()
+        XCTAssertEqual(waits.suffix(1), [5])
+        XCTAssertEqual(asked, 10)
+        XCTAssertNil(watch.steps["a1"]?.line)
+
+        // no connection: asked again, later each time; a library the server refuses to read (deleted, signed out): never again
+        var answers: [APIError] = [.offline, .offline, .server(404, "Not found")]
+        waits = []
+        watch.ask = { _, _, _ in
+            asked += 1
+            throw answers.removeFirst()
+        }
+        watch.watch(["b1"], library: "lib_b", api: api)
+        await watch.settled()
+        XCTAssertEqual(waits, [10, 20])
+        await watch.read()
+        XCTAssertEqual(asked, 13)
     }
 
     // MARK: A file to blur goes up as it is

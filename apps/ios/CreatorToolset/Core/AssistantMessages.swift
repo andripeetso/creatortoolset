@@ -142,6 +142,11 @@ struct AssistantReply: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        // the file it named as failed is asked for again (here, or on a computer): its line is read again
+        .onChange(of: message.wait?.failed) { before, _ in
+            guard let before else { return }
+            IntakeWatch.shared.watch([before.assetId], library: before.libraryId, api: AssistantModel.shared.chatAPI)
+        }
     }
 }
 

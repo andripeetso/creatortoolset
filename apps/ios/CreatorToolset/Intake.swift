@@ -48,8 +48,11 @@ struct Intake: Decodable, Equatable {
         }
     }
 
-    /// Asks for a failed file again: its copy to the main computer by the library, its blur by Face Blur.
+    /// Asks for a failed file again: its copy to the main computer by the library, its blur by Face Blur. A failed file
+    /// is not read by itself (`IntakeWatch`): from here it is again, whatever the server said to this.
+    @MainActor
     static func retry(part: String?, library: String, asset: String, version: String, api: API) async throws {
+        defer { IntakeWatch.shared.watch([asset], library: library, api: api) }
         if part == "copy" {
             _ = try await api.send("/api/library/\(library)/assets/\(asset)/intake/retry")
         } else {
@@ -59,10 +62,13 @@ struct Intake: Decodable, Equatable {
 }
 
 /// The intake of the clips on screen (a chat's files, the Upload tab's own): read when a screen shows them, and again
-/// every few seconds while one of them is on its way and the app is open.
+/// while one of them is on its way: 5 seconds after a read that changed something, twice as long after each that
+/// changed nothing, up to a minute. It stops when none is on its way: a failed one waits for its Retry.
 @MainActor
 final class IntakeWatch: ObservableObject {
     static let shared = IntakeWatch()
+    /// Seconds between two reads: the shortest, and the longest.
+    static let quick = 5.0, slow = 60.0
 
     /// By clip (asset id): how far it is, as last read.
     @Published private(set) var steps: [String: Intake] = [:]
@@ -70,35 +76,65 @@ final class IntakeWatch: ObservableObject {
     private var wanted: [String: (library: String, api: API)] = [:]
     private var reading: Task<Void, Never>?
     /// How one library's clips are read; a test gives its own.
-    var ask: (API, String, [String]) async -> [Intake]? = { api, library, assets in
-        (try? await api.get("/api/library/\(library)/intake?assets=\(assets.joined(separator: ","))") as Intake.List)?.items
+    var ask: (API, String, [String]) async throws -> [Intake] = { api, library, assets in
+        (try await api.get("/api/library/\(library)/intake?assets=\(assets.joined(separator: ","))") as Intake.List).items
     }
+    /// The wait between two reads, in seconds; a test gives its own.
+    var pause: (Double) async -> Void = { try? await Task.sleep(for: .seconds($0)) }
 
-    /// A screen shows these clips of one library: they are read now, and again while any is on its way.
+    /// A screen shows these clips of one library, or one's Retry was pressed. One not asked about until now is read
+    /// now, and the reads go on at the shortest wait while any is on its way.
     func watch(_ assets: [String], library: String, api: API?) {
         guard let api else { return }
-        for asset in assets where steps[asset]?.isDone != true { wanted[asset] = (library, api) }
-        guard reading == nil, !wanted.isEmpty else { return }
+        var fresh = false
+        for asset in assets where steps[asset]?.isDone != true {
+            if wanted[asset] == nil { fresh = true }
+            wanted[asset] = (library, api)
+        }
+        guard fresh else { return }
+        reading?.cancel()
         reading = Task { [weak self] in
-            while let self, !Task.isCancelled, !self.wanted.isEmpty {
-                await self.read()
-                try? await Task.sleep(for: .seconds(5))
+            var wait = Self.quick
+            while let self, !Task.isCancelled {
+                let changed = await self.read()
+                if Task.isCancelled { return }   // a newer run reads from here on
+                guard !self.wanted.isEmpty else { break }
+                wait = changed ? Self.quick : min(wait * 2, Self.slow)
+                await self.pause(wait)
             }
-            self?.reading = nil
+            if !Task.isCancelled { self?.reading = nil }
         }
     }
 
-    /// One read of every library that has a clip on its way. A clip that is ready, or that its library no longer
-    /// lists (deleted), is not asked about again.
-    func read() async {
+    /// Waits until nothing is read any more (for a test).
+    func settled() async { await reading?.value }
+
+    /// One read of every library that has a clip on its way; true when a clip's step changed. Not asked about again:
+    /// a clip that is ready, one that failed (until its Retry), one its library no longer lists (deleted), and every
+    /// clip of a library the server refuses to read (deleted, or signed out). With no answer they are asked again.
+    @discardableResult
+    func read() async -> Bool {
+        var changed = false
         for (library, clips) in Dictionary(grouping: wanted, by: { $0.value.library }) {
             let assets = clips.map(\.key).sorted().prefix(200)
-            guard let api = clips.first?.value.api, let items = await ask(api, library, Array(assets)) else { continue }
+            guard let api = clips.first?.value.api else { continue }
+            let items: [Intake]
+            do {
+                items = try await ask(api, library, Array(assets))
+            } catch {
+                // (a read cut short by a newer one says nothing of its clips)
+                if !Task.isCancelled, !AssistantUpload.waits(error) { for asset in assets { wanted[asset] = nil } }
+                continue
+            }
             for asset in assets {
                 let item = items.first { $0.assetId == asset }
-                if steps[asset] != item { steps[asset] = item }
-                if item?.isDone != false { wanted[asset] = nil }
+                if steps[asset] != item {
+                    steps[asset] = item
+                    changed = true
+                }
+                if item?.isDone != false || item?.isFailed == true { wanted[asset] = nil }
             }
         }
+        return changed
     }
 }

@@ -102,10 +102,7 @@ struct ActivityView: View {
                 }
                 if let step, step.isFailed, let held = item.intake, let api = engine.api(for: item) {
                     Button("Retry", systemImage: "arrow.clockwise") {
-                        Task {
-                            try? await Intake.retry(part: step.failed, library: held.library, asset: held.asset, version: step.versionId, api: api)
-                            await intake.read()
-                        }
+                        Task { try? await Intake.retry(part: step.failed, library: held.library, asset: held.asset, version: step.versionId, api: api) }
                     }
                     .buttonStyle(.bordered)
                     .padding(.top, 2)

@@ -97,7 +97,15 @@ final class UploadEngine: ObservableObject {
         kick()
     }
 
+    /// The uploads taken off before they were in (Activity's Remove, Stop and remove), by id, kept across launches. A
+    /// chat message that names one must not take it for one that landed and was cleared (`AssistantAdd.send`).
+    // shortcut: the newest 500 only, ten messages of 50 files; a file of its own if a chat ever names more
+    private(set) var removed = UserDefaults.standard.stringArray(forKey: "uploads.removed") ?? [] {
+        didSet { UserDefaults.standard.set(removed, forKey: "uploads.removed") }
+    }
+
     func remove(_ id: UUID) {
+        if store.item(id)?.isFinished == false { removed = Array((removed + [id.uuidString]).suffix(500)) }
         Task {
             await transfers.cancel(itemId: id)
             store.remove(id)
@@ -296,11 +304,12 @@ final class UploadEngine: ObservableObject {
         return route
     }
 
-    /// Whether the uploads of the workspace `api` works in go to its own Media Library (not a plug-in's, and not
-    /// refused): a chat's files take this road only then. false when the server can't be asked now.
-    func goesToOwnLibrary(_ api: API) async -> Bool {
+    /// Whether the uploads of the workspace `api` works in go to its own Media Library: a chat's files take this road
+    /// only then. false is the server's answer too: a plug-in's library, or a refusal of this account there. It throws
+    /// while the server can't be asked (no connection, signed out): the question is then still open.
+    func goesToOwnLibrary(_ api: API) async throws -> Bool {
         guard let server = api.key else { return false }
-        return (try? await route(server: server, api: api)) == .library
+        do { return try await route(server: server, api: api) == .library } catch APIError.refused { return false }
     }
 
     /// What the Blur faces switch needs to know of the workspace picked on `server` now.

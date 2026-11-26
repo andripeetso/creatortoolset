@@ -24,16 +24,22 @@ enum AssistantAdd {
         // one that failed starts over as a new upload: its message is told the new id
         if engine.store.item(id)?.state == .failed { await engine.restart([id]) }
         if engine.store.item(id)?.state == .picked { engine.retry(id) }
-        return try await wait(for: id, name: video.name) { $0.uploadId }
+        return try await wait(for: id, name: video.name, in: engine.store) { $0.uploadId }
     }
 
     /// Waits until the upload is in the library; `progress` 0…1 as its bytes go. One the queue no longer lists has
-    /// landed and was cleared (the server says what became of it).
-    static func send(_ video: QueuedMessage.Video, progress: @escaping @Sendable (Double) -> Void) async throws -> String {
+    /// landed and was cleared (the server says what became of it), unless a person took it off before it was in: that
+    /// one fails its message as one taken off while it was waited for does, and the reply the server holds is stopped.
+    static func send(_ video: QueuedMessage.Video, engine: UploadEngine? = nil,
+                     progress: @escaping @Sendable (Double) -> Void) async throws -> String {
         guard let id = UUID(uuidString: video.id), let file = video.file else { throw AssistantUpload.Unreadable(name: video.name) }
-        let store = UploadEngine.shared.store
-        guard store.item(id) != nil else { return file }
-        return try await wait(for: id, name: video.name) { item in
+        let engine = engine ?? .shared   // (a test gives its own)
+        let store = engine.store
+        guard store.item(id) != nil else {
+            if engine.removed.contains(id.uuidString) { throw takenOff(video.name) }
+            return file
+        }
+        return try await wait(for: id, name: video.name, in: store) { item in
             // sent again under another id (Try again in Activity, or the server dropped it): its message names the old one
             guard item.uploadId == file else { throw ToolsetAPI.Failure(status: 409, message: "\(video.name) started over") }
             if item.size > 0 { progress(Double(min(store.sentBytes(item), item.size)) / Double(item.size)) }
@@ -72,14 +78,17 @@ enum AssistantAdd {
         }
     }
 
+    private static func takenOff(_ name: String) -> ToolsetAPI.Failure {
+        .init(status: 410, message: "\(name) was taken off the uploads: add it again")
+    }
+
     /// Waits for what the upload has to tell (`done` answers once it does). A failed upload, or one taken off the
     /// queue, throws; with no connection it waits, as the upload does.
-    private static func wait<T>(for id: UUID, name: String, _ done: (UploadItem) throws -> T?) async throws -> T {
+    private static func wait<T>(for id: UUID, name: String, in store: UploadStore,
+                                _ done: (UploadItem) throws -> T?) async throws -> T {
         while true {
             try Task.checkCancellation()
-            guard let item = UploadEngine.shared.store.item(id) else {
-                throw ToolsetAPI.Failure(status: 410, message: "\(name) was taken off the uploads: add it again")
-            }
+            guard let item = store.item(id) else { throw takenOff(name) }
             if let value = try done(item) { return value }
             if item.state == .failed { throw ToolsetAPI.Failure(status: 400, message: item.note ?? "Could not upload \(name)") }
             // shortcut: the queue is asked twice a second; follow its changes if a chat ever sends hundreds of files

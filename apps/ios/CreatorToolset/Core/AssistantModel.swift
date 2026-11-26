@@ -319,7 +319,10 @@ final class AssistantModel: ObservableObject {
     /// The workspace a new chat starts in: the one last written in, or picked in its box before the first message. nil
     /// (or one the server in use doesn't have): the app's pick.
     @Published var startIn = UserDefaults.standard.string(forKey: "chats.startIn") {
-        didSet { UserDefaults.standard.set(startIn, forKey: "chats.startIn") }
+        didSet {
+            UserDefaults.standard.set(startIn, forKey: "chats.startIn")
+            askRoad()
+        }
     }
 
     /// The chat's workspace: its own once its first message set it; a new chat's is where it starts (`startIn`).
@@ -417,33 +420,63 @@ final class AssistantModel: ObservableObject {
         // the next new chat starts where he wrote last
         if let ws = chatWorkspace ?? API.current?.workspace { startIn = ws }
         var message = message
-        message.videos = AssistantUpload.stamped(message.videos, api: chatAPI, add: adds)
-        // each photo as it was picked goes into the Media Library too, where its files do; else its copy is dropped
-        for index in message.images.indices {
-            AssistantAdd.photo(message.images[index], api: adds ? chatAPI : nil)
-            message.images[index].copy = nil
+        let api = chatAPI
+        message.videos = AssistantUpload.stamped(message.videos, api: api)
+        // each photo as it was picked goes into the Media Library too, where its files do, once its road is answered;
+        // with no answer now (no connection) its copy is dropped: the reply reads its JPEG either way
+        let photos = message.images.filter { $0.copy != nil }
+        for index in message.images.indices { message.images[index].copy = nil }
+        if !photos.isEmpty {
+            Task {
+                let add = Self.pretend ? false : (try? await road(api)) == true
+                photos.forEach { AssistantAdd.photo($0, api: add ? api : nil) }
+            }
         }
         outbox.add(message)
         carryOn()
     }
 
-    /// Where the uploads of each server's workspaces go, as asked this run: true is the workspace's own Media Library.
-    private var ownLibrary: [String: Bool] = [:]
-    private func road(_ api: ToolsetAPI) -> String { "\(api.key ?? "") \(api.workspace ?? "")" }
-
-    /// A message's files go into the Media Library of the chat's workspace: the server takes them so (`adds`), and
-    /// that workspace's uploads go to its own library, not a plug-in's. Not known yet: the chat's own upload.
-    var adds: Bool {
-        guard view?.adds == true, let api = chatAPI else { return false }
-        return ownLibrary[road(api)] ?? false
+    /// Whether the uploads of the workspace `api` works in go to its own Media Library, as its server says (the Upload
+    /// tab's own question; the engine keeps a real answer for the run). A test gives its own.
+    var ownLibrary: (ToolsetAPI?) async throws -> Bool = { api in
+        guard let api else { throw ToolsetAPI.Failure.offline }
+        return try await UploadEngine.shared.goesToOwnLibrary(api)
     }
 
-    /// Asks once per workspace where its uploads go (the Upload tab's own question).
+    /// The road a file sent with a message takes, asked when its upload begins and never at Send: the server may not
+    /// have answered yet then (the app just opened, the box's workspace just changed). true: into the Media Library
+    /// of the workspace `api` works in. false is an answer too, the chat's own upload: an older server that takes no
+    /// adds, a workspace whose uploads go to a plug-in's library, an account that may not add there. It throws while
+    /// nobody can say: the file waits, as with no connection.
+    func road(_ api: ToolsetAPI?) async throws -> Bool {
+        // not read yet: the server has not said whether it takes adds
+        guard let view else { throw ToolsetAPI.Failure.offline }
+        guard view.adds else { return false }
+        return try await ownLibrary(api)
+    }
+
+    /// The server's way up, with each file's road decided as its upload begins: one that has none waits for the
+    /// answer, keeps it (on disk too) and begins by it.
+    private func routed(_ uploader: AssistantOutbox.Uploader) -> AssistantOutbox.Uploader {
+        var routed = uploader
+        routed.begin = { [weak self] video in
+            var video = video
+            if let self, video.add == nil {
+                let add = try await self.road(try? AssistantUpload.api(for: video))
+                // another conversation by now, or its message was taken back meanwhile: nothing of it begins
+                guard !Task.isCancelled, self.outbox.routed(video.id, add: add) else { throw CancellationError() }
+                video.add = add
+            }
+            return try await uploader.begin(video)
+        }
+        return routed
+    }
+
+    /// Asks where the chat's workspace's uploads go before a file is sent there, so its upload begins at once: with
+    /// every answer of the server, and when the box's workspace changes.
     private func askRoad() {
-        guard !Self.pretend, view?.adds == true, let api = chatAPI, ownLibrary[road(api)] == nil else { return }
-        let key = road(api)
-        // only a yes is kept here: with no answer it is asked again (the engine remembers a real one for the run)
-        Task { if await UploadEngine.shared.goesToOwnLibrary(api) { ownLibrary[key] = true } }
+        guard !Self.pretend, let api = chatAPI else { return }
+        Task { _ = try? await road(api) }
     }
 
     /// A message marked "Not sent" is tried again.
@@ -532,7 +565,7 @@ final class AssistantModel: ObservableObject {
         if !Self.pretend, let server = server() {
             // first what is over, so the video after a dropped one starts now and not at the next read
             if let view { release(view) }
-            outbox.upload(server.uploader) { [weak self] in self?.carryOn() }
+            outbox.upload(routed(server.uploader)) { [weak self] in self?.carryOn() }
         }
         // a server that waits for videos takes a message while a reply is being written too
         if !Self.pretend, let view, view.connected, outbox.serverWaits || view.thinking == nil, outbox.waiting {

@@ -54,8 +54,10 @@ struct QueuedMessage: Codable, Equatable, Identifiable {
         /// there, whatever the phone picks later. nil on one an older app saved: the phone's current ones.
         var server: String?
         var workspace: String?
-        /// It goes into the Media Library of its chat's workspace by the Upload tab's road (`AssistantAdd`): `file` is
-        /// its upload there. nil: the chat's own upload (an older server, or a workspace whose library is a plug-in's).
+        /// The road it takes, decided as its upload begins (`AssistantModel.road`). true: into the Media Library of its
+        /// chat's workspace by the Upload tab's road (`AssistantAdd`), and `file` is its upload there. false: the chat's
+        /// own upload (an older server, or a workspace whose library is a plug-in's). nil with no `file`: not decided
+        /// yet, and nothing of it goes up until it is; nil with a `file`: the chat's own upload, begun by an older app.
         var add: Bool?
     }
 }
@@ -394,10 +396,22 @@ final class AssistantOutbox: ObservableObject {
 
     /// The server gave the upload its id: kept on disk at once (for a message), so a later try carries on from there.
     private func begun(_ video: String, as file: String) {
-        guard let message = holder(of: video) else { return }
+        change(video: video) { $0.file = file }
+    }
+
+    /// The road a video takes, answered as its upload begins: kept on disk at once, so it is the same after a restart.
+    /// false when no message carries the video any more (taken back meanwhile): nothing of it is to begin.
+    func routed(_ video: String, add: Bool) -> Bool {
+        change(video: video) { $0.add = add }
+    }
+
+    @discardableResult
+    private func change(video: String, _ edit: (inout QueuedMessage.Video) -> Void) -> Bool {
+        guard let message = holder(of: video) else { return false }
         change(message) { queued in
-            if let index = queued.videos?.firstIndex(where: { $0.id == video }) { queued.videos?[index].file = file }
+            if let index = queued.videos?.firstIndex(where: { $0.id == video }) { edit(&queued.videos![index]) }
         }
+        return true
     }
 
     /// Up: the message names it by the server's id, and its copy on the phone goes. A message

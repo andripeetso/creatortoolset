@@ -65,6 +65,30 @@ final class WorkspaceScopeTests: XCTestCase {
         XCTAssertEqual(try AssistantUpload.api(for: QueuedMessage.Video(name: "old.mov", copy: "c2")).workspace, "ws-b")
     }
 
+    /// A chat file's road is asked as its upload begins, for the workspace its message was sent in: one sent straight
+    /// after a switch never takes the road of the workspace before.
+    func testAChatFilesRoadIsItsOwnWorkspacesStraightAfterASwitch() async {
+        pick("ws-a")
+        var began: [String: Bool?] = [:]
+        let model = AssistantModel()
+        // A keeps its uploads in a plug-in's library, B in its own
+        model.ownLibrary = { $0?.workspace == "ws-b" }
+        model.server = {
+            AssistantServer(queue: nil, call: { _, _, _ in
+                Data(#"{"id":"c1","provider":"claude","sendNow":true,"adds":true,"messages":[]}"#.utf8)
+            }, uploader: .init(begin: { @MainActor video in
+                began[video.name] = video.add
+                return "u-" + video.name
+            }, send: { video, _, _ in video.file ?? "" }))
+        }
+        await model.load()
+        model.send(QueuedMessage(text: "one", videos: [QueuedMessage.Video(name: "A.mov", copy: "a")]))
+        pick("ws-b")
+        model.send(QueuedMessage(text: "two", videos: [QueuedMessage.Video(name: "B.mov", copy: "b")]))
+        for _ in 0..<500 where began.count < 2 { try? await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(began, ["A.mov": false, "B.mov": true])
+    }
+
     /// The Upload tab's library side is a plug-in's catalog in one workspace and not in another: a pick shows the new
     /// workspace's at once, not the last one's.
     func testTheLibrarySideFollowsAWorkspaceSwitch() {
