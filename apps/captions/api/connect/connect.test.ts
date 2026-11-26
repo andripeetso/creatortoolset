@@ -238,7 +238,7 @@ describe("Install and Remove for ChatGPT and Claude, through the broker", () => 
   it("a broker without AI apps: says so, and the key just made is taken back", async () => {
     broker.grantFail = { status: 404, code: "not_found" };
     const res = await post({ app: "ChatGPT", on: true });
-    expect(res.status).toBe(502);
+    expect(res.status).toBe(500);
     expect(await res.json()).toEqual({ error: "The Connect service doesn't take AI apps yet." });
     expect((users.findUser("admin")!.aiKeys ?? []).some((k) => k.name === "ChatGPT")).toBe(false);
   });
@@ -246,7 +246,7 @@ describe("Install and Remove for ChatGPT and Claude, through the broker", () => 
   it("a computer the account no longer has: says to link it again, and takes the key back", async () => {
     broker.grantFail = { status: 404, code: "unknown_computer" };
     const res = await post({ app: "ChatGPT", on: true });
-    expect(res.status).toBe(502);
+    expect(res.status).toBe(500);
     expect(((await res.json()) as { error: string }).error).toMatch(/Link it again/);
     expect((users.findUser("admin")!.aiKeys ?? []).some((k) => k.name === "ChatGPT")).toBe(false);
   });
@@ -254,7 +254,7 @@ describe("Install and Remove for ChatGPT and Claude, through the broker", () => 
   it("a broker that can't be reached: says so, and the key just made is taken back", async () => {
     broker.grantFail = "down";
     const res = await post({ app: "Claude", on: true });
-    expect(res.status).toBe(502);
+    expect(res.status).toBe(500);
     expect(((await res.json()) as { error: string }).error).toMatch(/couldn't take it right now/);
     expect(claudeKeys()).toHaveLength(0);
   });

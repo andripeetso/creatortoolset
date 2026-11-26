@@ -134,7 +134,7 @@ describe.skipIf(rootReplaced)("AI Editor: a voice made from text", () => {
     speech = () => Response.json({ detail: { status: "quota_exceeded", message: "This request exceeds your quota." } }, { status: 401 });
     expect(await read(call("jordan", "POST", "/api/editor/voice", { text: "Hello", voice: "Sam" }))).toEqual({ status: 402, body: { error: "The ElevenLabs account is out of credits: add credits at elevenlabs.io" } });
     speech = () => new Response("slow down", { status: 429 });
-    expect(await read(call("jordan", "POST", "/api/editor/voice", { text: "Hello", voice: "Sam" }))).toEqual({ status: 502, body: { error: "ElevenLabs is busy: try again in a minute" } });
+    expect(await read(call("jordan", "POST", "/api/editor/voice", { text: "Hello", voice: "Sam" }))).toEqual({ status: 500, body: { error: "ElevenLabs is busy: try again in a minute" } });
     expect(libraryDb().prepare("SELECT COUNT(*) AS n FROM assets WHERE title = 'Voice: Hello'").get()).toEqual({ n: 0 });
   });
 
