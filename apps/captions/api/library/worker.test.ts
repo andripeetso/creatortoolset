@@ -9,7 +9,7 @@ const dir = mkdtempSync(path.join(scratch, "library-worker-"));
 process.env.DATA_DIR = dir;
 const { libraryDb } = await import("./db");
 const { claimJob, enqueueJob, finishJob, prepareFirst, takingClips } = await import("./jobs");
-const { LANES, nextJob, nextTurnMs, tick } = await import("./worker");
+const { LANES, nextJob, tick } = await import("./worker");
 const { blobs } = await import("./db");
 const { ffmpegSlot } = await import("./media/run");
 
@@ -433,12 +433,6 @@ describe("a clip hidden while it waits on Folders left out (report.ts)", () => {
   });
 });
 
-it("gives the server a pause after a background chore, none after a queued job", () => {
-  expect(nextTurnMs(true, false)).toBe(0);
-  expect(nextTurnMs(true, true)).toBeGreaterThan(0);
-  expect(nextTurnMs(false, false)).toBeGreaterThan(nextTurnMs(true, true));
-});
-
 it("works out where a waiting job goes once per PLACE_MS, not on every tick of every lane", async () => {
   const { PLACE_MS, leaveToComputers } = await import("./worker");
   const db = libraryDb();
@@ -454,6 +448,16 @@ it("works out where a waiting job goes once per PLACE_MS, not on every tick of e
     expect(asked).toBe(1);
     await tick(t + PLACE_MS, ["proxy"]);
     expect(asked).toBe(2);
+    // Server's video work changed: every job is placed again at once
+    const { readServerWork, writeServerWork } = await import("../work/server-work");
+    const was = readServerWork();
+    writeServerWork({ on: !(was?.on ?? false) });
+    try {
+      await tick(t + PLACE_MS + 1000, ["proxy"]);
+      expect(asked).toBe(3);
+    } finally {
+      writeServerWork(was ?? { on: false });
+    }
   } finally {
     Object.assign(leaveToComputers, before);
     db.exec("DELETE FROM jobs WHERE version_id = 'ver_place'");

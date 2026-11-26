@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import type { DeviceFootage } from "../../contracts/devices";
 import { hostsOriginals } from "../../contracts/library";
@@ -126,16 +126,30 @@ export function jobFiles(job: Pick<JobRow, "version_id">): FileRow[] {
 /** The edit a step belongs to: its version id is "<editId>:<variant>". */
 export const editOf = (job: Pick<JobRow, "version_id">): string => (job.version_id ?? "").split(":")[0]!;
 
-/** The account's storage folders (Settings → Storage), with the computers that reach them through a connected share. */
+/** Each account's parsed folders file, kept while the file is unchanged (its time and size): the Media Library's worker asks for every waiting job. */
+const parsed = new Map<string, { stamp: string; folders: StorageFolder[] }>();
+
+/** The account's storage folders (Settings → Storage), with the computers that reach them through a connected share. Read only, shared between callers. */
 export function foldersOf(owner: string): StorageFolder[] {
-  let raw = "{}";
+  const file = storageFilePath(env.dataDir, owner);
+  let stamp = "none";
   try {
-    raw = readFileSync(storageFilePath(env.dataDir, owner), "utf-8");
+    const st = statSync(file);
+    stamp = `${st.mtimeMs}:${st.size}`;
   } catch {
     // no folders set yet
   }
-  const folders = parseStorageFile(raw).folders;
-  return withMounts(folders, listDevices((x) => x.owner === owner).map((x) => ({ id: x.id, disks: x.report?.machine?.disks })));
+  let kept = parsed.get(owner);
+  if (kept?.stamp !== stamp) {
+    let raw = "{}";
+    try {
+      raw = readFileSync(file, "utf-8");
+    } catch {
+      // no folders set yet
+    }
+    parsed.set(owner, (kept = { stamp, folders: parseStorageFile(raw).folders }));
+  }
+  return withMounts(kept.folders, listDevices((x) => x.owner === owner).map((x) => ({ id: x.id, disks: x.report?.machine?.disks })));
 }
 
 /** What a device that took a step of `editId` is told of its files: each one's path on it, or which server copy to fetch. */

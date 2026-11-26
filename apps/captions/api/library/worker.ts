@@ -36,7 +36,8 @@ import { draining } from "../server-update";
 import { backfillRoots } from "./places";
 import { backfillSoundKinds, listen, settleSoundKind } from "./sound-kind";
 import { copiesWake } from "./copies";
-import { libraryWorkspace, serverWorks } from "../work/server-work";
+import { libraryWorkspace, readServerWork, serverWorks } from "../work/server-work";
+import { isOnline, listDevices } from "../lib/devices";
 
 /**
  * The library's worker (tasks/media-library-plan.md, section 5): the queue runs in lanes (LANES), several at once where
@@ -52,9 +53,6 @@ import { libraryWorkspace, serverWorks } from "../work/server-work";
  */
 
 const IDLE_MS = 2000;
-/** The pause after a background chore (a backfill, a sweep): one that says "did one" while doing next to nothing (a read
- *  that fails at once) would otherwise run again with no pause and hold the server's only thread. */
-export const CHORE_MS = 250;
 const LEASE_S = 300;
 
 /**
@@ -269,9 +267,13 @@ export function leftHere(j: JobRow & { source_key?: string | null }): "computer"
  * Each queued job's answer from leftHere and when it was worked out. Working it out reads the clip, the uploader's
  * folders and every one of their computers; every lane loop asked again for up to 500 jobs every 2 s, which with a few
  * hundred jobs waiting for a computer held the server's only thread at 100% (2026-11-26). A job is placed again after
- * PLACE_MS, so a computer that comes or goes moves its jobs within that; a job not placed yet is placed at once.
+ * PLACE_MS (a clip that changed); every job at once when a computer comes or goes or Server's video work changes; a job
+ * not placed yet at once.
  */
 const placed = new Map<string, { how: ReturnType<typeof leftHere>; at: number }>();
+let placedFor = "";
+/** What every place hangs on: the computers online and Server's video work. */
+const placesHangOn = () => `${listDevices((d) => isOnline(d.id)).map((d) => d.id).sort().join(",")}|${JSON.stringify(readServerWork())}`;
 export const PLACE_MS = 15_000;
 /** Forget every job's place (tests that change a computer or a setting between ticks). */
 export const forgetPlaces = () => placed.clear();
@@ -291,6 +293,11 @@ function leftToComputers(db: ReturnType<typeof libraryDb>, now: number, kinds: r
     )
     .all(now, ...all) as unknown as (JobRow & { source_key: string | null })[];
   const out: number[] = [];
+  const world = placesHangOn();
+  if (world !== placedFor) {
+    placed.clear();
+    placedFor = world;
+  }
   for (const j of queued) {
     // by id, kind and clip: an id SQLite gives again after a delete is another job
     const key = `${j.id}:${j.kind}:${j.version_id}`;
@@ -397,9 +404,6 @@ export async function tick(now = Date.now(), kinds: readonly string[] = LANES.fl
   return true;
 }
 
-/** How long a lane waits before its next turn: none after a queued job, CHORE_MS after a chore, IDLE_MS when there was nothing. */
-export const nextTurnMs = (busy: boolean, chore: boolean): number => (!busy ? IDLE_MS : chore ? CHORE_MS : 0);
-
 /** Starts every lane's loops; the returned function stops them after their current jobs. */
 export function startLibraryWorker(): () => void {
   let stopped = false;
@@ -414,20 +418,19 @@ export function startLibraryWorker(): () => void {
     for (let i = 0; i < lane.size; i++) {
       const loop = async () => {
         let busy = false;
-        let chore = false;
         try {
           // an update waits for the jobs running here: no new one starts until it is done (server-update.ts)
           if (!draining()) {
             busy = await tick(Date.now(), lane.kinds);
-            if (!busy && lane.name === "files") chore = busy = (await backfillSprite()) || (await backfillThumb()) || (await backfillQuick()) || backfillRoots() || (await backfillSoundKinds());
+            if (!busy && lane.name === "files") busy = (await backfillSprite()) || (await backfillThumb()) || (await backfillQuick()) || backfillRoots() || (await backfillSoundKinds());
             // shot descriptions as a constant index: a video that has none and no look queued gets one (shots.ts sweepLook);
             // then the timelines (timeline.ts sweepWatch): a done look that wants one is queued again
-            if (!busy && lane.name === "looks") chore = busy = (await sweepLook(libraryDb())) || sweepWatch(libraryDb(), (id, actor) => queueLook(libraryDb(), id, actor, true));
+            if (!busy && lane.name === "looks") busy = (await sweepLook(libraryDb())) || sweepWatch(libraryDb(), (id, actor) => queueLook(libraryDb(), id, actor, true));
           }
         } catch (e) {
           console.error("[library] worker:", e);
         }
-        if (!stopped) setTimeout(loop, nextTurnMs(busy, chore)).unref();
+        if (!stopped) setTimeout(loop, busy ? 0 : IDLE_MS).unref();
       };
       void loop();
     }

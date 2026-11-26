@@ -8,7 +8,11 @@ import { cpuProfile, type CpuProfile } from "./cpu-profile";
 
 const oneLine = (sql: string) => sql.replace(/\s+/g, " ").trim().slice(0, 300);
 
-/** Logs each statement of `db` that runs longer than `overMs`, with its SQL. Returns the same database. */
+/**
+ * Logs each statement of `db` that runs longer than `overMs`, with its SQL, and builds each SQL text once: a statement is
+ * kept and handed out again (building one again on every call was a third of a busy server's time, 2026-11-26). Safe
+ * because every call runs to its end before the next (no iterate). Returns the same database.
+ */
 export function timeQueries(db: DatabaseSync, overMs = 500, log: (line: string) => void = console.warn): DatabaseSync {
   // the cast keeps node:sqlite's overloads (positional or named parameters); the wrapper passes both through unchanged
   const timed = <F extends (...a: never[]) => unknown>(sql: string, f: F): F =>
@@ -22,11 +26,17 @@ export function timeQueries(db: DatabaseSync, overMs = 500, log: (line: string) 
       }
     }) as F;
   const prepare = db.prepare.bind(db);
+  // shortcut: a text built from a count of "?" makes a statement per count; cleared past 2000, a size no app query nears
+  const built = new Map<string, StatementSync>();
   db.prepare = (sql: string): StatementSync => {
+    const kept = built.get(sql);
+    if (kept) return kept;
     const st = prepare(sql);
     st.all = timed(sql, st.all.bind(st));
     st.get = timed(sql, st.get.bind(st));
     st.run = timed(sql, st.run.bind(st));
+    if (built.size >= 2000) built.clear();
+    built.set(sql, st);
     return st;
   };
   const exec = db.exec.bind(db);
