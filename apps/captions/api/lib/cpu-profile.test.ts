@@ -17,3 +17,8 @@ it("names the function that keeps the thread busy, and an idle thread as idle", 
   const quiet = await cpuProfile(300);
   expect(quiet.idle).toBeGreaterThan(50);
 });
+
+it("writes a profile one line per path for the server's log", async () => {
+  const { busyLines } = await import("./stalls");
+  expect(busyLines({ ms: 1, idle: 0, top: [{ share: 42.5, path: ["all", "tick worker.js:300", "loop worker.js:390"] }] })).toBe("  42.5% all < tick worker.js:300 < loop worker.js:390");
+});
