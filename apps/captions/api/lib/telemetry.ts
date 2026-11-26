@@ -6,6 +6,7 @@ import { Hono } from "hono";
 import { env } from "./env";
 import { providerSettings } from "./providers";
 import { connectState } from "../connect/state";
+import { putBackFailureCounts, takeFailureCounts } from "./failures";
 import type { AuthVars } from "../auth";
 
 /**
@@ -19,7 +20,8 @@ import type { AuthVars } from "../auth";
  * What goes to creatortoolset.com (which may pass it on to PostHog and Sentry):
  * - a check-in at start and every 6 hours: a random install id ($DATA_DIR/install-id), the version, the system, how
  *   many pages were opened since the last one and which (by page name only, from PAGES), whether Connect is linked,
- *   and which AIs are set up (their kind: claude, codex…);
+ *   and which AIs are set up (their kind: claude, codex…), and what failed since the last one (an action's name or a
+ *   request's path with its ids taken out, the status and the error line with file paths taken out, how many times);
  * - a crash or an error: where (server or web), the message and the stack, with the home folder replaced by ~.
  * No name, account, content, file name or address.
  */
@@ -71,7 +73,7 @@ export function notePage(page: string): void {
 
 export async function sendCheckin(): Promise<void> {
   if (!telemetryOn()) return;
-  const took = { opened, pages };
+  const took = { opened, pages, failed: takeFailureCounts() };
   opened = 0;
   pages = {};
   let ai: string[] = [];
@@ -80,8 +82,9 @@ export async function sendCheckin(): Promise<void> {
   } catch {
     // unreadable settings: the check-in goes without
   }
-  const ok = await post(pingUrl(), { ...base(), opened: took.opened, connected: connectState() !== null, ai, tools: took.pages });
+  const ok = await post(pingUrl(), { ...base(), opened: took.opened, connected: connectState() !== null, ai, tools: took.pages, ...(took.failed.length ? { failed: took.failed } : {}) });
   if (ok) return;
+  putBackFailureCounts(took.failed);
   opened += took.opened; // not delivered: they go with the next one
   for (const [k, n] of Object.entries(took.pages)) pages[k] = (pages[k] ?? 0) + n;
 }

@@ -54,6 +54,22 @@ describe("usage and crash reports", () => {
     expect(sent[1].body).toMatchObject({ opened: 0, tools: {} });
   });
 
+  it("a check-in carries what failed since the last one, with no account, id or file path", async () => {
+    process.env.CT_CHANNEL = "release";
+    const { noteFailure } = await import("./failures");
+    noteFailure("ana", "request", "POST /api/projects/k3x9q/export", { status: 500, error: `no file ${homedir()}/Movies/Tia.mov` });
+    noteFailure("bo", "request", "POST /api/projects/zz81/export", { status: 500, error: `no file ${homedir()}/Movies/Tia.mov` });
+    noteFailure("ana", "work", "Audio Enhancer", { error: "engine down" });
+    await t.sendCheckin();
+    expect(sent[0].body.failed).toEqual([
+      { kind: "request", what: "POST /api/projects/:id/export", status: 500, error: "no file <path>", count: 2 },
+      { kind: "work", what: "Audio Enhancer", error: "engine down", count: 1 },
+    ]);
+    expect(JSON.stringify(sent[0].body)).not.toMatch(/ana|Tia/);
+    await t.sendCheckin();
+    expect(sent[1].body.failed).toBeUndefined();
+  });
+
   it("a crash goes at once with its file paths taken out, and its repeats within the hour fold into the next count", () => {
     process.env.CT_CHANNEL = "release";
     const e = new Error(`no file ${homedir()}/Movies/a.mov`);
