@@ -19,7 +19,7 @@
 		<string>audio</string>
 	</array>
 	<key>SentryDSN</key>
-	<string>https://e99801aab1c54ac3908db50ac94788b5@o4511805154066432.ingest.de.sentry.io/4512460405276752</string>
+	<string>https://e99801aab1c54ac3908db50ac94788b5@o4512499537805312.ingest.de.sentry.io/4512460405276752</string>
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
 		<string>$(PRODUCT_BUNDLE_IDENTIFIER).refresh</string>
