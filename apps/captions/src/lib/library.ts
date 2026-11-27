@@ -489,8 +489,15 @@ export async function uploadFile(
     return init.duplicateOf ? { duplicateOf: init.duplicateOf } : { assetId: init.assetId! };
   }
   const url = `/api/library/uploads/${init.id}`;
-  // cancelled: the server drops what it has (DELETE), so nothing picks it up again
-  const drop = () => void fetch(url, { method: "DELETE" }).catch(() => {});
+  // cancelled: the server drops what it has (DELETE), so nothing picks it up again. A chunk the server is still
+  // writing answers 409 until its connection has ended, so the drop is asked again for a few seconds
+  const drop = async () => {
+    for (let tries = 0; tries < 10; tries++) {
+      const r = await fetch(url, { method: "DELETE" }).catch(() => null);
+      if (r && r.status !== 409) return;
+      await pause(300);
+    }
+  };
   signal?.addEventListener("abort", drop, { once: true });
   try {
     if (init.direct) {
