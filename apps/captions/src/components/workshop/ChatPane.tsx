@@ -653,8 +653,8 @@ export function ChatPane({
             })}
           </ul>
         )}
-        {!aiAvailable ? <Notice tone="warn" className="mb-2">Needs an AI provider</Notice> : null}
-        {macOff && aiAvailable ? <Notice tone="warn" className="mb-2">Computer offline: replies are written when it is online</Notice> : null}
+        {!aiAvailable && !readOnly ? <Notice tone="warn" className="mb-2">Needs an AI provider</Notice> : null}
+        {macOff && aiAvailable && !readOnly ? <Notice tone="warn" className="mb-2">Computer offline: replies are written when it is online</Notice> : null}
         {imageError ? <Notice className="mb-2" onDismiss={() => setImageError(null)}>{imageError}</Notice> : null}
         {pasted.length > 0 && (
           // a paste is a file, so it looks like one

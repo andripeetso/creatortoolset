@@ -315,7 +315,8 @@ export default function WorkshopPage() {
           line={`Research, notes and drafts for reels, carousels and ads.${avail ? ` · ${avail.library} posts in Content Analyzer` : ""}`}
         />
 
-        {avail && !avail.ai && (
+        {/* an account that only reads here (Read, or a plain browser) writes nothing, so it needs no AI */}
+        {editable && avail && !avail.ai && (
           <p className="mb-4 flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
             <TriangleAlert className="h-3.5 w-3.5 shrink-0" />
             Needs an AI provider
