@@ -79,6 +79,19 @@ serviceKeysApp.put("/team-use", async (c) => {
   return c.json({ ok: true });
 });
 
+/**
+ * A key was saved (`actor`'s own; none: the server's): the Media Library's transcripts parked for want of it are tried
+ * again (library/jobs.ts wakeKeyStops). Never fails the save. Loaded here: the library reads its keys through this file.
+ */
+export async function keySaved(env: string, actor?: string): Promise<void> {
+  try {
+    const [{ wakeKeyStops }, { libraryDb }] = await Promise.all([import("./library/jobs"), import("./library/db")]);
+    wakeKeyStops(libraryDb(), env, actor);
+  } catch (e) {
+    console.error("[keys] parked transcripts:", e);
+  }
+}
+
 serviceKeysApp.put("/:env", async (c) => {
   const name = c.req.param("env");
   if (!NAMES.has(name)) return c.json({ error: "No such key" }, 404);
@@ -90,5 +103,6 @@ serviceKeysApp.put("/:env", async (c) => {
   if (value) next[name as ServiceKeyEnv] = value;
   else delete next[name as ServiceKeyEnv];
   persist(next);
+  if (value) await keySaved(name);
   return c.json({ ok: true });
 });

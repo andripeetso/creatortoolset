@@ -221,6 +221,22 @@ export function wakeBudgetStops(db: DatabaseSync): number {
   return Number(db.prepare("UPDATE jobs SET state = 'queued', error = NULL, run_after = 0 WHERE state = 'needs_key' AND IFNULL(error, '') LIKE ?").run(`%${BUDGET_STOP}%`).changes);
 }
 
+/** The keys a transcript runs on (lib/speech.ts KEY). */
+const SPEECH_KEYS = new Set(["DEEPGRAM_API_KEY", "OPENAI_API_KEY"]);
+
+/**
+ * Transcripts parked for want of a key go back in the queue once speech key `env` is saved: `actor`'s own, or with no
+ * actor (the server's key) everyone's. One that still has no key parks again. Nothing else queued them again: a key
+ * added after the footage left its clips with no transcript, and so sorted B-roll, for good.
+ */
+export function wakeKeyStops(db: DatabaseSync, env: string, actor?: string): number {
+  if (!SPEECH_KEYS.has(env)) return 0;
+  const own = actor === undefined ? { sql: "", args: [] } : { sql: " AND actor = ?", args: [actor] };
+  return Number(
+    db.prepare(`UPDATE jobs SET state = 'queued', attempts = 0, error = NULL, run_after = 0 WHERE state = 'needs_key' AND kind = 'transcribe'${own.sql}`).run(...own.args).changes,
+  );
+}
+
 /** The AI Editor's job row (edit_jobs) this device holds (claimed by it and still running), or undefined. */
 export const heldBy = (db: DatabaseSync, id: number, device: string): JobRow | undefined =>
   db.prepare("SELECT * FROM edit_jobs WHERE id = ? AND device = ? AND state = 'running'").get(id, device) as JobRow | undefined;

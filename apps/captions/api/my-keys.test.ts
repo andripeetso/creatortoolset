@@ -66,6 +66,28 @@ describe("keyFor: whose key pays", () => {
     expect((await app.request("/")).status).toBe(403);
   });
 
+  it("a speech key saved queues its owner's parked transcripts again, nobody else's", async () => {
+    const [{ libraryDb }, { claimJob, enqueueJob, parkJob }] = await Promise.all([import("./library/db"), import("./library/jobs")]);
+    const db = libraryDb();
+    for (const [ver, actor] of [["ver_lee", "lee"], ["ver_sam", "sam"]] as const) {
+      enqueueJob(db, "lib_k", ver, "transcribe", actor);
+      const id = (db.prepare("SELECT id FROM jobs WHERE version_id = ?").get(ver) as { id: number }).id;
+      parkJob(db, id, "Add your Deepgram key in Settings → API keys", "jobs", claimJob(db, 300, 1000, "jobs", undefined, id)!.claim_id);
+    }
+    const state = (ver: string) => (db.prepare("SELECT state FROM jobs WHERE version_id = ?").get(ver) as { state: string }).state;
+    const app = new Hono<{ Variables: AuthVars }>();
+    app.use("*", async (c, next) => (c.set("user", { username: "lee", role: "user", cloud: false, off: [] }), next()));
+    app.route("/", myKeysApp);
+    const put = (env: string) => app.request(`/${env}`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ value: "not-real-5555" }) });
+    // a key no transcript runs on wakes nothing
+    expect((await put("PERPLEXITY_API_KEY")).status).toBe(200);
+    expect(state("ver_lee")).toBe("needs_key");
+    expect((await put("DEEPGRAM_API_KEY")).status).toBe(200);
+    expect([state("ver_lee"), state("ver_sam")]).toEqual(["queued", "needs_key"]);
+    saveMyKey("lee", "PERPLEXITY_API_KEY", null);
+    saveMyKey("lee", "DEEPGRAM_API_KEY", null);
+  });
+
   it("the server's key shows to an admin as its last four only; a member never gets any of it, the Anthropic key never", async () => {
     vi.stubEnv("OPENAI_API_KEY", "sk-server-openai-7f3e");
     vi.stubEnv("ANTHROPIC_API_KEY", "sk-ant-server-9b1c");

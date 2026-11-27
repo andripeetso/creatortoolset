@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { openLibraryDb } from "./db";
 import type { DatabaseSync } from "node:sqlite";
-import { claimJob, defer, enqueueJob, extendLease, finishJob, graceHeld, parkJob, requeueExpired, wakeBudgetStops } from "./jobs";
+import { claimJob, defer, enqueueJob, extendLease, finishJob, graceHeld, parkJob, requeueExpired, wakeBudgetStops, wakeKeyStops } from "./jobs";
 
 const dir = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "library-jobs-"));
 let db: DatabaseSync;
@@ -154,6 +154,24 @@ describe("a job parked by a key's spent budget", () => {
     const of = (ver: string) => (db.prepare("SELECT state, error FROM jobs WHERE version_id = ?").get(ver) as { state: string; error: string | null });
     expect(of("ver_budget")).toEqual({ state: "queued", error: null });
     expect(of("ver_nokey").state).toBe("needs_key");
+  });
+
+  it("a transcript parked for a missing key is queued again from zero when a speech key is saved: its owner's, or everyone's for the server's key", () => {
+    const park = (ver: string, kind: string, actor: string) => {
+      enqueueJob(db, "lib_k", ver, kind, actor);
+      const id = (db.prepare("SELECT id FROM jobs WHERE version_id = ?").get(ver) as { id: number }).id;
+      parkJob(db, id, "Add your Deepgram key in Settings → API keys", "jobs", claimJob(db, 300, 1000, "jobs", undefined, id)!.claim_id);
+    };
+    park("ver_k1", "transcribe", "u1");
+    park("ver_k2", "transcribe", "u2");
+    park("ver_k3", "describe", "u1"); // waits for an AI provider, not a key
+    const of = (ver: string) => db.prepare("SELECT state, attempts, error FROM jobs WHERE version_id = ?").get(ver) as { state: string; attempts: number; error: string | null };
+    expect(wakeKeyStops(db, "ANTHROPIC_API_KEY", "u1")).toBe(0);
+    expect(wakeKeyStops(db, "DEEPGRAM_API_KEY", "u1")).toBe(1);
+    expect(of("ver_k1")).toEqual({ state: "queued", attempts: 0, error: null });
+    expect([of("ver_k2").state, of("ver_k3").state]).toEqual(["needs_key", "needs_key"]);
+    expect(wakeKeyStops(db, "OPENAI_API_KEY")).toBe(1);
+    expect([of("ver_k2").state, of("ver_k3").state]).toEqual(["queued", "needs_key"]);
   });
 });
 

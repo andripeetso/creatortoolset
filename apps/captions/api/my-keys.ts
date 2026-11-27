@@ -4,7 +4,7 @@ import { Hono } from "hono";
 import type { AuthVars } from "./auth";
 import { env } from "./lib/env";
 import { findUser, LOCAL_USER, USERNAME_RE, type SessionUser } from "./users";
-import { serverKeyFrom, teamUseOn } from "./service-keys";
+import { keySaved, serverKeyFrom, teamUseOn } from "./service-keys";
 import { localModelApp } from "./local-model";
 import { budgetRefusal, type Holder } from "./lib/service-usage";
 import { budgetLeft, teamRefusal, workspaceOf } from "./lib/workspaces";
@@ -165,5 +165,6 @@ myKeysApp.put("/:env", async (c) => {
   if (value === undefined || value === "" || (value && (value.length > 500 || /\s/.test(value))))
     return c.json({ error: "Paste the key (one line, no spaces), or null to forget it" }, 400);
   saveMyKey(c.get("user").username, name as MyKeyEnv, value);
+  if (value) await keySaved(name, c.get("user").username);
   return c.json({ ok: true });
 });
