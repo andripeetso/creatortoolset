@@ -553,6 +553,18 @@ describe("each file's blur answer, set once when it comes in (owner, 2026-11-20)
     expect(blurAtIntake("sam", "lib_kids", false)).toBeNull();
     expect(blurAtIntake("sam", "lib_kids", undefined)).toBeNull();
     expect(blurAtIntake("sam", "lib_plain", true)).toBe("yes");
+    // a final nobody answered for is finished work: kept as filmed where its sender may keep one, so Face Blur is never
+    // asked about it; a member's still reads its library's Blur faces, and a yes said on purpose stays a yes
+    const finals = (await import("./finals")).finalsCollectionId("lib_kids");
+    expect(blurAtIntake("tinyacrobatics", "lib_kids", undefined, finals)).toBe("no");
+    expect(blurAtIntake("tinyacrobatics", "lib_kids", true, finals)).toBe("yes");
+    expect(blurAtIntake("sam", "lib_kids", undefined, finals)).toBeNull();
+    expect(blurAtIntake("tinyacrobatics", "lib_kids", undefined, "col_footage")).toBeNull();
+    // and it follows the Finals setting as stored, not the library's Upload
+    const { uploadFor } = await import("./upload-gate");
+    libraryDb().prepare("UPDATE libraries SET settings = json_set(settings, '$.finalsUpload', 'proxies') WHERE id = 'lib_kids'").run();
+    expect(uploadFor({ id: "lib_kids", collectionId: finals, blur: "no" })).toBe("proxies");
+    libraryDb().prepare("UPDATE libraries SET settings = json_remove(settings, '$.finalsUpload') WHERE id = 'lib_kids'").run();
     const kept = await body(onMac("lib_kids", "Kept as filmed.mov", { blur: false }));
     expect(blurOf(kept.assetId)).toBe("no");
   });

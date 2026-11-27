@@ -686,6 +686,9 @@ export function classifyJob(ctx: Ctx, job: JobRow, seenInPass = new Map<number, 
   return out;
 }
 
+/** Jobs written to the log as ones no computer can do, once each: no screen names them, it only counts them ("10 files"). */
+const toldCannot = new Set<number>();
+
 const HELD_SQL = `(j.kind IN ('describe', 'look') AND j.state != 'needs_key' AND IFNULL(j.error, '') LIKE ?)`;
 
 function candidateJobs(libraryId: string, now: number): (JobRow & { source_key: string | null })[] {
@@ -719,6 +722,13 @@ function classifyLibrary(ctx: Ctx, libraryId: string): WaitSnapshot {
     try {
       const c = classifyJob(ctx, j, seenInPass);
       byJob.set(j.id, c);
+      // one with no place has its own line (the identity gap, below)
+      if (c.wait === "cannot" && c.reason === notOnComputers && !toldCannot.has(j.id)) {
+        toldCannot.add(j.id);
+        const r = ctx.row(j.version_id);
+        const file = !r ? "its file is gone" : r.source_key.startsWith("mac:") ? `its file is on ${r.mac_device ?? "a computer"}` : `its file is on the server${r.from_device ? `, sent by ${r.from_device}` : ""}`;
+        console.warn(`[library] ${j.kind} job ${j.id} of ${j.version_id} can run nowhere: asked by ${j.actor ?? "nobody"}, ${file} (${c.reason ?? ""})`);
+      }
       if (c.wait === "queued") {
         if (isLook) {
           queuedLookIds.push(j.id);

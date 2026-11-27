@@ -232,7 +232,7 @@ export const libraryUploadStored = (libraryId: string): LibraryUpload =>
   uploadOf((libraryDb().prepare("SELECT json_extract(settings, '$.upload') AS v FROM libraries WHERE id = ?").get(libraryId) as { v: unknown } | undefined)?.v);
 /** What a final sends from a computer (contracts LibrarySettings.finalsUpload): "all" when it was never set; under Blur faces none. */
 export const finalsUpload = (libraryId: string): LibraryUpload => (blursFaces(libraryId) ? "none" : finalsUploadStored(libraryId));
-const finalsUploadStored = (libraryId: string): LibraryUpload => {
+export const finalsUploadStored = (libraryId: string): LibraryUpload => {
   const v = (libraryDb().prepare("SELECT json_extract(settings, '$.finalsUpload') AS v FROM libraries WHERE id = ?").get(libraryId) as { v: unknown } | undefined)?.v;
   return v === null || v === undefined ? "all" : uploadOf(v);
 };

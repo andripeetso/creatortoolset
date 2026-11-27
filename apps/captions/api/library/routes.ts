@@ -761,7 +761,7 @@ async function startUpload(c: Context<{ Variables: AuthVars }>, libraryId: strin
     if (inReview(replaces)) return c.json(IN_REVIEW, 409);
   }
   // the file's blur answer (contracts Blur): kept as filmed only on the owner's or an admin's word; a new version keeps its clip's
-  const blur = replaces ? (db().prepare(`SELECT ${BLUR_SQL} AS b FROM assets a WHERE a.id = ?`).get(replaces) as { b: Blur }).b : blurAtIntake(user.username, libraryId, body?.blur);
+  const blur = replaces ? (db().prepare(`SELECT ${BLUR_SQL} AS b FROM assets a WHERE a.id = ?`).get(replaces) as { b: Blur }).b : blurAtIntake(user.username, libraryId, body?.blur, collectionOf);
   const collection = collectionOf;
   if (collection) {
     const col = db().prepare("SELECT kind FROM collections WHERE id = ? AND library_id = ?").get(collection, libraryId) as { kind: string } | undefined;
@@ -897,7 +897,7 @@ libraryApp.post("/:id/in-place", async (c) => {
   if (collectionId && !db().prepare("SELECT 1 FROM collections WHERE id = ? AND library_id = ? AND kind = 'manual'").get(collectionId, libraryId)) {
     return c.json({ error: "Not found", code: "not_found" }, 404);
   }
-  const folder = { path: path.dirname(real), mode: "reference" as const, collectionId, addedBy: user.username, blur: blurAtIntake(user.username, libraryId, body.blur), proxy: proxyAsked(body.proxy) };
+  const folder = { path: path.dirname(real), mode: "reference" as const, collectionId, addedBy: user.username, blur: blurAtIntake(user.username, libraryId, body.blur, collectionId), proxy: proxyAsked(body.proxy) };
   const taking = takeFile(libraryId, folder, real, s.size, Math.floor(s.mtimeMs));
   taking.catch((e) => console.error("[library] in place:", real, e instanceof Error ? e.message : e));
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -938,7 +938,7 @@ libraryApp.post("/:id/on-mac", async (c) => {
   const raw = (await c.req.json().catch(() => null)) as { blur?: unknown; proxy?: unknown } | null;
   const parsed = parseOnMac(raw);
   if (typeof parsed === "string") return c.json({ error: parsed, code: "invalid" }, 400);
-  const x = { ...parsed, blur: blurAtIntake(user.username, libraryId, raw?.blur), proxy: proxyAsked(raw?.proxy) };
+  const x = { ...parsed, blur: blurAtIntake(user.username, libraryId, raw?.blur, parsed.collectionId), proxy: proxyAsked(raw?.proxy) };
   // inside a folder one of the caller's Media folders leaves out: never indexed, a scan's file or a drop alike
   if (await leftOut(user.username, libraryId, x.path, x.device)) return c.json({ error: LIBRARY_WORDS.notFootage, code: "invalid" }, 400);
   if (x.collectionId) {

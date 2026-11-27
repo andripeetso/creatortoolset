@@ -492,7 +492,14 @@ export async function progress(libraryId: string, username: string): Promise<Lib
       .all(JSON.stringify(made.filter((m) => !m.failed && !m.waiting).map((m) => m.versionId)), libraryId) as { id: string; title: string }[]
   );
   const coming = comingRows.map((r) => r.id);
-  const left = pending.reduce((n, r) => n + r.n, 0) + toCome + coming.length;
+  // the timelines Gemini is making now: their look is done and nothing of them is in the queue, yet each is a clip still
+  // being prepared (left out, the strip said 47 clips beside "of 51" and closed while the last ones were being made)
+  const flying = (
+    db
+      .prepare("SELECT v.id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id IN (SELECT value FROM json_each(?)) AND a.library_id = ? AND a.trashed_at IS NULL")
+      .all(JSON.stringify([...watching.keys()]), libraryId) as { id: string }[]
+  ).map((r) => r.id);
+  const left = pending.reduce((n, r) => n + r.n, 0) + toCome + coming.length + flying.length;
   // what the library's Stop reaches (made.ts stopQueued): a queued job of a kind with a Cancel, a file still on its way
   // and a look waiting to run again for its timeline (in the queue, or for its Mac): Stop puts it back as done
   const relooks = (db.prepare(`SELECT COUNT(*) AS n FROM jobs WHERE library_id = ? AND ${RELOOK_WAITS}`).get(libraryId, MAC_WAITS) as { n: number }).n;
@@ -566,16 +573,17 @@ export async function progress(libraryId: string, username: string): Promise<Lib
   const madeRun = madeRuns.get(libraryId) ?? new Set<string>();
   madeRuns.set(libraryId, madeRun);
   // a clip blurred in this run and analyzed now is the same run
-  if (!coming.length && ![...run, ...madeRun].some((v) => open.some((o) => o.v === v))) {
+  if (!coming.length && ![...run, ...madeRun].some((v) => open.some((o) => o.v === v) || flying.includes(v))) {
     run.clear();
     madeRun.clear();
   }
   for (const v of coming) madeRun.add(v);
   if (!run.size) runSince.set(libraryId, Math.max(Date.now() - 60_000, runEnded.get(libraryId) ?? 0));
   for (const { v } of open) run.add(v);
+  for (const v of flying) run.add(v);
   // a clip, not a file: its original and its blurred copy are one clip
   const clips = (
-    db.prepare("SELECT COUNT(DISTINCT asset_id) AS n FROM asset_versions WHERE id IN (SELECT value FROM json_each(?))").get(JSON.stringify([...open.map((o) => o.v), ...coming])) as { n: number }
+    db.prepare("SELECT COUNT(DISTINCT asset_id) AS n FROM asset_versions WHERE id IN (SELECT value FROM json_each(?))").get(JSON.stringify([...open.map((o) => o.v), ...coming, ...flying])) as { n: number }
   ).n;
   const ahead = toCome + coming.filter((v) => !run.has(v)).length;
   const since = { $since: runSince.get(libraryId) ?? 0 };

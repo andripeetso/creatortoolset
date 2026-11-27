@@ -9,7 +9,7 @@
  * A file to blur (Blur faces) from a phone or a browser is taken under every setting and held for the main computer, which
  * blurs it (holdsOriginal, held.ts).
  */
-import { blursFaces, fileBlur, finalsUpload, isBlurred, isFinalsCollection, libraryDb, libraryUpload, libraryUploadStored, versionUpload } from "./db";
+import { blursFaces, fileBlur, finalsUpload, finalsUploadStored, isBlurred, isFinalsCollection, libraryDb, libraryUpload, libraryUploadStored, versionUpload } from "./db";
 import { hostsNone, hostsOriginals, hostsProxies, type LibraryUpload } from "../../contracts/library";
 import type { Device } from "../../contracts/providers";
 import { accountOf, librariesHere, libraryRole } from "./access";
@@ -69,14 +69,13 @@ export const provesProxies = (sender: Pick<Device, "work"> | undefined | null): 
 export type ReceiveInto = { id: string; collectionId?: string | null; versionId?: string; blurredOf?: string | null; blur?: Blur };
 
 /** The setting a file sent into `library` follows: a final the Finals one, anything else the library's Upload. */
-export const uploadFor = (library: ReceiveInto): LibraryUpload =>
-  library.versionId
-    ? versionUpload(library.versionId)
-    : (library.blurredOf || library.blur === "no") && blursFaces(library.id)
-      ? libraryUploadStored(library.id)
-      : library.collectionId && isFinalsCollection(library.collectionId)
-      ? finalsUpload(library.id)
-      : libraryUpload(library.id);
+export function uploadFor(library: ReceiveInto): LibraryUpload {
+  if (library.versionId) return versionUpload(library.versionId);
+  const final = !!library.collectionId && isFinalsCollection(library.collectionId);
+  // under Blur faces a blurred render and a file kept as filmed follow the stored setting, a final the Finals one (db.ts versionUpload)
+  if ((library.blurredOf || library.blur === "no") && blursFaces(library.id)) return final ? finalsUploadStored(library.id) : libraryUploadStored(library.id);
+  return final ? finalsUpload(library.id) : libraryUpload(library.id);
+}
 
 /** Whether the library's owner gave its workspace to at least one member (Settings → Team): the library is shared (the migration and the list read it). */
 export async function hasMembers(libraryId: string): Promise<boolean> {
@@ -139,10 +138,13 @@ export const mayKeepAsFilmed = (username: string, libraryId: string): boolean =>
 /**
  * The blur answer a new file of `libraryId` is stored with (contracts Blur): `asked` false (kept as filmed) only where
  * mayKeepAsFilmed, ignored from anyone else; true is yes. Null when nobody chose: it reads the library's Blur faces
- * (db.ts BLUR_SQL), so that switch still decides for files nobody answered for.
+ * (db.ts BLUR_SQL), so that switch still decides for files nobody answered for. `collectionId`: the folder it goes into.
  */
-export function blurAtIntake(username: string, libraryId: string, asked: unknown): Blur | null {
-  if (asked === false && mayKeepAsFilmed(username, libraryId)) return "no";
+export function blurAtIntake(username: string, libraryId: string, asked: unknown, collectionId?: string | null): Blur | null {
+  // a final nobody answered for is finished work, kept as filmed as an export is (Face Blur never takes one): marked to
+  // blur, it waited for Face Blur, was copied to the main computer's footage and had no description until it was checked
+  const no = asked === false || (asked == null && !!collectionId && isFinalsCollection(collectionId));
+  if (no && mayKeepAsFilmed(username, libraryId)) return "no";
   return asked === true ? "yes" : null;
 }
 

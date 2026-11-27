@@ -264,6 +264,12 @@ describe("a run of timelines", () => {
     for (const id of ["t1", "t2", "t3"]) clip(id, 1);
     try {
       expect(await progress("lib_e", "local")).toMatchObject({ left: 3, clips: 3, canStop: true });
+      // one being watched now is not to queue any more and not made yet: still a clip of the run (left out, the strip
+      // said 47 clips beside "of 51")
+      const { watching } = await import("./timeline");
+      watching.set("ver-t2", Promise.resolve());
+      expect(await progress("lib_e", "local")).toMatchObject({ left: 3, clips: 3 });
+      watching.delete("ver-t2");
       // the sweep queues the first one's look again: still three, one of them on its way
       d.prepare("UPDATE jobs SET state = 'queued' WHERE version_id = 'ver-t1' AND kind = 'look'").run();
       const p = await progress("lib_e", "local");
