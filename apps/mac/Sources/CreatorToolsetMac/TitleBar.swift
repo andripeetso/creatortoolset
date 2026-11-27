@@ -94,7 +94,15 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
 
     override func mouseDown(with event: NSEvent) {
         lastMouseDown = event
+        if event.modifierFlags.contains(.control) { rightClickAt = Date() }   // a Control-click is a right-click too
         super.mouseDown(with: event)
+    }
+
+    /// The last right-click: the page's Paste (AppMenu.tsx) is done only just after one, so no script reads the clipboard by itself.
+    private var rightClickAt: Date?
+    override func rightMouseDown(with event: NSEvent) {
+        rightClickAt = Date()
+        super.rightMouseDown(with: event)
     }
 
     /// The Finder items of a drop on this window: a page only gets a dropped item's contents, so the assistant asks for
@@ -268,9 +276,13 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
             if message.frameInfo.isMainFrame { UpdateWhenIdle.shared.checkNow() }
         case "cut", "copy", "paste", "selectAll":
             // the page's own right-click menu in a text field (AppMenu.tsx): the field it focused does it, with no paste prompt
-            if message.frameInfo.isMainFrame, let m = message.body as? String {
-                NSApp.sendAction(NSSelectorFromString(m + ":"), to: nil, from: self)
+            guard message.frameInfo.isMainFrame, let m = message.body as? String else { break }
+            if m == "paste" {
+                // a paste reads the clipboard into the page: only as the answer to a right-click, once
+                guard let at = rightClickAt, Date().timeIntervalSince(at) < 30 else { break }
+                rightClickAt = nil
             }
+            NSApp.sendAction(NSSelectorFromString(m + ":"), to: nil, from: self)
         case let m? where m.hasPrefix("thismac-"):
             // only the site's own page, never a frame inside it (ThisMacBridge.swift)
             if message.frameInfo.isMainFrame { onThisMacCommand?(String(m.dropFirst(8))) }

@@ -25,6 +25,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   act(() => root.unmount());
+  delete (window as { webkit?: unknown }).webkit;
   document.body.innerHTML = "";
   delete document.documentElement.dataset.macThisMac;
   delete document.documentElement.dataset.macEdit;
@@ -61,5 +62,34 @@ describe("AppMenu", () => {
     box.type = "checkbox";
     expect(rightClick(box)).toBe(true);
     expect(document.querySelector('[role="menu"]')).toBeNull();
+  });
+
+  it("Paste puts the focus and the selection back in the field, then asks the Mac app", () => {
+    const sent: string[] = [];
+    (window as { webkit?: unknown }).webkit = { messageHandlers: { window: { postMessage: (m: string) => sent.push(m) } } };
+    mount();
+    const input = document.body.appendChild(document.createElement("input"));
+    input.value = "hello world";
+    input.setSelectionRange(6, 11);
+    rightClick(input);
+    input.blur();
+    input.setSelectionRange(0, 0);
+    const paste = [...document.querySelectorAll('[role="menuitem"]')].find((b) => b.textContent === "Paste") as HTMLElement;
+    act(() => paste.click());
+    expect(sent).toEqual(["paste"]);
+    expect(document.activeElement).toBe(input);
+    expect([input.selectionStart, input.selectionEnd]).toEqual([6, 11]);
+  });
+
+  it("offers Copy on selected text", () => {
+    mount();
+    const p = document.body.appendChild(document.createElement("p"));
+    p.textContent = "a reply to copy";
+    const range = document.createRange();
+    range.selectNodeContents(p);
+    window.getSelection()!.removeAllRanges();
+    window.getSelection()!.addRange(range);
+    expect(rightClick(p)).toBe(true);
+    expect(document.querySelector('[role="menu"]')?.textContent).toBe("Copy");
   });
 });

@@ -120,6 +120,8 @@ export function NleMediaPool({ tl, nameOf, here, bin, reveal, onPick, onOpen, on
   const [picked, setPicked] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; src: string } | null>(null);
   const [viewMenu, setViewMenu] = useState<{ x: number; y: number; what: "view" | "sort" } | null>(null);
+  // the View and Sort buttons toggle their menu: a press on the button outside it closes it, so the click after must not reopen it
+  const openAtPress = useRef<string | null>(null);
   const showBin = open === "library" && !bin ? "timeline" : open;
 
   const all = poolRows(tl, nameOf);
@@ -135,6 +137,10 @@ export function NleMediaPool({ tl, nameOf, here, bin, reveal, onPick, onOpen, on
     const r = e.currentTarget.getBoundingClientRect();
     return { x: Math.min(r.left, window.innerWidth - 200), y: r.bottom + 2 };
   };
+  const opens = (what: "view" | "sort") => ({
+    onPointerDown: () => void (openAtPress.current = viewMenu?.what === what ? what : null),
+    onClick: (e: MouseEvent) => (openAtPress.current === what ? void (openAtPress.current = null) : setViewMenu({ ...at(e), what })),
+  });
   const sortBy = (key: SortKey) => set({ sort: { key, up: prefs.sort.key === key ? !prefs.sort.up : true } });
   const clip = (r: PoolRow) => ({
     draggable: !!r.path,
@@ -167,14 +173,14 @@ export function NleMediaPool({ tl, nameOf, here, bin, reveal, onPick, onOpen, on
           {pool && (
             <>
               <button type="button" className={tool} title={prefs.view === "thumb" ? "Thumbnail View" : "List View"} aria-haspopup="menu"
-                onClick={(e) => setViewMenu({ ...at(e), what: "view" })}>
+                {...opens("view")}>
                 {prefs.view === "thumb" ? <LayoutGrid className="size-3.5" /> : <List className="size-3.5" />}
                 <ChevronDown className="size-3" />
               </button>
               <button type="button" className={cn(tool, find !== null && "text-zinc-100")} title="Search" aria-pressed={find !== null} onClick={() => setFind(find === null ? "" : null)}>
                 <Search className="size-3.5" />
               </button>
-              <button type="button" className={tool} title="Sort" aria-haspopup="menu" onClick={(e) => setViewMenu({ ...at(e), what: "sort" })}>
+              <button type="button" className={tool} title="Sort" aria-haspopup="menu" {...opens("sort")}>
                 <ArrowDownUp className="size-3.5" />
               </button>
             </>
