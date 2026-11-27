@@ -752,11 +752,17 @@ const setAside = (r: Wanting, now: number): boolean => {
  * watched: a blurred copy's original (blur-mirror.ts), where its look, its timeline and a failed watch are kept. Read off
  * the copy, a failed watch never left this list, and the sweep never got past the newest 50.
  */
+/**
+ * SQL on the library `l` and the look job `j`: the look ended after the library's last Stop (made.ts stopQueued), or it
+ * was never stopped. The sweep leaves what was waiting at a Stop to Make for the missing; a look that ends later (a clip's
+ * first, a new clip's) still brings its timeline, by itself (wantsWatch) or by the sweep.
+ */
+const SINCE_STOP = `IFNULL(j.done_at, 0) > IFNULL(json_extract(l.settings, '$.timelineStopped'), -1)`;
 const WANTS = `FROM assets a JOIN asset_versions c ON c.id = a.current_version_id
     JOIN asset_versions v ON v.id = ${analysedVersion("c")}
     JOIN jobs j ON j.version_id = v.id AND j.kind = 'look' AND j.state = 'done'
     JOIN libraries l ON l.id = a.library_id LEFT JOIN timelines t ON t.version_id = v.id
-  WHERE a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND v.created_by IS NOT NULL AND (${AUTO} OR ${PRESSED})
+  WHERE a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND v.created_by IS NOT NULL AND ((${AUTO} AND ${SINCE_STOP}) OR ${PRESSED})
     AND (t.version_id IS NULL OR (t.error IS NOT NULL AND (t.at <= ? OR ${PRESSED})) OR (t.error IS NULL AND IFNULL(t.level, '') != IFNULL(json_extract(l.settings, '$.lookLevel'), 'standard'))
          OR (t.error IS NULL AND t.model = 'antigravity' AND IFNULL(json_extract(l.settings, '$.timelineModel'), '') != 'antigravity'))`;
 /** A failed watch the sweep asks again as soon as there is room, not RETRY_MS later. */

@@ -1287,8 +1287,8 @@ libraryApp.post("/:id/retry/:kind", (c) => {
   if (!libraryRole(user.username, libraryId)) return c.json({ error: "Not found", code: "not_found" }, 404);
   const kind = c.req.param("kind");
   if (!RETRY_KINDS.has(kind)) return c.json({ error: "Kind not found", code: "invalid" }, 400);
-  // a timeline's job is its look's (made.ts): the look runs again and the watch follows it
-  return c.json({ files: retryFailed(libraryId, kind === "timeline" ? "look" : kind) });
+  // a timeline's job is its look's (made.ts): the look runs again and the watch follows it; a clip's first look is not this Retry's
+  return c.json({ files: kind === "timeline" ? retryFailed(libraryId, "look", true) : retryFailed(libraryId, kind) });
 });
 const RETRY_KINDS = new Set(["thumb", "sprite", "wave", "proxy", "fingerprint", "transcribe", "describe", "look", "embed", "timeline"]);
 

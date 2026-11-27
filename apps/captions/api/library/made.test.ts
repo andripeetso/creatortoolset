@@ -253,8 +253,14 @@ describe("what's made", () => {
     d.prepare("DELETE FROM timelines WHERE version_id = ?").run(orig);
     d.prepare("UPDATE jobs SET state = 'failed' WHERE version_id = ? AND kind = 'look'").run(orig);
     expect(await row("timeline")).toMatchObject({ failed: (before.failed ?? 0) + 1, queued: before.queued });
+    // Retry on the timelines never reaches a clip's first look (no lines yet): that is shot descriptions' own Retry
+    const first = clip("ast-tlfirst", { at: 5 });
+    d.prepare("INSERT INTO jobs (library_id, version_id, kind, state, actor) VALUES ('lib_m', ?, 'look', 'failed', 'local')").run(first);
     expect((await app.request("/api/library/lib_m/retry/timeline", { method: "POST" })).status).toBe(200);
     expect(job(orig, "look")?.state).toBe("queued");
+    expect(job(first, "look")?.state).toBe("failed");
+    d.prepare("DELETE FROM jobs WHERE version_id = ? AND kind = 'look'").run(first);
+    d.prepare("UPDATE assets SET trashed_at = 1 WHERE id = 'ast-tlfirst'").run();
     d.prepare("DELETE FROM jobs WHERE version_id = ? AND kind = 'look'").run(orig);
     d.prepare("UPDATE assets SET trashed_at = 1 WHERE id = 'ast-tlblur'").run();
   });

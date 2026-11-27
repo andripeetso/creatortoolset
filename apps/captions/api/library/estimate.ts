@@ -488,12 +488,9 @@ export async function progress(libraryId: string, username: string): Promise<Lib
   const coming = comingRows.map((r) => r.id);
   const left = pending.reduce((n, r) => n + r.n, 0) + toCome + coming.length;
   // what the library's Stop reaches (made.ts stopQueued): a queued job of a kind with a Cancel, a file still on its way
-  // and a look waiting for its Mac to run again for its timeline: Stop puts it back as done
-  const canStop =
-    toCome > 0 ||
-    coming.length > 0 ||
-    pending.some((r) => r.state === "queued" && STOPPED.has(r.kind)) ||
-    !!db.prepare(`SELECT 1 FROM jobs WHERE library_id = ? AND ${RELOOK_WAITS} LIMIT 1`).get(libraryId, MAC_WAITS);
+  // and a look waiting to run again for its timeline (in the queue, or for its Mac): Stop puts it back as done
+  const relooks = (db.prepare(`SELECT COUNT(*) AS n FROM jobs WHERE library_id = ? AND ${RELOOK_WAITS}`).get(libraryId, MAC_WAITS) as { n: number }).n;
+  const canStop = toCome > 0 || coming.length > 0 || pending.some((r) => r.state === "queued" && STOPPED.has(r.kind)) || relooks > 0;
   const waiting: LibraryProgress["waiting"] = rows
     .filter((r) => r.state === "needs_key" && !r.ql && !r.cw)
     .map((r) => ({
@@ -648,9 +645,10 @@ export async function progress(libraryId: string, username: string): Promise<Lib
     }
     // a run of timelines goes at the pace timelines come in, end to end (a computer reads each file, Gemini watches
     // it): a look that runs again for one is over in a moment here, and its pace would say a minute for an hour's work
-    const each = step === "look" && watches ? watchPace(db, libraryId) : null;
+    // (the sweep may have queued them all already: the looks waiting to run again are the run then, not `watches`)
+    const each = step === "look" && watches + relooks ? watchPace(db, libraryId) : null;
     if (each) {
-      parts.push({ step, route, seconds: each * n });
+      parts.push({ step, route, seconds: each * Math.max(n, watches + relooks) });
       continue;
     }
     const p = await perClip(db, step, route, secondsPerClip, proxyShare);

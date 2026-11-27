@@ -5,7 +5,7 @@ import { PICTURE_MODEL } from "../lib/device-picture";
 import { deviceOf, isOnline, listDevices } from "../lib/devices";
 import { libraryWorkspace, serverWorks } from "../work/server-work";
 import { jobVersions } from "./blur-mirror";
-import { BLUR_SQL, keepsOnlyOriginals, libraryDb, librarySetting, libraryUploadStored, SINCE } from "./db";
+import { BLUR_SQL, keepsOnlyOriginals, libraryDb, librarySetting, libraryUploadStored } from "./db";
 import { FINISHED } from "./query";
 import { DESCRIBE_LABEL, whoFor } from "./describe";
 import { makeCost, makeMinutes } from "./estimate";
@@ -14,7 +14,7 @@ import { enqueueJob } from "./jobs";
 import { wantsProxy } from "./media/proxy";
 import type { ProbeSummary } from "./media/probe";
 import { wakePictures } from "./pictures";
-import { FIRST_LOOK, LOOK_LABEL, LOOK_MIN_S, MAC_WAITS, queueLook, RELOOK_WAITS } from "./shots";
+import { FIRST_LOOK, hasLines, LOOK_LABEL, LOOK_MIN_S, MAC_WAITS, queueLook, RELOOK_WAITS } from "./shots";
 import { libraryWatchModel } from "./timeline";
 import { transcribeRoute } from "./transcribe";
 import { mayLeave } from "./upload-gate";
@@ -270,9 +270,9 @@ export function stopQueued(libraryId: string, kind: MadeKind, username: string, 
     const n = (db.prepare(`SELECT COUNT(*) AS n ${LIVE} AND ${SPEC[kind].of} AND NOT ${specOf(kind, username).have} AND ${pressed(kind)}`).get(libraryId) as { n: number }).n;
     db.prepare(`UPDATE libraries SET settings = json_remove(settings, '$.${kind}Asked') WHERE id = ?`).run(libraryId);
     if (kind === "timeline") {
-      // the files here now are left to Make for the missing: the catch-up fills only what comes in from now on (db.ts
-      // SINCE), or it would queue them all again the moment this stopped them
-      db.prepare(`UPDATE libraries SET settings = json_set(settings, '$.${SINCE.timeline}', ?) WHERE id = ?`).run(now, libraryId);
+      // what waits now is left to Make for the missing: the sweep takes only a look that ends after this (timeline.ts
+      // SINCE_STOP), or it would queue them all again the moment this stopped them. A clip's first look still brings its timeline
+      db.prepare(`UPDATE libraries SET settings = json_set(settings, '$.timelineStopped', ?) WHERE id = ?`).run(now, libraryId);
       // a timeline's job is its look's: one that waits to run again only for the timeline goes back to done, its lines are
       // there (one a Mac is reading finishes, and is asked for no watch). A clip's first look is shot descriptions' own
       db.prepare(`UPDATE jobs SET state = 'done', error = NULL, lease_until = NULL WHERE library_id = ? AND ${RELOOK_WAITS}`).run(libraryId, MAC_WAITS);
@@ -365,12 +365,13 @@ export function makeMissing(libraryId: string, kind: MadeKind, username: string,
 const CLIP_OF_JOB = "JOIN asset_versions jv ON jv.id = j.version_id JOIN assets a ON a.id = jv.asset_id JOIN asset_versions v ON v.id = a.current_version_id";
 
 /** Retry: the failed and stopped jobs of `kind` in the library queued again as whoever queued them (a failed file that has it is marked done, jobs.ts). */
-export function retryFailed(libraryId: string, kind: string): number {
+export function retryFailed(libraryId: string, kind: string, again = false): number {
   const db = libraryDb();
+  // `again` (Retry on the timelines): only a look of a clip that has its lines, never a clip's first, failed or stopped
   const rows = db
     .prepare(
       `SELECT j.version_id, j.actor FROM jobs j ${CLIP_OF_JOB}
-       WHERE j.library_id = ? AND j.kind = ? AND j.state = 'failed' AND j.version_id IN ${jobVersions(kind)} AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL`,
+       WHERE j.library_id = ? AND j.kind = ? AND j.state = 'failed' AND j.version_id IN ${jobVersions(kind)} AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL${again ? ` AND ${hasLines("j")}` : ""}`,
     )
     .all(libraryId, kind) as { version_id: string; actor: string | null }[];
   for (const r of rows) enqueueJob(db, libraryId, r.version_id, kind, r.actor);
@@ -378,7 +379,7 @@ export function retryFailed(libraryId: string, kind: string): number {
   const stopped = db
     .prepare(
       `UPDATE jobs SET state = 'queued', attempts = 0, run_after = 0, lease_until = NULL, error = NULL
-       WHERE library_id = ? AND kind = ? AND state = 'stopped' AND EXISTS (SELECT 1 FROM jobs j ${CLIP_OF_JOB}
+       WHERE library_id = ? AND kind = ? AND state = 'stopped'${again ? ` AND ${hasLines()}` : ""} AND EXISTS (SELECT 1 FROM jobs j ${CLIP_OF_JOB}
          WHERE j.id = jobs.id AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND j.version_id IN ${jobVersions(kind)})`,
     )
     .run(libraryId, kind).changes;
