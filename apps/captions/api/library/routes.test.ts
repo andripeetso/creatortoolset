@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Hono } from "hono";
@@ -406,5 +406,65 @@ describe("saving a finished file into the library", () => {
     // the same bytes again: already there; another account: no library
     expect(await saveToLibrary("owner-a", render, "again.mp4", [])).toEqual({ duplicateOf: saved.assetId });
     expect(await saveToLibrary("stranger", render, "x.mp4", [])).toBeNull();
+  });
+});
+
+describe("upload races and failures", () => {
+  const root = path.join(dir, "library", "blobs", "libraries", "lib_a", "v");
+  const sources = () => (existsSync(root) ? readdirSync(root, { recursive: true }).filter((f) => String(f).endsWith("source")) : []);
+
+  it("keeps one copy when two saves of the same bytes run at once", async () => {
+    const { saveToLibrary } = await import("./routes");
+    const render = path.join(dir, "twin.mp4");
+    writeFileSync(render, clip(1100, 30));
+    const before = sources().length;
+    const [a, b] = (await Promise.all([
+      saveToLibrary("owner-a", render, "twin one.mp4", []),
+      saveToLibrary("owner-a", render, "twin two.mp4", []),
+    ])) as { assetId?: string; duplicateOf?: string }[];
+    const kept = [a, b].filter((r) => r.assetId);
+    expect(kept).toHaveLength(1);
+    const other = a.assetId ? b : a;
+    expect(other.duplicateOf).toBe(kept[0].assetId);
+    const copies = libraryDb().prepare("SELECT COUNT(*) AS n FROM asset_versions v JOIN assets s ON s.id = v.asset_id WHERE s.library_id = 'lib_a' AND v.sha256 = ?").get(createHash("sha256").update(readFileSync(render)).digest("hex")) as { n: number };
+    expect(copies.n).toBe(1);
+    expect(sources()).toHaveLength(before + 1); // the losing save's blob is removed
+  });
+
+  it("removes the moved original when the finish's transaction fails, and the upload is marked failed", async () => {
+    const data = clip(1300, 40);
+    const init = await read(create("owner-a", data.length));
+    await patch("owner-a", init.id, 0, data, data.length);
+    const before = sources().length;
+    libraryDb().exec("CREATE TRIGGER test_boom BEFORE UPDATE OF state ON uploads WHEN NEW.state = 'done' BEGIN SELECT RAISE(ABORT, 'boom'); END");
+    try {
+      expect((await finish("owner-a", init.id)).status).toBe(500);
+    } finally {
+      libraryDb().exec("DROP TRIGGER test_boom");
+    }
+    expect(sources()).toHaveLength(before);
+    expect(libraryDb().prepare("SELECT state FROM uploads WHERE id = ?").get(init.id)).toEqual({ state: "failed" });
+  });
+
+  it("answers a cancel with 409 while a chunk is being written, and drops the file once the chunk has ended", async () => {
+    const data = clip(2000, 50);
+    const init = await read(create("owner-a", data.length));
+    let push!: ReadableStreamDefaultController<Uint8Array>;
+    const body = new ReadableStream<Uint8Array>({
+      start(ctrl) {
+        push = ctrl;
+        ctrl.enqueue(data.subarray(0, 1000));
+      },
+    });
+    const writing = patch("owner-a", init.id, 0, body, 2000);
+    await new Promise((done) => setTimeout(done, 50));
+    const cancel = () => app.request(`/api/library/uploads/${init.id}`, { method: "DELETE", headers: who("owner-a") });
+    expect((await cancel()).status).toBe(409);
+    const staged = (libraryDb().prepare("SELECT staging_path FROM uploads WHERE id = ?").get(init.id) as { staging_path: string }).staging_path;
+    push.enqueue(data.subarray(1000));
+    push.close();
+    expect((await writing).status).toBe(204);
+    expect((await cancel()).status).toBe(204);
+    expect(existsSync(staged)).toBe(false);
   });
 });

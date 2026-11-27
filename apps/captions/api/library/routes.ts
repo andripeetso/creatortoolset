@@ -322,17 +322,21 @@ export async function saveToLibrary(
   try {
     await copyFile(file, staged);
     const sha256 = await sha256File(staged);
-    const dup = db()
-      // a clip hidden while it waits on Folders left out (report.ts) is no duplicate: the file is really added
-      .prepare("SELECT a.id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE a.library_id = ? AND v.sha256 = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL LIMIT 1")
-      .get(lib, sha256) as { id: string } | undefined;
-    if (dup) return { duplicateOf: dup.id };
+    const dup = copyIn(lib, sha256);
+    if (dup) return { duplicateOf: dup };
     const versionId = randomUUID();
     const sourceKey = `libraries/${lib}/v/${versionId}/source`;
     await blobs.put(sourceKey, staged);
     const d = db();
-    d.exec("BEGIN");
+    // checked again in the write: a save of the same bytes that landed while this one was copied is the copy
+    d.exec("BEGIN IMMEDIATE");
     try {
+      const again = copyIn(lib, sha256);
+      if (again) {
+        d.exec("ROLLBACK");
+        await blobs.delete(sourceKey).catch(() => {});
+        return { duplicateOf: again };
+      }
       const collectionId = sound ? soundFolder(d, lib, sound, username) : undefined;
       const assetId = recordVersion(d, { libraryId: lib, versionId, sourceKey, filename, size, sha256, by: username, collectionId, blur: opts.blur ?? null, blurredOf: blurredOf ?? null });
       // before the probe runs (same commit): the tag is what keeps the worker's AI steps off it
@@ -485,6 +489,13 @@ interface UploadRow {
 const db = () => libraryDb();
 
 const madeOf = (row: UploadRow): Made | null => (row.made ? (JSON.parse(row.made) as Made) : null);
+
+/** The id of a clip of this library with these bytes. A clip hidden while it waits on Folders left out (report.ts) is no copy: the file is really added. */
+function copyIn(lib: string, sha256: string): string | undefined {
+  return (db()
+    .prepare("SELECT a.id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE a.library_id = ? AND v.sha256 = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL LIMIT 1")
+    .get(lib, sha256) as { id: string } | undefined)?.id;
+}
 
 /** The library's copy of this upload's file: by its checksum (a file on a computer: the one read whole there), or by the original's quick fingerprint and size (a 720p copy's checksum is its own). */
 function duplicateOf(row: UploadRow, sha256: string): { id: string; current: string | null } | undefined {
@@ -997,7 +1008,8 @@ libraryApp.get("/uploads/:uploadId", async (c) => {
 libraryApp.delete("/uploads/:uploadId", async (c) => {
   const row = await ownUpload(c);
   if (!row || row.state !== "open") return c.json({ error: "Not found", code: "not_found" }, 404);
-  // a chunk still being written ends with the connection the page closed; the file goes either way
+  // a chunk still being written would reopen the file after the drop: asked again once its connection has ended
+  if (busy.has(row.id)) return c.json({ error: "Upload in progress", code: "conflict" }, 409);
   await dropUpload(row);
   return c.body(null, 204);
 });
@@ -1077,37 +1089,54 @@ libraryApp.post("/uploads/:uploadId/finish", async (c) => {
     if (hold) await holdFile(versionId, row.staging_path);
     else await blobs.put(sourceKey, row.staging_path); // same disk: a rename, the file moves into the library
     const d = db();
-    d.exec("BEGIN");
-    let assetId: string;
+    // the copy check again in the write (BEGIN IMMEDIATE takes the write lock now, across processes too): a finish of the same
+    // bytes that landed while this file was moved in is the copy
+    d.exec("BEGIN IMMEDIATE");
+    let assetId: string | undefined;
+    let copy: { id: string; current: string | null } | undefined;
     try {
-      assetId = recordVersion(d, {
-        libraryId: row.library_id,
-        assetId: row.replaces_asset_id,
-        versionId,
-        sourceKey,
-        filename: row.filename,
-        size: madeOf(row)?.proxy?.size ?? row.size, // a 720p copy: the version is the original's size, as one kept on a computer
-        sha256,
-        by: row.created_by,
-        collectionId: row.collection_id, // the folder it was dropped in
-        fromPath: row.from_path,
-        fromDevice: row.from_device,
-        origin: row.origin,
-        blurredOf: row.blurred_of,
-        blur: row.blur,
-        proxy: proxyAsked(row.proxy),
-        modifiedAt: row.modified_at,
-      });
-      if (hold) {
-        d.prepare("DELETE FROM jobs WHERE version_id = ?").run(versionId);
-        d.prepare("UPDATE asset_versions SET held = 1, state = 'ready', quick = ? WHERE id = ?").run(quick, versionId);
-      } else if (row.made) d.prepare("DELETE FROM jobs WHERE version_id = ? AND kind = 'probe'").run(versionId); // fileMade queues what it needs
-      d.prepare("UPDATE uploads SET state = 'done', received = size, version_id = ? WHERE id = ?").run(versionId, row.id);
-      d.exec("COMMIT");
+      copy = duplicateOf(row, sha256);
+      if (copy) d.exec("ROLLBACK");
+      else {
+        assetId = recordVersion(d, {
+          libraryId: row.library_id,
+          assetId: row.replaces_asset_id,
+          versionId,
+          sourceKey,
+          filename: row.filename,
+          size: madeOf(row)?.proxy?.size ?? row.size, // a 720p copy: the version is the original's size, as one kept on a computer
+          sha256,
+          by: row.created_by,
+          collectionId: row.collection_id, // the folder it was dropped in
+          fromPath: row.from_path,
+          fromDevice: row.from_device,
+          origin: row.origin,
+          blurredOf: row.blurred_of,
+          blur: row.blur,
+          proxy: proxyAsked(row.proxy),
+          modifiedAt: row.modified_at,
+        });
+        if (hold) {
+          d.prepare("DELETE FROM jobs WHERE version_id = ?").run(versionId);
+          d.prepare("UPDATE asset_versions SET held = 1, state = 'ready', quick = ? WHERE id = ?").run(quick, versionId);
+        } else if (row.made) d.prepare("DELETE FROM jobs WHERE version_id = ? AND kind = 'probe'").run(versionId); // fileMade queues what it needs
+        d.prepare("UPDATE uploads SET state = 'done', received = size, version_id = ? WHERE id = ?").run(versionId, row.id);
+        d.exec("COMMIT");
+      }
     } catch (e) {
       d.exec("ROLLBACK");
+      // no version row was written: the file moved in above is nothing the library points at, so it goes
       if (hold) await dropHeld([versionId]);
+      else await blobs.delete(sourceKey).catch(() => {});
       throw e;
+    }
+    if (copy) {
+      if (hold) await dropHeld([versionId]);
+      else await blobs.delete(sourceKey).catch(() => {});
+      await rm(row.staging_path, { force: true });
+      db().prepare("UPDATE uploads SET state = 'done', made = NULL, version_id = ? WHERE id = ?").run(copy.current, row.id);
+      uploadDone(row.id, copy.current);
+      return c.json({ duplicateOf: copy.id });
     }
     await fileMade(row, versionId, hold);
     uploadDone(row.id, versionId);
