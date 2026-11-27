@@ -147,7 +147,8 @@ export default function LibraryPage() {
     setSort(v);
     persistSort(SORT_KEY, v);
   };
-  const [view, setView] = useLibraryView();
+  // a plain browser is for viewing: the library opens on the Gallery there, until the person picks a view
+  const [view, setView] = useLibraryView(useMe()?.viewOnly ? "gallery" : undefined);
   // the kind and roll are the Gallery's tabs: no other view shows them, so none keeps them
   useEffect(() => {
     if (view !== "gallery") (setKind("all"), setRoll(null));

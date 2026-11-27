@@ -7,36 +7,38 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 /**
  * The Media Library's three views, kept on this device under its own key: Folders (the folder cards, then the clips),
  * Gallery (only the clips, big and edge to edge) and List (rows). Before a pick here it opens as Settings → Appearance
- * says for the Media Library (cards: Folders, rows: List). The other tools' views (components/browse/views.ts) keep
- * their two.
+ * says for the Media Library (cards: Folders, rows: List), or as `first` where the page has a view of its own to open
+ * on (a plain browser, which is for viewing: Gallery). The other tools' views (components/browse/views.ts) keep their two.
  */
 export type LibraryView = "folders" | "gallery" | "list";
 const VIEWS: LibraryView[] = ["folders", "gallery", "list"];
 const KEY = "library:view";
 const EVENT = "library-view-change";
+// a page with a first view of its own keeps its pick apart: a pick from before it had one does not stand in its way
+const keyFor = (first?: LibraryView) => (first ? `${KEY}:${first}` : KEY);
 
-export function storedView(): LibraryView {
+export function storedView(first?: LibraryView): LibraryView {
   try {
-    const v = localStorage.getItem(KEY) as LibraryView | null;
+    const v = localStorage.getItem(keyFor(first)) as LibraryView | null;
     if (v && VIEWS.includes(v)) return v;
   } catch {
     /* storage off: Appearance's choice */
   }
-  return pageView("media") === "list" ? "list" : "folders";
+  return first ?? (pageView("media") === "list" ? "list" : "folders");
 }
 
-export function useLibraryView(): [LibraryView, (v: LibraryView) => void] {
+export function useLibraryView(first?: LibraryView): [LibraryView, (v: LibraryView) => void] {
   const view = useSyncExternalStore(
     (cb) => {
       window.addEventListener(EVENT, cb);
       return () => window.removeEventListener(EVENT, cb);
     },
-    storedView,
+    () => storedView(first),
     () => "folders" as const,
   );
   const set = (v: LibraryView) => {
     try {
-      localStorage.setItem(KEY, v);
+      localStorage.setItem(keyFor(first), v);
     } catch {
       /* storage off: the pick holds for this visit */
     }
