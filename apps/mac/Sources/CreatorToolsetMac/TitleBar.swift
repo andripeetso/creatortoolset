@@ -458,7 +458,7 @@ extension AppWebView {
               let body = message.body as? [String: Any] else {
             return replyHandler(["granted": [String]()], nil)
         }
-        if let folder = body["remove"] as? String { MediaFiles.remove(folder) }
+        if let folder = body["remove"] as? String { MediaFiles.remove(folder, server: MediaFiles.serverKey(site())) }
         let server = MediaFiles.serverKey(site())
         // Settings → Folders' "Allow on this Mac" (a press on the page): a folder this server lists for this Mac
         if let ask = body["folderGrant"] as? [String: Any], let path = ask["path"] as? String {
@@ -470,7 +470,7 @@ extension AppWebView {
         // an import's "Use where they are": only folders this Mac was given (a drop or a pick) go on the reading list
         if let paths = body["read"] as? [String] {
             let added = MediaFiles.allowReadGiven(Array(paths.prefix(500)), server: server)
-            var reply: [String: Any] = MediaFiles.readList()
+            var reply: [String: Any] = MediaFiles.readList(server: server)
             reply["added"] = added
             return replyHandler(reply, nil)
         }
@@ -492,7 +492,7 @@ extension AppWebView {
             return
         }
         guard let ask = body["ask"] as? String else {
-            var reply: [String: Any] = MediaFiles.readList()
+            var reply: [String: Any] = MediaFiles.readList(server: server)
             reply["granted"] = MediaFiles.granted(server: server, workspace: nil)
             reply["readGiven"] = true   // this app takes {read: paths}
             return replyHandler(reply, nil)
@@ -511,7 +511,7 @@ extension AppWebView {
         panel.beginSheetModal(for: window) { [weak self] answer in
             self?.mediaPanelOpen = false
             guard answer == .OK, let chosen = panel.url else { return replyHandler(["granted": [String]()], nil) }
-            MediaFiles.allowRead(chosen.path)
+            MediaFiles.allowRead(chosen.path, server: server)
             replyHandler(["granted": MediaFiles.granted(server: server, workspace: nil)], nil)
         }
     }
@@ -527,7 +527,7 @@ extension AppWebView {
             let items = drag.take()
             droppedFiles = rememberPicks(items.compactMap { $0["folder"] as? Bool == false ? ($0["path"] as? String).map(URL.init(fileURLWithPath:)) : nil }, in: droppedFiles)
             droppedPlaces = rememberPicks(items.compactMap { ($0["path"] as? String).map(URL.init(fileURLWithPath:)) }, in: droppedPlaces)
-            MediaFiles.grantDropped(items)
+            MediaFiles.grantDropped(items, server: MediaFiles.serverKey(site()))
             return replyHandler(["items": items], nil)
         }
         onThisMacAsk(ask) { replyHandler($0, nil) }

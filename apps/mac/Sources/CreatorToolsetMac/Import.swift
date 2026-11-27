@@ -28,7 +28,8 @@ import UniformTypeIdentifiers
 // - import:make:{"in","names":[…]} → { made:[path], failed:[{name,error}], children:[name] }: setup's Library folder on
 //   Done. Each named folder missing in `in` is made (an existing one is left as it is); `children` are the folders in `in`
 //   after (no names: only that, for a dropped folder's Found). `in` must be a folder this app may write or read (a pick, a
-//   drop, the library's default place) or the folder one of those is in; a name is one plain folder name, never a path.
+//   drop, the library's default place) or inside one; a folder granted in a pick or a drop also gives the folder it is in,
+//   never a dropped file. A name is one plain folder name, never a path.
 
 func isImportAsk(_ ask: String) -> Bool { ask.hasPrefix("import:") }
 
@@ -139,17 +140,17 @@ final class Imports: @unchecked Sendable {
             lock.unlock()
             if taken { return done(["error": "That copy is running already."]) }
             DispatchQueue.global(qos: .userInitiated).async { main(self.copy(id: id, files, sources: sources, destinations: Self.copyDestinations(server: server),
-                                                                                waiting: MediaFiles.importsFolders(server: server, allowed: false), media: MediaFiles.signedInMediaFolders())) }
+                                                                                waiting: MediaFiles.importsFolders(server: server, allowed: false), media: MediaFiles.signedInMediaFolders(), grant: { MediaFiles.add($0, server: server) })) }
         case .progress(let id)?:
             done(with(id) { j in ["bytes": j.bytes, "of": j.of, "file": j.file ?? NSNull()] as [String: Any] } ?? ["bytes": 0, "of": 0])
         case .cancel(let id)?:
             _ = with(id) { $0.cancelled = true }
             done(["ok": true])
         case .scan(let path)?:
-            DispatchQueue.global(qos: .userInitiated).async { main(Self.scan(path, granted: MediaFiles.granted)) }
+            DispatchQueue.global(qos: .userInitiated).async { main(Self.scan(path, granted: MediaFiles.granted(server: server, workspace: nil))) }
         case .print(let paths)?:
             DispatchQueue.global(qos: .userInitiated).async {
-                let granted = MediaFiles.granted
+                let granted = MediaFiles.granted(server: server, workspace: nil)
                 var prints: [String: String] = [:]
                 // a file on a network disk that doesn't answer gets no print (Places.swift)
                 for p in paths where Places.shared.reachable(p) && Self.inside(p, granted) != nil { prints[p] = Self.quickPrint(p) }
@@ -157,7 +158,7 @@ final class Imports: @unchecked Sendable {
             }
         case .hash(let paths)?:
             DispatchQueue.global(qos: .utility).async {
-                let granted = MediaFiles.granted
+                let granted = MediaFiles.granted(server: server, workspace: nil)
                 var hashes: [String: String] = [:]
                 for p in paths where Places.shared.reachable(p) && Self.inside(p, granted) != nil {
                     hashes[p] = try? LibraryCopyJob.sha256(of: URL(fileURLWithPath: p))
@@ -165,11 +166,14 @@ final class Imports: @unchecked Sendable {
                 main(["hashes": hashes])
             }
         case .locate(let folder, let files)?:
-            DispatchQueue.global(qos: .userInitiated).async { main(Locate.answer(folder: folder, files: files, allowed: MediaFiles.granted + Self.destinations)) }
+            DispatchQueue.global(qos: .userInitiated).async { main(Locate.answer(folder: folder, files: files, allowed: MediaFiles.granted(server: server, workspace: nil) + Self.destinations, grant: { MediaFiles.add($0, server: server) })) }
         case .make(let folder, let names)?:
-            DispatchQueue.global(qos: .userInitiated).async { main(Self.make(in: folder, names: names, allowed: MediaFiles.granted + Self.destinations + sources)) }
+            DispatchQueue.global(qos: .userInitiated).async {
+                let mine = MediaFiles.granted(server: server, workspace: nil) + Self.destinations
+                main(Self.make(in: folder, names: names, allowed: mine + sources, folders: mine.filter(Self.isFolder)))
+            }
         case .thumb(let path, let max)?:
-            DispatchQueue.global(qos: .userInitiated).async { main(Self.thumb(path, max: max, allowed: MediaFiles.granted + Self.destinations + sources)) }
+            DispatchQueue.global(qos: .userInitiated).async { main(Self.thumb(path, max: max, allowed: MediaFiles.granted(server: server, workspace: nil) + Self.destinations + sources)) }
         case .chosen(let workspace, let paths)?:
             let kept = paths.map { URL(fileURLWithPath: $0).path }.filter(sources.contains)   // the window's drops are kept as URL paths
             if !server.isEmpty, !kept.isEmpty { MediaFiles.chosen(kept, server: server, workspace: workspace) }
@@ -182,7 +186,7 @@ final class Imports: @unchecked Sendable {
     /// folder written into is granted (`grant`) for playing and scanning.
     /// `waiting`: Imports/ of Media folders not allowed on this Mac yet; `media`: every listed Media folder, never copied from.
     func copy(id: String, _ files: [ImportPair], sources: [String], destinations: [String], waiting: [String] = [], media: [String] = [],
-              grant: (String) -> Void = MediaFiles.add) -> [String: Any] {
+              grant: (String) -> Void = { _ in }) -> [String: Any] {
         defer { lock.lock(); jobs[id] = nil; lock.unlock() }
         let size = { (p: String) in ((try? FileManager.default.attributesOfItem(atPath: p))?[.size] as? NSNumber)?.int64Value }
         // only what this window was given counts: a page learns nothing of other files from the total
@@ -337,11 +341,12 @@ final class Imports: @unchecked Sendable {
         return Array(names.sorted { $0.localizedStandardCompare($1) == .orderedAscending }.prefix(limit))
     }
 
-    /// The Library folder's missing folders made in `folder` (see the top of this file). `allowed`: the folders this app may
-    /// use; `folder` must be one of them, inside one, or the folder one of them is in. `grant` lets the page play and copy
-    /// into each made one.
-    static func make(in folder: String, names: [String], allowed: [String], grant: (String) -> Void = { MediaFiles.add($0); Imports.chose($0) }) -> [String: Any] {
-        let parentOfAllowed = allowed.contains { (($0 as NSString).deletingLastPathComponent as NSString).standardizingPath == (folder as NSString).standardizingPath }
+    /// The Library folder's missing folders made in `folder` (see the top of this file). `allowed`: the entries this app may
+    /// use; `folder` must be inside one of them, or be the folder one of `folders` is in. Only a folder grant (`folders`)
+    /// gives that parent rule, never a dropped file. `grant` lets a copy write into each made one: a destination, and not
+    /// read or listed beyond that.
+    static func make(in folder: String, names: [String], allowed: [String], folders: [String] = [], grant: (String) -> Void = { Imports.chose($0) }) -> [String: Any] {
+        let parentOfAllowed = folders.contains { (($0 as NSString).deletingLastPathComponent as NSString).standardizingPath == (folder as NSString).standardizingPath }
         guard inside(folder, allowed) != nil || parentOfAllowed else { return ["error": "That folder isn't one this app may use. Choose it again."] }
         var made: [String] = []
         var failed: [[String: String]] = []
@@ -367,6 +372,12 @@ final class Imports: @unchecked Sendable {
             }
         }
         return ["made": made, "failed": failed, "children": subfolders(folder)]
+    }
+
+    /// A path that is a folder (not a file): only a folder can be granted as a parent (`make`).
+    static func isFolder(_ path: String) -> Bool {
+        var directory: ObjCBool = false
+        return FileManager.default.fileExists(atPath: path, isDirectory: &directory) && directory.boolValue
     }
 
     static func inside(_ path: String, _ roots: [String]) -> String? {

@@ -38,7 +38,7 @@ struct FaceBlurAutoJob {
     let api: DeviceAPI
     let step: EditorJob
     /// the folders this Mac reads media from for this server (MediaFiles.granted): the only originals a job may open
-    var granted: [String] = MediaFiles.granted
+    var granted: [String] = []
 
     var isVideo: Bool { step.options["media"] != "photo" }
     /// the style from the job's options (look, strength, softness, size, color)

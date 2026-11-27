@@ -107,9 +107,9 @@ final class MediaFilesTests: XCTestCase {
         let was = MediaFiles.defaults
         MediaFiles.defaults = UserDefaults(suiteName: suite)!
         defer { MediaFiles.defaults.removePersistentDomain(forName: suite); MediaFiles.defaults = was }
-        MediaFiles.grantDropped([["path": "/Users/tiny/Downloads/A001.mov"]])
+        MediaFiles.grantDropped([["path": "/Users/tiny/Downloads/A001.mov"]], server: "studio.tiny.test")
         XCTAssertNil(MediaFiles.defaults.array(forKey: MediaFiles.copyFromKey))   // played from its folder, never copied by that
-        XCTAssertEqual(MediaFiles.defaults.stringArray(forKey: "pickedFolders"), ["/Users/tiny/Downloads"])
+        XCTAssertEqual(MediaFiles.picks("studio.tiny.test"), ["/Users/tiny/Downloads"])
         let sources = ["/Users/tiny/Downloads/A001.mov", "/Volumes/Tiny/Card"]
         let ask = #"import:chosen:{"workspace":"ws-tiny","paths":["/Users/tiny/Downloads/A001.mov","/Users/tiny/Downloads/other.mov"]}"#
         let got = expectation(description: "answered")
@@ -130,13 +130,16 @@ final class MediaFilesTests: XCTestCase {
     }
 
     func testPickGrantsWhatWasPicked() throws {
+        let suite = "media-files-pick-tests-\(UUID().uuidString)"
+        let was = MediaFiles.defaults
+        MediaFiles.defaults = UserDefaults(suiteName: suite)!
+        defer { MediaFiles.defaults.removePersistentDomain(forName: suite); MediaFiles.defaults = was }
         // a picked folder is granted itself; a picked file only itself, never the folder it is in
         try FileManager.default.createDirectory(at: granted.appendingPathComponent("Day 1"), withIntermediateDirectories: true)
         let clip = URL(fileURLWithPath: try write("Footage/Day 1/clip.mov"))
         let other = try write("Footage/Day 1/other.mov")
-        var got: [String] = []
-        MediaFiles.grantPicked([granted, clip]) { got.append($0) }
-        XCTAssertEqual(got, [granted.path, clip.path])
+        MediaFiles.grantPicked([granted, clip], server: "s")
+        XCTAssertEqual(MediaFiles.picks("s"), [granted.path, clip.path])
         // the file alone opens; its neighbour, not picked, stays shut
         let only = [clip.path]
         XCTAssertTrue(isFile(MediaFiles.gate(clip.path, granted: only)))

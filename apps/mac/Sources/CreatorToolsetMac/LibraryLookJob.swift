@@ -40,7 +40,7 @@ struct LibraryLookJob {
     var ffmpeg: URL? = HelperCheckJob.ffmpeg
     var stopped: @Sendable () -> Bool = { false }
     /// the folders the person gave this app (MediaFiles.swift): a file outside them is never read, whatever the server asks
-    var granted: [String] = MediaFiles.granted
+    var granted: [String] = []
     /// the cut model for the picture read (CutModel.swift), nil: the server measures the cuts
     var cuts: () -> CutModel? = { CutModel.shared() }
 

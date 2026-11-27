@@ -17,7 +17,7 @@ struct LocateFile: Equatable {
 }
 
 enum Locate {
-    static func answer(folder: String?, files: [LocateFile], allowed: [String], grant: (String) -> Void = MediaFiles.add) -> [String: Any] {
+    static func answer(folder: String?, files: [LocateFile], allowed: [String], grant: (String) -> Void) -> [String: Any] {
         let size = { (p: String) in ((try? FileManager.default.attributesOfItem(atPath: p))?[.size] as? NSNumber)?.int64Value }
         let gone = files.filter { f in Places.shared.guarded(f.path, { size(f.path) }).map { $0 != f.bytes } ?? false }
         guard let folder else { return ["gone": gone.map(\.id), "files": [Any]()] }

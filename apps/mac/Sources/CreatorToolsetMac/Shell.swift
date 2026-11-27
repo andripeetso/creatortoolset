@@ -297,6 +297,11 @@ final class Shell: NSObject, ObservableObject {
             if let reply = self.storageAsk(ask) { return done(reply) }
             switch ask {
             case "state": done(self.thisMacState())
+            // the page's Connect: this Mac's AI for the server comes on only after the person agrees (confirmStart)
+            case "start": self.confirmStart { agreed in
+                guard agreed else { return done(self.thisMacState()) }
+                Task { done(await self.startThisMac()) }
+            }
             case "ai-install-progress": done(AiInstall.shared.progress)
             case "access": Task { done(await self.accessFromOtherDevices()) }
             case "access:off": Task { done(self.thisMacState(problem: await self.setOtherDevices(false))) }
@@ -309,7 +314,8 @@ final class Shell: NSObject, ObservableObject {
             // Settings → Folders' "This Mac" on a server it isn't on yet (a press): paired, the AI left as it is
             case "pair": Task { if !self.pairedHere { try? await self.pairThisMac() }; self.syncRunners(); done(self.thisMacState()) }
             case "files": done(pickedFilesReply(self.pickedFiles, here: self.runsHere && self.server != nil))
-            default: Task { done(await self.startThisMac()) }
+            // an ask this app does not know answers as off: nothing is started
+            default: done(["aiOn": false, "paired": false])
             }
         }
         account.window = { [weak self] in self?.webView.window }
@@ -1017,6 +1023,14 @@ final class Shell: NSObject, ObservableObject {
         return task
     }
 
+    /// The "start" ask's alert, naming the server (pluginAlert: Cancel first, no default button). `then` gets the answer.
+    func confirmStart(then: @escaping (Bool) -> Void) {
+        guard let window = webView.window else { return then(false) }
+        let name = base.host == "127.0.0.1" ? "This Mac" : MediaFiles.serverKey(base)
+        let alert = pluginAlert(message: "Turn on this Mac's AI for \(name)?", detail: "This Mac pairs with \(name) and takes its AI work.", agree: "Turn On")
+        alert.beginSheetModal(for: window) { response in then(response == .alertSecondButtonReturn) }
+    }
+
     /// The page's Connect (TitleBar.swift, bridge "thisMac" start): turns the AI on, pairs this Mac and waits for that,
     /// so the page's next check finds the device. Replies with the state.
     func startThisMac() async -> [String: Any] {
@@ -1416,7 +1430,7 @@ extension Shell: WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
             }
             if response == .OK, let self {
                 self.pickedFiles = rememberPicks(panel.urls, in: self.pickedFiles)
-                MediaFiles.grantPicked(panel.urls)
+                MediaFiles.grantPicked(panel.urls, server: MediaFiles.serverKey(self.base))
             }
             completionHandler(response == .OK ? panel.urls : nil)
         }

@@ -24,7 +24,7 @@ struct LookAwayJob {
     let step: EditorJob
     /// where downloaded proxies are kept (TranscribeJob's cache)
     var proxies: URL? = nil
-    var granted: [String] = MediaFiles.granted
+    var granted: [String] = []
     var stopped: () -> Bool = { false }
 
     private var base: String { "/api/devices/relay/editor/job/\(step.id)" }

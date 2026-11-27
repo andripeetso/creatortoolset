@@ -44,7 +44,7 @@ struct TranscribeJob {
     var proxies: URL? = nil
     var ffmpeg: URL? = HelperCheckJob.ffmpeg
     /// the folders the person gave this app (MediaFiles.swift): a file outside them is never read
-    var granted: [String] = MediaFiles.granted
+    var granted: [String] = []
 
     func run() -> (end: CardJob.End, more: Bool) {
         let base = "/api/devices/relay/transcribe/\(step.id)"

@@ -409,7 +409,7 @@ final class Places: @unchecked Sendable {
     /// it. A version with no tries is away on its root, when the server named one. A version whose proxy is in this
     /// Mac's cache (`cached`: its path, ProxyCache.file) says so beside that with its ctlocal address, or is `cached` when
     /// nothing else is known; either way `proxyPath` is that path (Show proxy in Finder, Copy proxy path).
-    func check(_ versions: [String: VersionPlaces], granted: [String] = MediaFiles.granted, roots: [MediaFiles.RootGrant] = MediaFiles.rootGrants,
+    func check(_ versions: [String: VersionPlaces], granted: [String] = [], roots: [MediaFiles.RootGrant] = MediaFiles.rootGrants,
                size: @escaping (String) -> Int64? = Places.size, cached: (String) -> String? = { _ in nil }) -> Checked {
         let disks = diskList()
         let known = shares
@@ -492,7 +492,7 @@ final class Places: @unchecked Sendable {
     /// With `cache` (a server elsewhere), each version's proxy in the cache of the window's account there (ProxyCache);
     /// when the server doesn't answer (no internet), those alone.
     func answerCheck(library: String, versions: [String], site: Site, device: String?, cache: Bool = false,
-                     granted: [String] = MediaFiles.granted, roots: [MediaFiles.RootGrant] = MediaFiles.rootGrants) async -> [String: Any] {
+                     granted: [String] = [], roots: [MediaFiles.RootGrant] = MediaFiles.rootGrants) async -> [String: Any] {
         guard let device, let encoded = device.addingPercentEncoding(withAllowedCharacters: .alphanumerics) else { return ["versions": [String: Any]()] }
         // asked first: an answer kept for one account is never handed to the next
         let (account, offline) = cache ? await ProxyCache.account(site) : (nil, false)

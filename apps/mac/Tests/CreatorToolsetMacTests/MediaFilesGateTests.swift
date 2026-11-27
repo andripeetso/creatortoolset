@@ -74,45 +74,77 @@ final class MediaFilesGateTests: XCTestCase {
     }
 
     func testPickedFolderNeedsNoOK() {
-        MediaFiles.add(root.path)   // an open panel or a drop on this Mac
+        MediaFiles.add(root.path, server: "s")   // an open panel or a drop on this Mac
         MediaFiles.setServerFolders([.init(id: "f1", path: footage, workspaces: ["*"], use: "media")], server: "s")
         XCTAssertTrue(MediaFiles.isAllowed(footage, server: "s"))
     }
 
     func testOnlyAPanelAllowIsAReadFolderAndRemoveTakesItAllOff() {
         let dropped = root.appendingPathComponent("Card").path
-        MediaFiles.add(dropped)                 // a drop: read what was given, copied on import
-        MediaFiles.allowRead(root.path)         // Allow folder in the open panel
-        MediaFiles.grantPicked([URL(fileURLWithPath: file)])   // a picked file alone is no folder
-        XCTAssertEqual(MediaFiles.readList()["folders"], [dropped, root.path])
-        XCTAssertEqual(MediaFiles.readList()["reads"], [root.path])
+        MediaFiles.add(dropped, server: "s")                 // a drop: read what was given, copied on import
+        MediaFiles.allowRead(root.path, server: "s")         // Allow folder in the open panel
+        MediaFiles.grantPicked([URL(fileURLWithPath: file)], server: "s")   // a picked file alone is no folder
+        XCTAssertEqual(MediaFiles.readList(server: "s")["folders"], [dropped, root.path])
+        XCTAssertEqual(MediaFiles.readList(server: "s")["reads"], [root.path])
         MediaFiles.setServerFolders([.init(id: "f1", path: footage, workspaces: ["*"], use: "media")], server: "s")
-        MediaFiles.remove(root.path)
-        XCTAssertEqual(MediaFiles.readList()["reads"], [])
-        XCTAssertFalse(MediaFiles.granted.contains(root.path))
+        MediaFiles.remove(root.path, server: "s")
+        XCTAssertEqual(MediaFiles.readList(server: "s")["reads"], [])
+        XCTAssertFalse(MediaFiles.picks("s").contains(root.path))
         XCTAssertFalse(MediaFiles.isAllowed(footage, server: "s"))   // its pick no longer OKs the rows under it
     }
 
     func testUseWhereTheyAreReadsOnlyWhatThisMacWasGiven() {
         let none = { (_: String) in false }
         let card = root.appendingPathComponent("Card").path, loose = root.appendingPathComponent("Downloads/b.mov").path
-        MediaFiles.grantDropped([["path": card, "folder": true]])
-        MediaFiles.grantPicked([URL(fileURLWithPath: loose)])
+        MediaFiles.grantDropped([["path": card, "folder": true]], server: "s")
+        MediaFiles.grantPicked([URL(fileURLWithPath: loose)], server: "s")
         // a dropped folder's file: that folder; a picked file alone never widens to its folder; anything else: nothing
         XCTAssertEqual(MediaFiles.allowReadGiven([card + "/sub/a.mov", loose, file, "/etc/x.mov"], server: "s", signedIn: none), [card])
-        XCTAssertEqual(MediaFiles.reads, [card])
-        XCTAssertNil(MediaFiles.readFolder(for: card + "/../x.mov"))
+        XCTAssertEqual(MediaFiles.reads("s"), [card])
+        XCTAssertNil(MediaFiles.readFolder(for: card + "/../x.mov", server: "s"))
         // a whole home folder is never read from one file picked in it
-        MediaFiles.grantPicked([URL(fileURLWithPath: NSHomeDirectory() + "/c.mov")])
-        XCTAssertNil(MediaFiles.readFolder(for: NSHomeDirectory() + "/c.mov"))
+        MediaFiles.grantPicked([URL(fileURLWithPath: NSHomeDirectory() + "/c.mov")], server: "s")
+        XCTAssertNil(MediaFiles.readFolder(for: NSHomeDirectory() + "/c.mov", server: "s"))
     }
 
     func testUseWhereTheyAreKeepsTheBlurredElsewhereGuard() {
         let card = root.appendingPathComponent("Card").path
         MediaFiles.setServerFolders([.init(id: "f1", path: card + "/Media", workspaces: ["*"], use: "media", guarded: ["Tiny"])], server: "other.test")
-        MediaFiles.grantDropped([["path": card, "folder": true]])
+        MediaFiles.grantDropped([["path": card, "folder": true]], server: "s")
         XCTAssertEqual(MediaFiles.allowReadGiven([card + "/a.mov"], server: "s", signedIn: { $0 == "other.test" }, reachable: { _ in false }), [])
-        XCTAssertEqual(MediaFiles.reads, [])
+        XCTAssertEqual(MediaFiles.reads("s"), [])
+    }
+
+    /// A pick made on server A is never read by server B's page: at the gate, the list it sees, or Import's scan.
+    func testAPickMadeOnOneServerIsRefusedOnAnother() {
+        MediaFiles.grantDropped([["path": footage, "folder": true]], server: "a.test")
+        let onB = MediaFiles.granted(server: "b.test", workspace: nil)
+        XCTAssertEqual(MediaFiles.granted(server: "a.test", workspace: nil), [footage])
+        XCTAssertEqual(onB, [])
+        XCTAssertEqual(MediaFiles.gate(file, granted: onB, roots: [], places: places), .status(403))
+        XCTAssertEqual(MediaFiles.readList(server: "b.test")["folders"], [])
+        XCTAssertEqual(MediaFiles.placeState(file, server: "b.test", places: places).state, "not_granted")
+        if case .file = MediaFiles.gate(file, granted: MediaFiles.granted(server: "a.test", workspace: nil), roots: [], places: places) {} else { XCTFail("granted on A") }
+        // the Media Library's scan, asked by each page for the same folder
+        let answered = expectation(description: "scans answered")
+        answered.expectedFulfillmentCount = 2
+        Imports.shared.answer(#"import:scan:{"path":"\#(footage)"}"#, sources: [], server: "b.test") { reply in
+            XCTAssertNotNil(reply["error"], "B's page must not list A's folder")
+            answered.fulfill()
+        }
+        Imports.shared.answer(#"import:scan:{"path":"\#(footage)"}"#, sources: [], server: "a.test") { reply in
+            XCTAssertNotNil(reply["files"], "A's page lists its own pick")
+            answered.fulfill()
+        }
+        wait(for: [answered], timeout: 5)
+    }
+
+    /// Picks saved before servers were recorded (a bare list) are This Mac's own, whatever its port.
+    func testPicksFromBeforeServersWereRecordedAreThisMacsOwn() {
+        MediaFiles.defaults.set([footage], forKey: "mediaFolders")
+        XCTAssertEqual(MediaFiles.picks("127.0.0.1:43127"), [footage])
+        XCTAssertEqual(MediaFiles.picks("127.0.0.1:43999"), [footage])
+        XCTAssertEqual(MediaFiles.picks("studio.example:443"), [])
     }
 
     func testGrantsAreReplacedOnPull() {
@@ -211,7 +243,8 @@ final class MediaFilesGateTests: XCTestCase {
             if case .file = MediaFiles.gate(file, granted: MediaFiles.granted(server: s, workspace: workspace), roots: roots, places: places, firstRead: true) { return true }
             return false
         }
-        // granted on the share when it was mounted at /Volumes/footage; it is at `mount` now
+        // granted on the share when it was mounted at /Volumes/footage (a pick of this server); it is at `mount` now
+        MediaFiles.add("/Volumes/footage/Footage", server: s)
         let rootGrant = [MediaFiles.RootGrant(path: "/Volumes/footage/Footage", root: "smb://office-nas/footage", rel: "Footage")]
         XCTAssertTrue(served(nil, rootGrant))
         XCTAssertEqual(MediaFiles.placeState(file, server: s, roots: rootGrant, places: places).state, "here")

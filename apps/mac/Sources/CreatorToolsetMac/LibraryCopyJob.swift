@@ -47,7 +47,7 @@ struct LibraryCopyJob {
     let step: EditorJob
     var stopped: @Sendable () -> Bool = { false }
     /// the folders the person gave this app (MediaFiles.swift): a source path outside them is never read; the server's file is
-    var granted: [String] = MediaFiles.granted
+    var granted: [String] = []
     var beatEvery: TimeInterval = 30
 
     static let lockName = ".creatortoolset-copy.lock"

@@ -148,7 +148,7 @@ extension Shell {
             return ["path": NSNull()]
         }
         Imports.chose(url.path)   // a Media Library copy may write into it (Import.swift)
-        MediaFiles.add(url.path)  // and its videos are read here later: shot descriptions, transcripts, playing originals
+        MediaFiles.add(url.path, server: MediaFiles.serverKey(base))  // and its videos are read here later: shot descriptions, transcripts, playing originals
         // the names of the folders in it and beside it: setup finds Source media, Project files and Final exports by them
         return ["path": url.path, "children": Imports.subfolders(url.path), "siblings": Imports.subfolders(url.deletingLastPathComponent().path)]
     }

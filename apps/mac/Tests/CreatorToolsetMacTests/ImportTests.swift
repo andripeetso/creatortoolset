@@ -307,11 +307,24 @@ final class ImportTests: XCTestCase {
     func testMakeIntoTheFolderBesideAPickAndIntoANewDefaultPlace() throws {
         try FileManager.default.createDirectory(atPath: at("moo/FOOTAGE"), withIntermediateDirectories: true)
         // existing folders: FOOTAGE was picked, PROJECTS goes in the folder it is in
-        let beside = Imports.make(in: at("moo"), names: ["Project files"], allowed: [at("moo/FOOTAGE")], grant: { _ in })
+        let beside = Imports.make(in: at("moo"), names: ["Project files"], allowed: [], folders: [at("moo/FOOTAGE")], grant: { _ in })
         XCTAssertEqual(beside["made"] as? [String], [at("moo/Project files")])
         // the library's default place, not there yet, inside an allowed root
         let fresh = Imports.make(in: at("root/Tiny"), names: ["Source media"], allowed: [at("root")], grant: { _ in })
         XCTAssertEqual(fresh["made"] as? [String], [at("root/Tiny/Source media")])
+    }
+
+    /// A dropped file is in `allowed` only: the folder it lies in is not a folder grant, so no folder may be made there.
+    func testMakeNeverGrantsTheFolderOfADroppedFile() throws {
+        try FileManager.default.createDirectory(atPath: at("Documents"), withIntermediateDirectories: true)
+        let pdf = at("Documents/contract.pdf")
+        try Data("x".utf8).write(to: URL(fileURLWithPath: pdf))
+        var granted: [String] = []
+        let r = Imports.make(in: at("Documents"), names: ["Invoices"], allowed: [pdf], folders: [], grant: { granted.append($0) })
+        XCTAssertNotNil(r["error"])
+        XCTAssertNil(r["children"])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: at("Documents/Invoices")))
+        XCTAssertEqual(granted, [])
     }
 
     func testMakeRefusesAFolderNotAllowedAndNamesThatArePaths() throws {

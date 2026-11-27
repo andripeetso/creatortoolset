@@ -35,10 +35,10 @@ enum MediaFiles {
     static func isMedia(_ path: String) -> Bool { type(of: path) != nil }
 
     /// A drop on the window: each dropped folder, and each loose file's folder, may be played and scanned from then on.
-    static func grantDropped(_ items: [[String: Any]]) {
+    static func grantDropped(_ items: [[String: Any]], server: String) {
         for item in items {
             guard let path = item["path"] as? String else { continue }
-            add(item["folder"] as? Bool == true ? path : (path as NSString).deletingLastPathComponent)
+            add(item["folder"] as? Bool == true ? path : (path as NSString).deletingLastPathComponent, server: server)
         }
     }
 
@@ -55,26 +55,48 @@ enum MediaFiles {
         defaults.set(Array((old + new).suffix(500)), forKey: copyFromKey)
     }
 
-    /// The granted folders, as chosen in the open panel.
-    /// A pick in this app's open panel for the page (a file input: the Media Library's Add, an edit's footage): each
-    /// picked folder, and each picked file by itself, never the folder it is in (that holds files nobody picked). A
+    /// A pick in this app's open panel for the page of `server` (a file input: the Media Library's Add, an edit's footage):
+    /// each picked folder, and each picked file by itself, never the folder it is in (that holds files nobody picked). A
     /// file indexed in the Media Library from there is read on this Mac later (its shot descriptions, its transcript,
-    /// playing its original), so the pick is the grant. `gate` takes a granted path that is the file itself.
-    static func grantPicked(_ urls: [URL], grant: (String) -> Void = add) {
-        for url in urls { grant(url.path) }
+    /// playing its original), so the pick is the grant. Only that server's page may read it (`picks`).
+    static func grantPicked(_ urls: [URL], server: String) {
+        for url in urls { add(url.path, server: server) }
     }
 
-    static var granted: [String] { defaults.stringArray(forKey: key) ?? [] }
+    /// What `server`'s page was given here: its picks in an open panel and its drops on the window, and nothing another
+    /// server's page was given.
+    static func picks(_ server: String) -> [String] { picked(server, in: key) }
 
-    /// Every folder this app already reads: picked or dropped here, and each server's Settings → Folders folders.
-    static var usedFolders: [String] { granted + (decoded(serversKey) as [String: [ServerFolder]]).values.flatMap { $0.map(\.path) } }
+    /// Every folder this app already reads, for any server: picked or dropped here, and each server's Settings → Folders folders.
+    static var usedFolders: [String] { allPicks() + (decoded(serversKey) as [String: [ServerFolder]]).values.flatMap { $0.map(\.path) } }
 
-    static func add(_ folder: String) {
-        if !granted.contains(folder) { defaults.set(granted + [folder], forKey: key) }
+    static func add(_ folder: String, server: String) {
+        append(folder, server: server, to: key)
         // picked or dropped here: a Settings → Folders folder at or under it needs no OK (LocationAgent.swift)
-        let picked = defaults.stringArray(forKey: pickedKey) ?? []
-        if !picked.contains(folder) { defaults.set(picked + [folder], forKey: pickedKey) }
+        append(folder, server: server, to: pickedKey)
         addRootGrants(disks: Places.shared.diskList())
+    }
+
+    /// Every server's picks, once each.
+    private static func allPicks() -> [String] { Array(Set(byServer(key).values.flatMap { $0 })) }
+    /// This Mac's own server (127.0.0.1, whose port may change) keeps its picks under one slot.
+    private static let thisMacSlot = "This Mac"
+    private static func slot(_ server: String) -> String { server.hasPrefix("127.0.0.1:") ? thisMacSlot : server }
+    /// The paths kept under `key` for each server: [slot: [path]]. Before servers were recorded the value was a bare
+    /// [path]: those were picked on This Mac, so they are its own.
+    private static func byServer(_ key: String) -> [String: [String]] {
+        if let old = defaults.stringArray(forKey: key) { defaults.set([thisMacSlot: old], forKey: key) }
+        return defaults.dictionary(forKey: key) as? [String: [String]] ?? [:]
+    }
+    private static func picked(_ server: String, in key: String) -> [String] { byServer(key)[slot(server)] ?? [] }
+    private static func append(_ path: String, server: String, to key: String) {
+        var all = byServer(key)
+        if !(all[slot(server)] ?? []).contains(path) { all[slot(server), default: []].append(path); defaults.set(all, forKey: key) }
+    }
+    private static func drop(_ path: String, server: String, from key: String) {
+        var all = byServer(key)
+        all[slot(server)] = (all[slot(server)] ?? []).filter { $0 != path }
+        defaults.set(all, forKey: key)
     }
 
     // MARK: per server (local first): the Settings → Folders folders each server lists for this Mac
@@ -198,7 +220,7 @@ enum MediaFiles {
         let ok: [String: [String]] = decoded(allowedKey)
         // an OK saved by path before the id key still counts until a pull migrates it (setServerFolders)
         if serverFolders(server).contains(where: { $0.path == path && (ok[server]?.contains($0.id) == true || ok[server]?.contains($0.path) == true) }) { return true }
-        return Imports.inside(path, defaults.stringArray(forKey: pickedKey) ?? []) != nil
+        return Imports.inside(path, picked(server, in: pickedKey)) != nil
     }
 
     /// The folders of `folders` this Mac may read for a clip of `workspace` (nil: any workspace of that server).
@@ -210,7 +232,7 @@ enum MediaFiles {
     /// DM10) and that server's allowed folders in that workspace. With `rootGrants` (the gate's `roots`), the one grant
     /// list: serving, the places check and placeState all take it.
     static func granted(server: String, workspace: String?) -> [String] {
-        granted + folderGrants(serverFolders(server), workspace: workspace, allowed: { isAllowed($0, server: server) })
+        picks(server) + folderGrants(serverFolders(server), workspace: workspace, allowed: { isAllowed($0, server: server) })
     }
 
     /// The drive of a path on a disk that is not mounted ("/Volumes/Footage/a.mov" with no Footage): its name. The
@@ -241,7 +263,9 @@ enum MediaFiles {
                            places: Places = .shared) -> (state: String, disk: String?) {
         guard isPlain(path) else { return ("not_granted", nil) }
         let disks = places.diskList()
-        guard grantedByName(path, granted: granted(server: server, workspace: workspace), roots: roots, disks: disks) else {
+        let grants = granted(server: server, workspace: workspace)
+        let roots = roots.filter { grants.contains($0.path) }   // a root counts only for a folder this server was given
+        guard grantedByName(path, granted: grants, roots: roots, disks: disks) else {
             let listed = folderGrants(serverFolders(server), workspace: workspace, allowed: { _ in true })
             return underByName(path, listed) ? ("needs_ok", nil) : ("not_granted", nil)
         }
@@ -255,32 +279,33 @@ enum MediaFiles {
         return (there ? "here" : "not_here", nil)
     }
 
-    /// Settings → Folders' Remove: the folder's grant, its root grant, its read OK and its pick all go.
-    static func remove(_ folder: String) {
-        defaults.set(granted.filter { $0 != folder }, forKey: key)
-        saveRoots(rootGrants.filter { $0.path != folder })
-        defaults.set(reads.filter { $0 != folder }, forKey: readsKey)
-        defaults.set((defaults.stringArray(forKey: pickedKey) ?? []).filter { $0 != folder }, forKey: pickedKey)
+    /// Settings → Folders' Remove on `server`'s page: that server's grant, read OK and pick of the folder go; its root grant
+    /// goes once no server was given the folder.
+    static func remove(_ folder: String, server: String) {
+        drop(folder, server: server, from: key)
+        drop(folder, server: server, from: pickedKey)
+        drop(folder, server: server, from: readsKey)
+        if !allPicks().contains(folder) { saveRoots(rootGrants.filter { $0.path != folder }) }
     }
 
     /// The folders allowed in this app's own open panel (Allow folder): a file inside one is imported where it is, never
     /// copied (src/pages/library/Import.tsx). A drop or a file pick is a grant to read what was given, never one of these:
     /// a card dropped once would otherwise be read in place every time after.
     private static let readsKey = "readFolders"
-    static var reads: [String] { defaults.stringArray(forKey: readsKey) ?? [] }
-    static func allowRead(_ folder: String) {
-        if !reads.contains(folder) { defaults.set(reads + [folder], forKey: readsKey) }
-        add(folder)
+    static func reads(_ server: String) -> [String] { picked(server, in: readsKey) }
+    static func allowRead(_ folder: String, server: String) {
+        append(folder, server: server, to: readsKey)
+        add(folder, server: server)
     }
 
     /// The folder "Use where they are" (an import's question, the page's {read: paths}) puts on the reading list for one
     /// path the page names: the deepest granted folder (a dropped or picked folder, never a media file) holding it. A file
     /// granted alone gives nothing: it never widens to the folder it is in (grantPicked). Nil for a path this Mac was never
     /// given, a whole disk or the home folder: the page never reads a folder it wasn't given.
-    static func readFolder(for path: String) -> String? {
+    static func readFolder(for path: String, server: String) -> String? {
         guard isPlain(path) else { return nil }
         let p = path.precomposedStringWithCanonicalMapping
-        let folder = granted.filter { !isMedia($0) && underByName(p, [$0]) }.max { $0.count < $1.count }
+        let folder = picks(server).filter { !isMedia($0) && underByName(p, [$0]) }.max { $0.count < $1.count }
         guard let folder, !["/", "/Users", "/Volumes", NSHomeDirectory()].contains(folder) else { return nil }
         return folder
     }
@@ -290,15 +315,15 @@ enum MediaFiles {
     @discardableResult
     static func allowReadGiven(_ paths: [String], server: String, signedIn: (String) -> Bool = { DeviceVault.token(for: $0) != nil },
                                reachable: (String) -> Bool = { Places.shared.reachable($0) }) -> [String] {
-        let folders = Array(Set(paths.compactMap(readFolder(for:)))).sorted()
+        let folders = Array(Set(paths.compactMap { readFolder(for: $0, server: server) })).sorted()
         let ok = folders.filter { blurredElsewhere([$0], server: server, signedIn: signedIn, reachable: reachable) == nil }
-        ok.forEach(allowRead)
+        ok.forEach { allowRead($0, server: server) }
         return ok
     }
 
-    /// Settings → Folders' list of what this Mac reads besides the server's rows: every granted folder (a picked file's
-    /// own grant is left out), and which of them were allowed in the panel.
-    static func readList() -> [String: [String]] { ["folders": granted.filter { !isMedia($0) }, "reads": reads] }
+    /// Settings → Folders' list of what this Mac reads for `server` besides the server's rows: each folder it was given (a
+    /// picked file's own grant is left out), and which of them were allowed in the panel.
+    static func readList(server: String) -> [String: [String]] { ["folders": picks(server).filter { !isMedia($0) }, "reads": reads(server)] }
 
     /// A granted folder by its root: the folder as granted, its disk's root key, and the folder inside that disk.
     struct RootGrant: Codable, Equatable {
@@ -317,7 +342,7 @@ enum MediaFiles {
     /// existed, on the first launch that sees their disk). Reads no file: the disk comes from the mount paths.
     static func addRootGrants(disks: [PlaceDisk]) {
         let old = rootGrants
-        let new = rootGrants(for: granted.filter { f in !old.contains { $0.path == f } }, disks: disks)
+        let new = rootGrants(for: allPicks().filter { f in !old.contains { $0.path == f } }, disks: disks)
         if !new.isEmpty { saveRoots(old + new) }
     }
 
@@ -388,6 +413,7 @@ enum MediaFiles {
         guard type(of: path) != nil else { return .status(415) }
         let disks = places.diskList()
         let allowed = granted + (cache.map { [$0] } ?? [])
+        let roots = roots.filter { granted.contains($0.path) }   // a root counts only for a folder this server was given
         // a drive that is not connected: granted is told by the folder's name (nothing on it can be resolved)
         if let disk = unmountedDisk(path, disks: disks) {
             return grantedByName(path, granted: allowed, roots: roots, disks: disks) ? .diskAway(disk) : .status(403)
