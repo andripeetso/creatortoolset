@@ -2,7 +2,7 @@
 //   node e2e/media-library-screens/finals.mjs <outDir>
 // Seeds seed.ts + finals-seed.ts, starts the dev server, makes a carousel and a reel in Finals through the app's routes,
 // and writes, in dark: the list, a piece's right-click menu, the carousel window (first and third slide), a slide's
-// menu, the window after Mark as posted and after Replace file. Stops its own server by pid.
+// menu, the window after Mark as posted and after Replace file, and a piece's Type set by hand. Stops its own server by pid.
 import { execFileSync, spawn } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -105,6 +105,19 @@ try {
   await page.waitForTimeout(1500);
   await shot(page, "7-posted");
   console.log("header:", await dialog.locator("header p").first().textContent());
+
+  // the reel set to Other by hand, from its right-click menu's Type
+  await page.goto(BASE + "/finals", { waitUntil: "load" });
+  const reel = page.locator(`a[href="/finals/${ids.reel}"]`).first();
+  await reel.waitFor({ timeout: 60_000 });
+  await reel.click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Type" }).hover();
+  await page.waitForTimeout(700);
+  await shot(page, "8-type-menu");
+  await page.getByRole("menuitemradio", { name: "Other" }).click();
+  await page.waitForTimeout(1500);
+  await shot(page, "9-typed");
+  console.log("reel's badge:", await reel.locator("span").first().textContent());
   await browser.close();
 } finally {
   stop();

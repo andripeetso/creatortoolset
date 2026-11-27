@@ -1,4 +1,5 @@
 import { hostsOriginals, hostsProxies, uploadSent } from "@contracts/library";
+import type { PieceKind } from "@contracts/library";
 import type {
   LibraryMade,
   MadeKind,
@@ -550,6 +551,8 @@ const itemUrl = (libraryId: string, pieceId: string, itemId: string) => `${piece
 export const pieceZipUrl = (libraryId: string, pieceId: string) => `${pieceUrl(libraryId, pieceId)}/zip`;
 
 export const renamePiece = (libraryId: string, pieceId: string, label: string) => send<Piece>(pieceUrl(libraryId, pieceId), "PATCH", { label });
+/** The piece's type set by hand; null: Automatic (from its files). */
+export const setPieceKind = (libraryId: string, pieceId: string, kind: PieceKind | null) => send<Piece>(pieceUrl(libraryId, pieceId), "PATCH", { kind });
 
 export const deletePiece = (libraryId: string, pieceId: string) => send<{ ok: true }>(pieceUrl(libraryId, pieceId), "DELETE");
 

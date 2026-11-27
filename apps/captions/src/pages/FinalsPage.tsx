@@ -1,10 +1,12 @@
 import { useState } from "react";
 import { Link } from "react-router";
-import { CircleCheck, Clapperboard, Download, ExternalLink, GalleryHorizontalEnd, ImageOff, Layers, LayoutGrid, Link2, Merge, RotateCcw, Share2, Trash2 } from "lucide-react";
+import { CircleCheck, Clapperboard, Shapes, Download, ExternalLink, GalleryHorizontalEnd, ImageOff, Layers, LayoutGrid, Link2, Merge, RotateCcw, Share2, Trash2 } from "lucide-react";
 import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
+  ContextMenuRadioGroup,
+  ContextMenuRadioItem,
   ContextMenuSeparator,
   ContextMenuSub,
   ContextMenuSubContent,
@@ -16,12 +18,13 @@ import { ClipShare } from "./library/ClipShare";
 import { PostingForm } from "./FinalsPiece";
 import { PLATFORMS } from "@contracts/connectors";
 import { undoable } from "@/lib/undo";
-import type { AssetCard, Collection, LibrarySummary, Piece } from "@contracts/library";
+import { PIECE_KINDS, type AssetCard, type Collection, type LibrarySummary, type Piece, type PieceKind } from "@contracts/library";
 import { LibraryFacetBar } from "@/components/LibraryFacetBar";
 import { AppBar } from "@/components/AppBar";
 import { Button } from "@/components/ui/button";
 import {
   addPosting,
+  setPieceKind,
   cardsOfVersions,
   getWorkshopFinals,
   isFinals,
@@ -50,7 +53,7 @@ import { SortPick } from "./library/SortControls";
  * and keeps no store of its own; the plug-in facets and badges of the Media Library apply here too.
  */
 
-export type FinalsKind = "reel" | "carousel" | "other";
+export type FinalsKind = PieceKind;
 
 export interface FinalsTile {
   piece: Piece;
@@ -62,6 +65,9 @@ export interface FinalsTile {
 }
 
 export const KIND_LABEL: Record<FinalsKind, string> = { reel: "Reel", carousel: "Carousel", other: "Other" };
+/** The Type menu's choices: Automatic (from the files) or one set by hand. */
+export const TYPE_CHOICES: { value: string; label: string }[] = [{ value: "auto", label: "Automatic" }, ...PIECE_KINDS.map((k) => ({ value: k, label: KIND_LABEL[k] }))];
+export const typeOf = (value: string): PieceKind | null => PIECE_KINDS.find((k) => k === value) ?? null;
 const KIND_ICON = { reel: Clapperboard, carousel: GalleryHorizontalEnd, other: Layers } as const;
 /** One color per kind, the same as the Media Library's Finals list. */
 export const KIND_BADGE: Record<FinalsKind, string> = {
@@ -101,8 +107,9 @@ export function finalsTiles(pieces: Piece[], cards: AssetCard[], faceted: boolea
     if (faceted && !inCards.some(Boolean)) continue;
     const win = piece.items.find((i) => i.winner) ?? piece.items[0];
     const card = win?.versionId ? byVersion.get(win.versionId) : undefined;
+    // a type set by hand (or by its Workshop project) wins; else told by the files
     const kind: FinalsKind =
-      piece.kind === "carousel" || (piece.items.length > 1 && inCards.every((c) => c?.kind === "image")) ? "carousel" : card?.kind === "video" ? "reel" : "other";
+      piece.kind ?? (piece.items.length > 1 && inCards.every((c) => c?.kind === "image") ? "carousel" : card?.kind === "video" ? "reel" : "other");
     out.push({
       piece,
       kind,
@@ -236,12 +243,14 @@ export interface PieceActions {
   onPostLink: (piece: Piece) => void;
   /** a posting with no link on the winner (else its first version), with Undo */
   onPosted: (piece: Piece) => void;
+  /** the piece's type set by hand, or null for Automatic, with Undo */
+  onKind: (piece: Piece, kind: PieceKind | null) => void;
   /** `from`'s versions move into `piece`, with Undo */
   onMerge: (piece: Piece, from: Piece) => void;
   onTrash: (piece: Piece) => void;
 }
 
-/** A piece's right-click menu (grid and list): Open, Download, Share, Mark as posted, Add post link, Merge piece, Move to trash. */
+/** A piece's right-click menu (grid and list): Open, Download, Share, Mark as posted, Add post link, Type, Merge piece, Move to trash. */
 function PieceMenu({ piece, others, actions, children }: { piece: Piece; others: Piece[]; actions?: PieceActions; children: React.ReactElement }) {
   if (!actions) return children;
   const into = others.filter((o) => o.id !== piece.id);
@@ -275,6 +284,20 @@ function PieceMenu({ piece, others, actions, children }: { piece: Piece; others:
             <Link2 /> Add post link
           </ContextMenuItem>
         )}
+        <ContextMenuSub>
+          <ContextMenuSubTrigger>
+            <Shapes /> Type
+          </ContextMenuSubTrigger>
+          <ContextMenuSubContent>
+            <ContextMenuRadioGroup value={piece.kind ?? "auto"} onValueChange={(v) => actions.onKind(piece, typeOf(v))}>
+              {TYPE_CHOICES.map((c) => (
+                <ContextMenuRadioItem key={c.value} value={c.value}>
+                  {c.label}
+                </ContextMenuRadioItem>
+              ))}
+            </ContextMenuRadioGroup>
+          </ContextMenuSubContent>
+        </ContextMenuSub>
         {into.length > 0 && (
           <ContextMenuSub>
             <ContextMenuSubTrigger>
@@ -466,6 +489,13 @@ export default function FinalsPage() {
                   onShare: setSharing,
                   onPostLink: setPosting,
                   onPosted: (p) => post(library.id, p, { platform: PLATFORMS[0].id }, "marked as posted"),
+                  onKind: (p, kind) => {
+                    const was = p.kind ?? null;
+                    void setPieceKind(library.id, p.id, kind).then(() => {
+                      void shown.refresh();
+                      undoable("type changed", () => setPieceKind(library.id, p.id, was).then(() => shown.refresh(), (e: unknown) => setError(message(e))));
+                    }, (e: unknown) => setError(message(e)));
+                  },
                   onMerge: (p, from) =>
                     void mergePiece(library.id, p.id, from.id).then(() => {
                       void shown.refresh();

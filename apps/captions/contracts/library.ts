@@ -769,8 +769,9 @@ export interface Piece {
   collectionId: string | null;
   createdBy: string;
   items: PieceItem[];
-  /** Set from the Workshop project it is linked to: a carousel whatever its slides are (images, videos or both). */
-  kind?: "carousel" | null;
+  /** Set by hand (Type), or from the Workshop project it is linked to (a carousel whatever its slides are); null: Finals
+   *  tells it by its files. */
+  kind?: PieceKind | null;
   /** The owner's picked frame (`?v=` stamped); absent or null = the automatic cover (the winner's thumbnail). */
   coverUrl?: string | null;
   /** A picked frame that waits for one of the owner's computers to make it: the line it waits with. */
@@ -791,6 +792,10 @@ export interface PieceItem {
   postDescription: string | null; // the text under a post, for this version
   postings: Posting[];
 }
+
+/** What a Finals piece is. */
+export const PIECE_KINDS = ["reel", "carousel", "other"] as const;
+export type PieceKind = (typeof PIECE_KINDS)[number];
 
 /** Where an item was posted (one version can be posted to several platforms, or several times). */
 export interface Posting {

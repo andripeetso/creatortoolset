@@ -69,6 +69,12 @@ describe("Finals pieces", () => {
     expect(finalsTiles([slides], cards, false)[0]!.kind).toBe("carousel");
   });
 
+  it("a type set by hand wins over the files: a video set as Other, two pictures set as a Reel", () => {
+    const shots = { ...piece("shots", [item("v-b"), item("v-b2")]), kind: "reel" as const };
+    const set = finalsTiles([{ ...reel, kind: "other" }, shots], [...cards, card("b2", { kind: "image" })], false);
+    expect(set.map((t) => t.kind)).toEqual(["other", "reel"]);
+  });
+
   it("keeps a piece with no matching card when no facet is picked", () => {
     const orphan = piece("orphan", [item("v-gone")]);
     expect(finalsTiles([orphan], cards, false).map((t) => t.piece.id)).toEqual(["orphan"]);

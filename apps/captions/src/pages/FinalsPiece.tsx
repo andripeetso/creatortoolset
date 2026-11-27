@@ -1,13 +1,15 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router";
 import { canUse, useMe } from "@/lib/auth";
-import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, CircleCheck, Download, GripVertical, ImageOff, ImagePlus, Link2, Merge, MoreHorizontal, NotebookPen, Palette, Plus, Scissors, Send, Share2, Star, Trash2, Replace, Upload, X, type LucideIcon } from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, CircleCheck, Download, GripVertical, ImageOff, ImagePlus, Link2, Merge, MoreHorizontal, NotebookPen, Palette, Plus, Scissors, Send, Shapes, Share2, Star, Trash2, Replace, Upload, X, type LucideIcon } from "lucide-react";
 import { ClipShare } from "./library/ClipShare";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuSub,
   DropdownMenuSubContent,
@@ -42,6 +44,7 @@ import {
   removePieceItem,
   removePosting,
   renamePiece,
+  setPieceKind,
   reorderedPositions,
   setPieceCover,
   splitPieceItem,
@@ -50,7 +53,7 @@ import {
 } from "@/lib/library";
 import { useCachedLoad } from "@/lib/local-cache";
 import { createSession, listSessions, sessionPath, type SessionRow } from "@/lib/workshop";
-import { finalsTiles, KIND_BADGE, KIND_LABEL } from "./FinalsPage";
+import { finalsTiles, KIND_BADGE, KIND_LABEL, TYPE_CHOICES, typeOf } from "./FinalsPage";
 import { confirmDialog } from "@/lib/dialogs";
 import { undoable } from "@/lib/undo";
 import { localOf } from "@/lib/here";
@@ -281,15 +284,18 @@ export function PieceEditor({
       setBusy(false);
     }
   };
-  const run = async (calls: (() => Promise<Piece>)[]) => {
+  // whether every call went through
+  const run = async (calls: (() => Promise<Piece>)[]): Promise<boolean> => {
     setBusy(true);
     setError(null);
     try {
       let last: Piece | undefined;
       for (const call of calls) last = await call();
       if (last) onPiece(last);
+      return true;
     } catch (e) {
       setError(message(e));
+      return false;
     } finally {
       setBusy(false);
     }
@@ -441,6 +447,29 @@ export function PieceEditor({
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger>
+                <Shapes className="h-4 w-4" /> Type
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent>
+                <DropdownMenuRadioGroup
+                  value={piece.kind ?? "auto"}
+                  onValueChange={(v) => {
+                    const was = piece.kind ?? null;
+                    void run([() => setPieceKind(libraryId, piece.id, typeOf(v))]).then((ok) =>
+                      ok && undoable("type changed", () => setPieceKind(libraryId, piece.id, was).then(onPiece, (e: unknown) => setError(message(e)))),
+                    );
+                  }}
+                >
+                  {TYPE_CHOICES.map((c) => (
+                    <DropdownMenuRadioItem key={c.value} value={c.value}>
+                      {c.label}
+                    </DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+            <DropdownMenuSeparator />
             {others.length > 0 && (
               <>
                 <DropdownMenuSub>
@@ -469,7 +498,13 @@ export function PieceEditor({
       <div className="grid min-h-0 flex-1 overflow-y-auto md:grid-cols-[minmax(0,300px)_1fr]">
         <section aria-label="Cover" className="flex flex-col gap-3 border-b border-zinc-500/25 p-4 sm:p-5 md:border-b-0 md:border-r">
           {kind === "carousel" ? (
-            <Carousel libraryId={libraryId} items={piece.items} at={Math.max(0, selIndex)} onAt={(i) => setPickId(piece.items[i]?.id ?? null)} />
+            <Carousel
+              libraryId={libraryId}
+              items={piece.items}
+              video={(item) => !!item.versionId && byVersion.get(item.versionId)?.kind === "video"}
+              at={Math.max(0, selIndex)}
+              onAt={(i) => setPickId(piece.items[i]?.id ?? null)}
+            />
           ) : pickVersion ? (
             pickIsVideo ? (
               <video
@@ -780,12 +815,14 @@ export function PieceEditor({
 
 /** Link this piece to a Workshop session (its versions then get a post description each there), or start a session from it. */
 /** One slide of a carousel, from this computer when the Mac app has its file here, else from the server. */
-function Slide({ libraryId, item, label }: { libraryId: string; item: PieceItem; label: string }) {
+function Slide({ libraryId, item, label, video }: { libraryId: string; item: PieceItem; label: string; video: boolean }) {
   const v = item.versionId;
   const play = usePlayFrom(`/api/library/media/${v}/play`, v ? () => localOf(libraryId, v) : undefined);
   return (
     <div aria-label={label} className="flex h-full w-full shrink-0 snap-center items-center justify-center">
-      {v && play.src ? (
+      {v && play.src && video ? (
+        <video src={play.src} onError={play.onError} controls playsInline preload="metadata" className="h-full w-full object-contain" />
+      ) : v && play.src ? (
         <img src={play.src} onError={play.onError} alt="" draggable={false} loading="lazy" className="h-full w-full object-contain" />
       ) : (
         <ImageOff className="h-8 w-8 text-zinc-800" />
@@ -798,7 +835,7 @@ function Slide({ libraryId, item, label }: { libraryId: string; item: PieceItem;
  * A carousel as it is posted: one slide at a time, swiped or stepped with the arrows, its place in the count and the
  * dots. `at` is the slide picked in the list; scrolling the strip picks the slide it stops on.
  */
-export function Carousel({ libraryId, items, at, onAt }: { libraryId: string; items: PieceItem[]; at: number; onAt: (i: number) => void }) {
+export function Carousel({ libraryId, items, video, at, onAt }: { libraryId: string; items: PieceItem[]; video: (item: PieceItem) => boolean; at: number; onAt: (i: number) => void }) {
   const strip = useRef<HTMLDivElement>(null);
   // the slide a step or a pick scrolls to: the slides passed on the way there are not picks
   const going = useRef<number | null>(null);
@@ -837,7 +874,7 @@ export function Carousel({ libraryId, items, at, onAt }: { libraryId: string; it
         className="flex aspect-[4/5] w-full snap-x snap-mandatory overflow-x-auto rounded-lg bg-black outline-none [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
       >
         {items.map((item, i) => (
-          <Slide key={item.id} libraryId={libraryId} item={item} label={`Slide ${i + 1}`} />
+          <Slide key={item.id} libraryId={libraryId} item={item} label={`Slide ${i + 1}`} video={video(item)} />
         ))}
       </div>
       {items.length > 1 && (

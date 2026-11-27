@@ -5,6 +5,7 @@ import { Readable } from "node:stream";
 import path from "node:path";
 import type { AuthVars } from "../auth";
 import type { AssetKind, Collection, Piece, PieceItem, Posting, SearchQuery } from "../../contracts/library";
+import { PIECE_KINDS } from "../../contracts/library";
 import type { LibraryViewer } from "../../contracts/library-source";
 import { env } from "../lib/env";
 import { sendFile } from "../lib/send-file";
@@ -559,7 +560,7 @@ function pieceOf(p: PieceRow): Piece {
     label: p.label,
     collectionId: p.collection_id,
     createdBy: p.created_by,
-    kind: p.kind === "carousel" ? "carousel" : null,
+    kind: PIECE_KINDS.find((k) => k === p.kind) ?? null,
     coverUrl: p.cover_at ? `/api/library/${p.library_id}/pieces/${p.id}/cover?v=${p.cover_at}` : null,
     items: items.map(
       (i): PieceItem => ({
@@ -658,8 +659,14 @@ collectionApp.patch("/:id/pieces/:pid", async (c) => {
     collectionId = typeof body.collectionId === "string" ? body.collectionId : null;
     if (collectionId && !rowIn(libraryId, collectionId)) return notFound(c);
   }
-  db().prepare("UPDATE pieces SET label = ?, collection_id = ? WHERE id = ?").run(label, collectionId, row.id);
-  return c.json(pieceOf({ ...row, label, collection_id: collectionId }));
+  // kind: one of PIECE_KINDS set by hand, or null for Automatic (Finals tells it by its files)
+  let kind = row.kind ?? null;
+  if (body?.kind !== undefined) {
+    if (body.kind !== null && !PIECE_KINDS.some((k) => k === body.kind)) return c.json({ error: "Not a piece type", code: "invalid" }, 400);
+    kind = body.kind as string | null;
+  }
+  db().prepare("UPDATE pieces SET label = ?, collection_id = ?, kind = ? WHERE id = ?").run(label, collectionId, kind, row.id);
+  return c.json(pieceOf({ ...row, label, collection_id: collectionId, kind }));
 });
 
 // POST /api/library/:id/pieces/:pid/trash → the piece goes to the trash (GET …/pieces?trash=1 lists it); restore takes it back.

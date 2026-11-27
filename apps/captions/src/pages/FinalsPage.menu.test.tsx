@@ -18,10 +18,10 @@ const piece = (id: string, writable?: boolean, versions = 0): Piece => ({
   ...(writable === undefined ? {} : { writable }),
 });
 
-const actionsWith = (onTrash: (p: Piece) => void, onMerge = vi.fn(), onPosted = vi.fn()) => ({ zipUrl: () => "/zip", onShare: vi.fn(), onPostLink: vi.fn(), onPosted, onMerge, onTrash });
+const actionsWith = (onTrash: (p: Piece) => void, onMerge = vi.fn(), onPosted = vi.fn()) => ({ zipUrl: () => "/zip", onShare: vi.fn(), onPostLink: vi.fn(), onPosted, onKind: vi.fn(), onMerge, onTrash });
 
 /** Right-clicks `p`, reads the menu, then clicks the item that says `click`. No `actions`: a library this account only looks at. */
-async function rightClick(p: Piece, actions: PieceActions | undefined, others: Piece[] = [], click = "Move to trash"): Promise<string> {
+async function rightClick(p: Piece, actions: PieceActions | undefined, others: Piece[] = [], click = "Move to trash", subName = "Merge piece"): Promise<string> {
   const host = document.body.appendChild(document.createElement("div"));
   const root = createRoot(host);
   await act(async () =>
@@ -34,8 +34,8 @@ async function rightClick(p: Piece, actions: PieceActions | undefined, others: P
   const card = document.querySelector(`a[href="/finals/${p.id}"]`)!;
   await act(async () => void card.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 5, clientY: 5 })));
   const menu = document.querySelector('[role="menu"]')?.textContent ?? "";
-  const find = (word: string) => [...document.querySelectorAll('[role="menuitem"]')].find((el) => el.textContent?.includes(word)) as HTMLElement | undefined;
-  const sub = find("Merge piece");
+  const find = (word: string) => [...document.querySelectorAll('[role="menuitem"], [role="menuitemradio"]')].find((el) => el.textContent?.includes(word)) as HTMLElement | undefined;
+  const sub = find(subName);
   if (click !== "Move to trash" && sub) await act(async () => void sub.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true })));
   await act(async () => find(click)?.click());
   act(() => root.unmount());
@@ -71,6 +71,12 @@ describe("a Finals piece's right-click menu", () => {
     const posted = piece("p", true, 1);
     posted.items[0].postings = [{ id: 1, platform: "instagram", url: null, postedAt: 1, createdBy: "owner" }];
     expect(await rightClick(posted, actionsWith(vi.fn()))).not.toContain("Mark as posted");
+  });
+
+  it("sets the piece's type by hand", async () => {
+    const actions = actionsWith(vi.fn());
+    await rightClick(piece("a", true, 1), actions, [], "Carousel", "Type");
+    expect(actions.onKind).toHaveBeenCalledWith(expect.objectContaining({ id: "a" }), "carousel");
   });
 
   it("offers nothing in a library the account only looks at", async () => {
