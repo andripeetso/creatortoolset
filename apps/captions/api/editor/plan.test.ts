@@ -446,10 +446,14 @@ describe("footage where nobody speaks reaches Review", () => {
     expect(isPlanned(edit({ plan: true }), said)).toBe(true);
     // a few words made up over a long wordless clip are nobody speaking
     expect(isPlanned(edit({ sources: ["ver_long"] }), [{ ...said[0]!, src: "ver_long", e: 30 }])).toBe(true);
-    // everything B-roll as the library sorted it: planned, whatever words it has
+    // a B given to clips with sound and nothing read of them (no transcript, no description) is no B: they are heard first
     d.exec("UPDATE assets SET roll = 'b' WHERE id IN ('ast_take', 'ast_long')");
+    expect(isPlanned(edit({ sources: ["ver_take", "ver_long"] }), said)).toBe(false);
+    // everything B-roll as the library sorted it on what it read: planned, whatever words it has
+    d.exec("UPDATE assets SET filed_roll = 'b' WHERE id = 'ast_take'");
+    d.prepare("INSERT INTO descriptions (version_id, source, text, provider, created_at, roll) VALUES ('ver_long', 'ai', 'A view', 'mac', 0, 'b')").run();
     expect(isPlanned(edit({ sources: ["ver_take", "ver_long"] }), said)).toBe(true);
-    d.exec("UPDATE assets SET roll = NULL WHERE id IN ('ast_take', 'ast_long')");
+    d.exec("UPDATE assets SET roll = NULL, filed_roll = NULL WHERE id IN ('ast_take', 'ast_long'); DELETE FROM descriptions WHERE version_id = 'ver_long'");
   });
 
   it("is analyzed with no refusal, planned to the song among its sources, drawn and filed in Review", async () => {
