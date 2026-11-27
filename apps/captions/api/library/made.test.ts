@@ -12,6 +12,12 @@ vi.mock("../lib/devices", async (real) => {
   const own: Record<string, { id: string; name: string; owner: string }> = { dev_mine: { id: "dev_mine", name: "Studio Mac", owner: "local" }, dev_theirs: { id: "dev_theirs", name: "Anna's Mac", owner: "anna" } };
   return { ...m, deviceOf: (id: string) => own[id] ?? m.deviceOf(id) };
 });
+// the slot that covers the files to blur (Face Blur's queue), stood in: what it says of each version (lib/plugin.ts preparing)
+const preparing = vi.hoisted(() => ({ ids: [] as { versionId: string; waiting?: true; why?: string; href?: string }[] }));
+vi.mock("../lib/plugin", async (real) => ({
+  ...(await real<typeof import("../lib/plugin")>()),
+  pluginDeviceJobs: () => [{ kind: "faceblur-intake", waits: () => false, claim: () => null, preparing: () => preparing.ids }],
+}));
 vi.mock("../ai-complete", async (real) => {
   const m = await real<typeof import("../ai-complete")>();
   return { ...m, aiFor: vi.fn(() => ({ only: ["mac"] })) };
@@ -388,5 +394,22 @@ describe("what's made", () => {
     d.prepare("INSERT INTO jobs (library_id, version_id, kind, state, actor) VALUES ('lib_m', ?, 'look', 'queued', 'local')").run(look);
     stopQueued("lib_m", "timeline", "local");
     expect(job(look, "look")?.state).toBe("queued");
+  });
+
+  it("blurred copies that wait say why and where it is changed, as the slot that covers them says", async () => {
+    const before = (await row("blur")).queued;
+    const v = clip("ast-toblur", { kind: "image" });
+    d.prepare("UPDATE assets SET blur = 'yes' WHERE id = 'ast-toblur'").run();
+    try {
+      // on its way: nothing to say
+      expect(await row("blur")).toMatchObject({ queued: before + 1 });
+      expect((await row("blur")).why).toBeUndefined();
+      // switched off (a Stop held it): the row says so and opens its settings, where it read "1 file queued" for good
+      preparing.ids = [{ versionId: v, waiting: true, why: "Face Blur is off for new files", href: "/settings/blur-faces" }];
+      expect(await row("blur")).toMatchObject({ queued: before + 1, why: "Face Blur is off for new files", href: "/settings/blur-faces" });
+    } finally {
+      preparing.ids = [];
+      d.prepare("UPDATE assets SET trashed_at = 1 WHERE id = 'ast-toblur'").run();
+    }
   });
 });

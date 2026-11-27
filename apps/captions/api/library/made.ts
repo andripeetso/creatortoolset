@@ -3,6 +3,7 @@ import { DRIVERS } from "../../contracts/providers";
 import { aiFor, anthropicParams, onApiKey } from "../ai-complete";
 import { PICTURE_MODEL } from "../lib/device-picture";
 import { deviceOf, isOnline, listDevices } from "../lib/devices";
+import { pluginDeviceJobs } from "../lib/plugin";
 import { libraryWorkspace, serverWorks } from "../work/server-work";
 import { jobVersions } from "./blur-mirror";
 import { BLUR_SQL, keepsOnlyOriginals, libraryDb, librarySetting, libraryUploadStored } from "./db";
@@ -174,6 +175,7 @@ export async function libraryMade(libraryId: string, username: string): Promise<
       ...(r.failed ? { failed: r.failed } : {}),
       ...(r.stopped ? { stopped: r.stopped } : {}),
       ...(r.queued && s.job ? waitOf(libraryId, kind, username) : {}),
+      ...(r.queued && kind === "blur" ? blurWait(libraryId) : {}),
       ...(await makeCost(libraryId, username, kind, n, seconds)),
       ...engineOf(libraryId, kind, username),
       ...(n ? { minutes: await makeMinutes(libraryId, username, kind, n, seconds) } : {}),
@@ -182,6 +184,12 @@ export async function libraryMade(libraryId: string, username: string): Promise<
     });
   }
   return out;
+}
+
+/** Why the files marked Blur faces wait, as the slot that covers them says (lib/plugin.ts preparing): switched off, no AI provider. */
+function blurWait(libraryId: string): Pick<LibraryMade, "why" | "href"> {
+  const w = pluginDeviceJobs().flatMap((j) => j.preparing?.(libraryId) ?? []).find((p) => p.waiting && p.why);
+  return w ? { why: w.why, ...(w.href ? { href: w.href } : {}) } : {};
 }
 
 /** The files of a media kind a kind never makes, and why in a few words (the rest of `of` is in SPEC). */

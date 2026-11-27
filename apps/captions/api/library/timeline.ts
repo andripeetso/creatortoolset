@@ -730,7 +730,9 @@ export function watchAfter(db: DatabaseSync, versionId: string, src: () => Promi
       if (!r) return;
       console.log(`[library] timeline of ${versionId}: ${r.events} events, $${r.usd.toFixed(4)}, ${Math.round(r.ms / 1000)} s`);
     } catch (e) {
-      storeTimeline(db, versionId, { error: e instanceof Error ? e.message : String(e) });
+      const why = e instanceof Error ? e.message : String(e);
+      storeTimeline(db, versionId, { error: why });
+      console.warn(`[library] timeline of ${versionId} failed: ${why.slice(0, 300)}`); // What's made counts it missing and no screen says why
       return;
     }
     libraryChanged(lib); // an open clip panel shows the new timeline

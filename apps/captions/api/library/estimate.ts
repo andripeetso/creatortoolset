@@ -445,17 +445,23 @@ export function libraryStatus(libraryId: string): LibraryStatus {
 const STOPPED: ReadonlySet<string> = new Set(MADE_KINDS.filter((k) => !k.auto && !k.ready).map((k) => k.kind));
 
 /**
- * Seconds a timeline in `libraryId`, from the last ones made (the last quarter of an hour, each clip once: a blurred
- * copy's is its original's). Null with fewer than three.
+ * Seconds a timeline in `libraryId`, from the last thirty made (each clip once: a blurred copy's is its original's): the
+ * time between one and the next, a pause between two runs left out, so a run has its pace from its first clip (read off
+ * the last quarter of an hour only, a run that began after a pause said "under a minute" for its first minutes). Null
+ * with fewer than three made in a row.
  */
-function watchPace(db: DatabaseSync, libraryId: string, now = Date.now()): number | null {
-  const r = db
-    .prepare(
-      `SELECT MIN(at) AS a, MAX(at) AS b, COUNT(*) AS n FROM (SELECT t.at FROM timelines t JOIN asset_versions v ON v.id = t.version_id JOIN assets a ON a.id = v.asset_id
-         WHERE a.library_id = ? AND t.error IS NULL AND v.blurred_of IS NULL AND t.at >= ? ORDER BY t.at DESC LIMIT 30)`,
-    )
-    .get(libraryId, now - 15 * 60_000) as { a: number | null; b: number | null; n: number };
-  return r.n >= 3 && r.b! > r.a! ? (r.b! - r.a!) / 1000 / (r.n - 1) : null;
+function watchPace(db: DatabaseSync, libraryId: string): number | null {
+  const at = (
+    db
+      .prepare(
+        `SELECT t.at FROM timelines t JOIN asset_versions v ON v.id = t.version_id JOIN assets a ON a.id = v.asset_id
+         WHERE a.library_id = ? AND t.error IS NULL AND v.blurred_of IS NULL ORDER BY t.at DESC LIMIT 30`,
+      )
+      .all(libraryId) as { at: number }[]
+  ).map((r) => r.at);
+  const gaps = at.slice(1).map((t, i) => at[i]! - t).filter((g) => g < 5 * 60_000);
+  const all = gaps.reduce((s, g) => s + g, 0);
+  return gaps.length >= 2 && all > 0 ? all / gaps.length / 1000 : null;
 }
 
 export async function progress(libraryId: string, username: string): Promise<LibraryProgress> {

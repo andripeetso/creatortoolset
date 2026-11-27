@@ -401,8 +401,9 @@ export interface DeviceJobSlot {
   fail: (device: string, id: number, why: string) => boolean;
   // every version of Media Library `libraryId` in this slot's queue (Face Blur's blurred copies): one a computer can take
   // now with no mark (`running`: being made), `waiting` when none can, `failed`. The library's progress counts the clips
-  // a computer can take from the start, and shows the files as a step; one no longer listed is done (api/library/estimate.ts)
-  preparing?: (libraryId: string) => { versionId: string; running?: true; waiting?: true; failed?: true; error?: string }[];
+  // a computer can take from the start, and shows the files as a step; one no longer listed is done (api/library/estimate.ts).
+  // `why` on a waiting one: what the person can change, and `href` where (What's made says it beside the files, made.ts)
+  preparing?: (libraryId: string) => { versionId: string; running?: true; waiting?: true; failed?: true; error?: string; why?: string; href?: string }[];
 }
 
 /** Every loaded plug-in's device jobs, in load order. */

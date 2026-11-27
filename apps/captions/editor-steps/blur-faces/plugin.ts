@@ -375,6 +375,9 @@ const versionGone = (versionId: string) =>
 /** Ready to hand out to its Mac now: an AI provider to choose the faces, Which faces said, not paused. */
 // draining: an update waits for running work (api/server-update.ts), so no new file goes to a Mac meanwhile
 const ready = (owner: string) => !draining() && !pausedUntil(owner) && !isHeld(owner) && anyVisionConfigured(owner);
+/** Why none of `owner`'s files goes to a Mac, where the person can change it, and where (the library's What's made says it beside the files). */
+const notReady = (owner: string): { why: string; href: string } | undefined =>
+  isHeld(owner) ? { why: "Face Blur is off for new files", href: "/settings/blur-faces" } : !anyVisionConfigured(owner) ? { why: "Needs an AI provider", href: "/settings/providers" } : undefined;
 const offered = (j: AutoJob, device: string, now: number) => j.state === "queued" && j.mac === device && !(j.awayUntil && j.awayUntil > now);
 
 /**
@@ -420,11 +423,16 @@ export const autoJobs = {
     const now = Date.now();
     const ok = new Map<string, boolean>(); // ready() reads files: once per owner, not once per file
     const isReady = (owner: string) => ok.get(owner) ?? ok.set(owner, ready(owner)).get(owner)!;
-    const out: { versionId: string; running?: true; waiting?: true; failed?: true; error?: string }[] = [];
+    const why = new Map<string, ReturnType<typeof notReady>>();
+    const out: { versionId: string; running?: true; waiting?: true; failed?: true; error?: string; why?: string; href?: string }[] = [];
     for (const j of all()) {
       if (j.libraryId !== libraryId) continue;
       if (j.state === "failed") out.push({ versionId: j.versionId, failed: true, ...(j.error ? { error: j.error } : {}) });
-      else if (!(j.state === "running" ? isOnline(j.device ?? "") : offered(j, j.mac, now) && isOnline(j.mac)) || !isReady(j.owner)) out.push({ versionId: j.versionId, waiting: true });
+      else if (!isReady(j.owner)) {
+        if (!why.has(j.owner)) why.set(j.owner, notReady(j.owner)); // reads a file, as ready(): once per owner
+        out.push({ versionId: j.versionId, waiting: true, ...why.get(j.owner) });
+      }
+      else if (!(j.state === "running" ? isOnline(j.device ?? "") : offered(j, j.mac, now) && isOnline(j.mac))) out.push({ versionId: j.versionId, waiting: true });
       else out.push({ versionId: j.versionId, ...(j.state === "running" ? { running: true as const } : {}) });
     }
     return out;
@@ -612,8 +620,12 @@ const faceBlur = definePlugin({
     onEvent("library.version.probed", queue);
     onEvent("library.version.blur", queue);
     // the owner's Stop holds the automatic covers too, until the switch in Settings → Face Blur turns them on again; a
-    // member's Stop leaves them: the hold is the owner's, for every library, and only the owner's switch lifts it
-    onEvent("library.stopped", ({ libraryId, by }) => (by === (libraryAccount(libraryId) ?? by) ? setHeld(by, true) : undefined));
+    // member's Stop leaves them: the hold is the owner's, for every library, and only the owner's switch lifts it.
+    // Only with a file of that library waiting or being covered: a Stop with nothing of this to stop switched the covers
+    // off for files added days later, and nothing said so
+    onEvent("library.stopped", ({ libraryId, by }) =>
+      by === (libraryAccount(libraryId) ?? by) && all().some((j) => j.libraryId === libraryId && j.state !== "failed") ? setHeld(by, true) : undefined,
+    );
     // after start-up, so a long list never holds the server's first requests
     setTimeout(() => void sweep().catch((err: unknown) => console.warn(`[blur-faces] sweep: ${(err as Error).message}`)), 5_000).unref();
   },

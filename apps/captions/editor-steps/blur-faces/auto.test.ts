@@ -136,7 +136,7 @@ describe("the Mac that has the file", () => {
     expect(autoJobs.preparing("lib_a")).toEqual(waiting);
     macs.online = new Set(["mac-1"]);
     ai.configured = false;
-    expect(autoJobs.preparing("lib_a")).toEqual(waiting);
+    expect(autoJobs.preparing("lib_a")).toEqual([{ ...waiting[0], why: "Needs an AI provider", href: "/settings/providers" }]); // What's made says what it needs
   });
 
   it("writes the copy at the resolution and bitrate set, into the folder the location says", async () => {
@@ -224,6 +224,8 @@ describe("the Mac that has the file", () => {
     expect(await queueVersion(event(v))).toBe(true); // queued again, but held
     expect(autoJobs.claim(mac)).toBeNull();
     expect((await auto()).held).toBe(true);
+    // What's made says why the file waits, and where it is turned on again
+    expect(autoJobs.preparing("lib_a")).toEqual([{ versionId: v, waiting: true, why: "Face Blur is off for new files", href: "/settings/blur-faces" }]);
     await call("PUT", "/auto", { on: true });
     expect((await auto()).held).toBe(false);
 
@@ -237,6 +239,18 @@ describe("the Mac that has the file", () => {
     emitEvent("library.stopped", { libraryId: "lib_a", by: "ana" });
     await vi.waitFor(async () => expect((await auto()).held).toBe(true));
     await call("PUT", "/auto", { on: true });
+    expect(autoJobs.claim(mac)).toBeTruthy();
+  });
+
+  it("the library's Stop with no file of it waiting leaves new files covered", async () => {
+    await settings({});
+    plugin.start?.();
+    const { emitEvent } = await import("../../api/lib/events");
+    // nothing of this to stop: held, the files added days later were never covered and nothing said why
+    emitEvent("library.stopped", { libraryId: "lib_a", by: "ana" });
+    await new Promise((r) => setTimeout(r, 20));
+    expect((await auto()).held).toBe(false);
+    await queueVersion(event(await added("mp4")));
     expect(autoJobs.claim(mac)).toBeTruthy();
   });
 
