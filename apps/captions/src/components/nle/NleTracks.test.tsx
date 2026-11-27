@@ -154,10 +154,12 @@ describe("picking clips", () => {
     const { host, root } = await mount({ tl: linked, onCommit });
     const head = host.querySelector('[data-lane="V1"]')!.previousElementSibling!;
     await act(() => void head.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 20, clientY: 20 })));
-    const item = (name: string) => [...document.querySelectorAll('[role="menuitem"]')].find((b) => b.textContent === name) as HTMLButtonElement;
-    expect(item("Delete Track").disabled).toBe(true); // the only video track
-    expect(item("Move Track Up").disabled).toBe(true);
-    expect(item("Delete Empty Tracks").disabled).toBe(true);
+    const item = (name: string) => [...document.querySelectorAll('[role="menuitem"]')].find((b) => b.textContent === name) as HTMLElement;
+    const off = (el: Element) => el.hasAttribute("data-disabled");
+    expect(off(item("Delete Track"))).toBe(true); // the only video track
+    expect(off(item("Move Track Up"))).toBe(true);
+    expect(off(item("Delete Empty Tracks"))).toBe(true);
+    await act(() => item("Add Track").click());
     await act(() => item("Video Track Above").click());
     expect(Object.keys((onCommit.mock.calls[0][0] as NleTimeline).tracks).sort()).toEqual(["A1", "A2", "V1", "V2"]);
     expect(document.querySelector('[role="menu"]')).toBeNull();

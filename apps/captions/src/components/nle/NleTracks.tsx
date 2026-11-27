@@ -1,5 +1,7 @@
 import { Fragment, memo, useContext, useEffect, useRef, useState, type DragEvent as ReactDragEvent, type MouseEvent as ReactMouseEvent, type MutableRefObject, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
-import { ChevronRight, Eye, EyeOff, Lock, LockOpen, Rows3, SlidersHorizontal, Volume2, VolumeX, X, ZoomIn } from "lucide-react";
+import { Eye, EyeOff, Lock, LockOpen, Rows3, SlidersHorizontal, Volume2, VolumeX, X, ZoomIn } from "lucide-react";
+import { DropdownMenuItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger } from "@/components/ui/dropdown-menu";
+import { PointMenu, WHY } from "@/components/ui/point-menu";
 import { TimelineFrame } from "@/components/timeline/TimelineFrame";
 import { SNAP_PX, snapDelta } from "@/lib/clip-drag";
 import { useTimeAxis } from "@/lib/use-time-axis";
@@ -907,8 +909,6 @@ export const NleTracks = memo(function NleTracks({
   );
 });
 
-const MENU = "rounded-md border border-zinc-800 bg-zinc-950 py-1 shadow-xl";
-const MENU_ROW = "flex w-full items-center justify-between gap-4 px-3 py-1.5 text-left text-[13px] text-zinc-200 hover:bg-zinc-800 disabled:opacity-40 disabled:hover:bg-transparent";
 
 /** Resolve's track menu: add a track (above or below this one, or at the ends of its kind), move, delete, lock, hide or mute. */
 function TrackMenu({ tl, x, y, id, onClose, onCommit, onTrack, onSwap, onLowerUnderVoice }: {
@@ -966,19 +966,17 @@ function TrackMenu({ tl, x, y, id, onClose, onCommit, onTrack, onSwap, onLowerUn
     fn();
   };
   return (
-    <div className="fixed inset-0 z-50" onPointerDown={onClose} onContextMenu={(e) => { e.preventDefault(); onClose(); }}>
-      <div role="menu" aria-label="Track" className={cn("fixed w-52", MENU)} style={{ left: x, top: Math.min(y, window.innerHeight - 320) }} onPointerDown={(e) => e.stopPropagation()}>
-        <div className="group/sub relative">
-          <button type="button" role="menuitem" aria-haspopup="menu" className={MENU_ROW}><span>Add Track</span><ChevronRight className="size-3.5 text-zinc-500" /></button>
-          <div role="menu" aria-label="Add Track" className={cn("absolute -top-1 left-full hidden w-48 group-focus-within/sub:block group-hover/sub:block", MENU)}>
-            {adds.map(([l, fn, why]) => <button key={l} type="button" role="menuitem" disabled={!fn} title={why} className={MENU_ROW} onClick={fn ? run(fn) : undefined}>{l}</button>)}
-          </div>
-        </div>
-        {rows.map((r, i) => (r ? (
-          <button key={r[0]} type="button" role="menuitem" disabled={!r[1]} title={r[2]} className={MENU_ROW} onClick={r[1] ? run(r[1]) : undefined}>{r[0]}</button>
-        ) : <div key={i} role="separator" className="my-1 h-px bg-zinc-800" />))}
-      </div>
-    </div>
+    <PointMenu at={{ x, y }} onClose={onClose} label="Track" className="w-56">
+      <DropdownMenuSub>
+        <DropdownMenuSubTrigger>Add Track</DropdownMenuSubTrigger>
+        <DropdownMenuSubContent className="w-52">
+          {adds.map(([l, fn, why]) => <DropdownMenuItem key={l} disabled={!fn} title={why} className={WHY} onSelect={fn ? run(fn) : undefined}>{l}</DropdownMenuItem>)}
+        </DropdownMenuSubContent>
+      </DropdownMenuSub>
+      {rows.map((r, i) => (r ? (
+        <DropdownMenuItem key={r[0]} disabled={!r[1]} title={r[2]} className={WHY} onSelect={r[1] ? run(r[1]) : undefined}>{r[0]}</DropdownMenuItem>
+      ) : <DropdownMenuSeparator key={i} />))}
+    </PointMenu>
   );
 }
 

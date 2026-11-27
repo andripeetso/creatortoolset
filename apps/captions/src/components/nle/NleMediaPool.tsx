@@ -1,5 +1,7 @@
 import { useContext, useEffect, useRef, useState, type DragEvent, type MouseEvent, type ReactNode } from "react";
 import { AlertTriangle, ArrowDownUp, ChevronDown, ChevronRight, ChevronUp, Film, Folder, LayoutGrid, List, Music, PanelLeft, Search, X } from "lucide-react";
+import { DropdownMenuItem, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
+import { PointMenu, WHY } from "@/components/ui/point-menu";
 import { isVideo, timecode, type NleTimeline } from "@/lib/nle/model";
 import { thumbAt } from "@/lib/nle/thumbs";
 import { cn } from "@/lib/utils";
@@ -265,21 +267,21 @@ export function NleMediaPool({ tl, nameOf, here, bin, reveal, onPick, onOpen, on
         </div>
       </div>
       {(menu || viewMenu) && (
-        <div className="fixed inset-0 z-50" onPointerDown={() => { setMenu(null); setViewMenu(null); }} onContextMenu={(e) => { e.preventDefault(); setMenu(null); setViewMenu(null); }}>
-          <div role="menu" className="fixed w-48 rounded-md border border-zinc-800 bg-zinc-950 py-1 text-[13px] text-zinc-200 shadow-xl"
-            style={{ left: (menu ?? viewMenu)!.x, top: Math.min((menu ?? viewMenu)!.y, window.innerHeight - 200) }} onPointerDown={(e) => e.stopPropagation()}>
+        <PointMenu at={(menu ?? viewMenu)!} onClose={() => { setMenu(null); setViewMenu(null); }} className="w-52">
             {menu ? (
               <>
-                {menu.src && <MenuRow label="Select on timeline" onClick={() => { onPick(menu.src); setMenu(null); }} />}
-                {menu.src && onRelink && <MenuRow label="Relink…" onClick={() => { onRelink(); setMenu(null); }} />}
-                {onNewText && <MenuRow label="New Text" off={gate.v2} onClick={() => { onNewText(); setMenu(null); }} />}
+                {menu.src && <DropdownMenuItem onSelect={() => onPick(menu.src)}>Select on timeline</DropdownMenuItem>}
+                {menu.src && onRelink && <DropdownMenuItem onSelect={() => onRelink()}>Relink…</DropdownMenuItem>}
+                {onNewText && <DropdownMenuItem disabled={!!gate.v2} title={gate.v2 ?? undefined} className={WHY} onSelect={() => onNewText()}>New Text</DropdownMenuItem>}
               </>
             ) : viewMenu!.what === "view" ? (
               <>
-                <MenuRow label="Thumbnail View" on={prefs.view === "thumb"} onClick={() => { set({ view: "thumb" }); setViewMenu(null); }} />
-                <MenuRow label="List View" on={prefs.view === "list"} onClick={() => { set({ view: "list" }); setViewMenu(null); }} />
-                <div className="mx-3 my-1 border-t border-zinc-800" />
-                <label className="flex items-center gap-2 px-3 py-1.5 text-[11px] text-zinc-400">
+                <DropdownMenuRadioGroup value={prefs.view} onValueChange={(v) => set({ view: v as Prefs["view"] })}>
+                  <DropdownMenuRadioItem value="thumb">Thumbnail View</DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="list">List View</DropdownMenuRadioItem>
+                </DropdownMenuRadioGroup>
+                <DropdownMenuSeparator />
+                <label className="flex items-center gap-2 px-2 py-1.5 text-xs text-muted-foreground">
                   Size
                   <input type="range" min={64} max={200} step={4} value={prefs.size} aria-label="Thumbnail size"
                     onChange={(e) => set({ size: Number(e.target.value) })} className="min-w-0 flex-1 accent-zinc-300" />
@@ -287,28 +289,21 @@ export function NleMediaPool({ tl, nameOf, here, bin, reveal, onPick, onOpen, on
               </>
             ) : (
               <>
-                {COLUMNS.map(([key, label]) => (
-                  <MenuRow key={key} label={label} on={prefs.sort.key === key} onClick={() => set({ sort: { key, up: prefs.sort.up } })} />
-                ))}
-                <div className="mx-3 my-1 border-t border-zinc-800" />
-                <MenuRow label="Ascending" on={prefs.sort.up} onClick={() => set({ sort: { ...prefs.sort, up: true } })} />
-                <MenuRow label="Descending" on={!prefs.sort.up} onClick={() => set({ sort: { ...prefs.sort, up: false } })} />
+                <DropdownMenuRadioGroup value={prefs.sort.key} onValueChange={(key) => set({ sort: { key: key as typeof prefs.sort.key, up: prefs.sort.up } })}>
+                  {COLUMNS.map(([key, label]) => (
+                    <DropdownMenuRadioItem key={key} value={key} onSelect={(e) => e.preventDefault()}>{label}</DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
+                <DropdownMenuSeparator />
+                <DropdownMenuRadioGroup value={prefs.sort.up ? "up" : "down"} onValueChange={(v) => set({ sort: { ...prefs.sort, up: v === "up" } })}>
+                  <DropdownMenuRadioItem value="up" onSelect={(e) => e.preventDefault()}>Ascending</DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="down" onSelect={(e) => e.preventDefault()}>Descending</DropdownMenuRadioItem>
+                </DropdownMenuRadioGroup>
               </>
             )}
-          </div>
-        </div>
+        </PointMenu>
       )}
     </Panel>
-  );
-}
-
-function MenuRow({ label, on, off, onClick }: { label: string; on?: boolean; /** greyed, and why */ off?: string | null; onClick: () => void }) {
-  return (
-    <button type="button" role={on === undefined ? "menuitem" : "menuitemradio"} aria-checked={on} onClick={onClick} disabled={!!off} title={off ?? undefined}
-      className="flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-zinc-800 disabled:opacity-40 disabled:hover:bg-transparent">
-      <span className="w-3 shrink-0 text-zinc-300">{on ? "✓" : ""}</span>
-      {label}
-    </button>
   );
 }
 

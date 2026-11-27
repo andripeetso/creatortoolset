@@ -587,6 +587,8 @@ const typeIn = (el: Element, v: string) => act(() => {
   Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), "value")!.set!.call(el, v);
   el.dispatchEvent(new Event("input", { bubbles: true }));
 });
+/** A menu row that is off (the shared menu marks it, a <button> it is not). */
+const off = (el: Element) => el.hasAttribute("data-disabled");
 const menuItem = (name: string) => [...document.querySelectorAll('[role="menuitem"]')].find((b) => b.textContent?.startsWith(name)) as HTMLButtonElement;
 const rightClick = (el: Element, clientX = 300) => act(() => void el.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX, clientY: 10 })));
 
@@ -623,7 +625,7 @@ describe("markers, transitions, lift and extract on the page", () => {
     const p = await mount();
     const ruler = p.host.querySelector('[title="The playhead"]')!.parentElement!.nextElementSibling!;
     await rightClick(ruler);
-    expect(menuItem("Export Markers…").disabled).toBe(true);
+    expect(off(menuItem("Export Markers…"))).toBe(true);
     await act(() => menuItem("Add Marker").click());
     await rightClick(ruler);
     await act(() => menuItem("Export Markers…").click());
@@ -642,6 +644,7 @@ describe("markers, transitions, lift and extract on the page", () => {
     const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ left: 0, right: 1000, width: 1000, top: 0, bottom: 40, height: 40, x: 0, y: 0, toJSON: () => ({}) });
     await rightClick(later, 1);
     rect.mockRestore();
+    await act(() => menuItem("Add Transition").click());
     await act(() => menuItem("Dip to White").click());
     expect(p.now().tracks.V1.items[1].trans?.type).toBe("dip_white");
     // a double click on its band picks it, Escape lets it go (Backspace then has nothing to take), picked again Backspace takes it off
@@ -701,10 +704,12 @@ describe("the clip's right-click menu", () => {
     await rightClick(first());
     for (const [row, k] of [["Cut", "⌘X"], ["Duplicate", "⌘D"], ["Ripple Delete", "S"], ["Disable Clip", "D"], ["Find in Media Pool", "⌥F"], ["Change Clip Duration…", ""]] as const)
       expect(menuItem(row).textContent, row).toBe(`${row}${k}`);
+    await act(async () => void menuItem("Clip Color").click());
     await act(async () => void menuItem("Yellow").click());
     expect(p.now().tracks.V1.items[0].color).toBe("Yellow");
     expect(p.now().tracks.A1.items[0].color).toBe("Yellow"); // the right-click picked its voice too
     await rightClick(first());
+    await act(async () => void menuItem("Clip Color").click());
     await act(async () => void menuItem("None").click());
     expect(p.now().tracks.V1.items[0].color).toBeUndefined();
     // the playhead is on the clip's first frame: all of it is held
@@ -720,10 +725,10 @@ describe("the clip's right-click menu", () => {
     await act(async () => void p.host.querySelector<HTMLButtonElement>('[aria-label="Lock V1"]')!.click());
     await rightClick(first());
     for (const row of ["Cut", "Ripple Delete", "Disable Clip", "Change Clip Duration…", "Freeze Frame", "Clip Color"]) {
-      expect(menuItem(row).disabled, row).toBe(true);
+      expect(off(menuItem(row)), row).toBe(true);
       expect(menuItem(row).title).toBe("The track is locked");
     }
-    expect(menuItem("Copy").disabled).toBe(false);
+    expect(off(menuItem("Copy"))).toBe(false);
     p.done();
   });
 });
@@ -742,8 +747,9 @@ describe("a server whose renders take timeline version 1", () => {
     const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ left: 0, right: 1000, width: 1000, top: 0, bottom: 40, height: 40, x: 0, y: 0, toJSON: () => ({}) });
     await rightClick(later, 1);
     rect.mockRestore();
+    await act(() => menuItem("Add Transition").click());
     for (const row of ["Cross Dissolve", "Normalize Audio Levels…", "Freeze Frame", "Disable Clip"]) {
-      expect(menuItem(row).disabled).toBe(true);
+      expect(off(menuItem(row))).toBe(true);
       expect(menuItem(row).title).toBe("Not in this server's renders yet");
     }
     await key("Escape", { code: "Escape" });
@@ -929,12 +935,12 @@ describe("text clips and Design on This Frame", () => {
     // the page marks only what may be drawn into a design: a file it doesn't mark (a catalog original) is never grabbed
     const p = await mount(tl, { urlOf: () => ({ url: "/m/a.mp4" }) });
     await rightClick(p.host.querySelector("[data-frame]")!);
-    expect(menuItem("Design on This Frame").disabled).toBe(true);
+    expect(off(menuItem("Design on This Frame"))).toBe(true);
     p.done();
     designs.grabbed = 0;
     const q = await mount(tl, { urlOf: () => ({ url: "/m/a.mp4", grab: true }) });
     await rightClick(q.host.querySelector("[data-frame]")!);
-    expect(menuItem("Design on This Frame").disabled).toBe(false);
+    expect(off(menuItem("Design on This Frame"))).toBe(false);
     await act(() => menuItem("Design on This Frame").click());
     await flush();
     expect(designs.grabbed).toBe(1);

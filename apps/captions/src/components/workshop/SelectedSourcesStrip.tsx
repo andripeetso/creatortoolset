@@ -1,7 +1,9 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { ChevronLeft, ChevronRight, X } from "lucide-react";
 import { effectiveSavedFor, kindBadgeClass, kindLabel, thumbUrl, type InstagramPost } from "@/lib/instagram";
 import { Picture } from "@/components/Picture";
+import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
+import { PointMenu } from "@/components/ui/point-menu";
 import type { PieceQuote } from "@/lib/workshop";
 import { SOURCE_MIME } from "./ChipComposer";
 import { citeQuoteOf } from "./SourceResultCard";
@@ -29,21 +31,6 @@ export function SelectedSourcesStrip({
   readOnly?: boolean;
 }) {
   const [menu, setMenu] = useState<{ post: InstagramPost; at: { x: number; y: number } } | null>(null);
-  useEffect(() => {
-    if (!menu) return;
-    const off = () => setMenu(null);
-    const key = (e: KeyboardEvent) => {
-      if (e.key === "Escape") off();
-    };
-    window.addEventListener("pointerdown", off);
-    window.addEventListener("scroll", off, true);
-    document.addEventListener("keydown", key);
-    return () => {
-      window.removeEventListener("pointerdown", off);
-      window.removeEventListener("scroll", off, true);
-      document.removeEventListener("keydown", key);
-    };
-  }, [menu]);
 
   if (!posts.length) {
     return (
@@ -101,22 +88,9 @@ export function SelectedSourcesStrip({
         </div>
       ))}
       {menu && onCite ? (
-        <div
-          className="fixed z-50 rounded-lg border border-border bg-popover p-1 text-[13px] text-popover-foreground shadow-2xl"
-          style={{ left: menu.at.x, top: menu.at.y }}
-          onPointerDown={(e) => e.stopPropagation()} // keeps the menu open for its own click
-        >
-          <button
-            type="button"
-            onClick={() => {
-              onCite(citeQuoteOf(menu.post), menu.at);
-              setMenu(null);
-            }}
-            className="rounded-md px-2 py-1 hover:bg-muted"
-          >
-            Cite in message
-          </button>
-        </div>
+        <PointMenu at={menu.at} onClose={() => setMenu(null)}>
+          <DropdownMenuItem onSelect={() => onCite(citeQuoteOf(menu.post), menu.at)}>Cite in message</DropdownMenuItem>
+        </PointMenu>
       ) : null}
     </div>
   );

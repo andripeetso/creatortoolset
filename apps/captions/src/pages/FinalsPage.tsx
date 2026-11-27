@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router";
-import { CircleCheck, Clapperboard, Shapes, Download, ExternalLink, GalleryHorizontalEnd, ImageOff, Layers, LayoutGrid, Link2, Merge, RotateCcw, Share2, Trash2 } from "lucide-react";
+import { Clapperboard, GalleryHorizontalEnd, ImageOff, Layers, LayoutGrid, RotateCcw, Trash2 } from "lucide-react";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -260,32 +260,32 @@ function PieceMenu({ piece, others, actions, children }: { piece: Piece; others:
       <ContextMenuContent>
         <ContextMenuItem asChild>
           <Link to={`/finals/${piece.id}`} state={FROM_LIST}>
-            <ExternalLink /> Open
+            Open
           </Link>
         </ContextMenuItem>
         {has && (
           <ContextMenuItem asChild>
             <a href={actions.zipUrl(piece)} download>
-              <Download /> Download
+              Download
             </a>
           </ContextMenuItem>
         )}
         <ContextMenuItem onSelect={() => actions.onShare(piece)}>
-          <Share2 /> Share
+          Share
         </ContextMenuItem>
         {has && !piece.items.some((i) => i.postings.length > 0) && (
           <ContextMenuItem onSelect={() => actions.onPosted(piece)}>
-            <CircleCheck /> Mark as posted
+            Mark as posted
           </ContextMenuItem>
         )}
         {has && (
           <ContextMenuItem onSelect={() => actions.onPostLink(piece)}>
-            <Link2 /> Add post link
+            Add post link
           </ContextMenuItem>
         )}
         <ContextMenuSub>
           <ContextMenuSubTrigger>
-            <Shapes /> Type
+            Type
           </ContextMenuSubTrigger>
           <ContextMenuSubContent>
             <ContextMenuRadioGroup value={piece.kind ?? "auto"} onValueChange={(v) => typeOf(v) !== (piece.kind ?? null) && actions.onKind(piece, typeOf(v))}>
@@ -300,7 +300,7 @@ function PieceMenu({ piece, others, actions, children }: { piece: Piece; others:
         {into.length > 0 && (
           <ContextMenuSub>
             <ContextMenuSubTrigger>
-              <Merge /> Merge piece
+              Merge piece
             </ContextMenuSubTrigger>
             <ContextMenuSubContent className="max-h-80 overflow-y-auto">
               {into.map((o) => (

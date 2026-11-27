@@ -266,6 +266,11 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
             // the server has new pages (NewVersionPill.tsx): a release made with them is held, and the page's Update
             // becomes Restart to update, one restart for both
             if message.frameInfo.isMainFrame { UpdateWhenIdle.shared.checkNow() }
+        case "cut", "copy", "paste", "selectAll":
+            // the page's own right-click menu in a text field (AppMenu.tsx): the field it focused does it, with no paste prompt
+            if message.frameInfo.isMainFrame, let m = message.body as? String {
+                NSApp.sendAction(NSSelectorFromString(m + ":"), to: nil, from: self)
+            }
         case let m? where m.hasPrefix("thismac-"):
             // only the site's own page, never a frame inside it (ThisMacBridge.swift)
             if message.frameInfo.isMainFrame { onThisMacCommand?(String(m.dropFirst(8))) }
@@ -359,6 +364,8 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
         scripts.addUserScript(WKUserScript(source: pageLogScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         // the page shows Settings → This Mac only inside this app (ThisMacSection.tsx)
         scripts.addUserScript(WKUserScript(source: "document.documentElement.dataset.macThisMac = '1';", injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        // the page draws every right-click menu itself, a text field's too: its Cut, Copy and Paste post here (AppMenu.tsx)
+        scripts.addUserScript(WKUserScript(source: "document.documentElement.dataset.macEdit = '1';", injectionTime: .atDocumentStart, forMainFrameOnly: true))
         // the page shows its Record screen buttons only where this app can record (macOS 15+)
         if Recorder.available {
             scripts.addUserScript(WKUserScript(source: "document.documentElement.dataset.macRecord = '1';", injectionTime: .atDocumentStart, forMainFrameOnly: true))

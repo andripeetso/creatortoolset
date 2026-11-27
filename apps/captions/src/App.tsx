@@ -44,6 +44,7 @@ import { AskAboutSelection } from "@/components/assistant/AskAboutSelection";
 import { AppDialogs } from "@/components/AppDialogs";
 import { ViewAsBanner } from "@/components/ViewAsBanner";
 import { Toaster } from "@/components/ui/sonner";
+import { AppMenu } from "@/components/AppMenu";
 import { useShareTheme } from "@/components/ShareTheme";
 import { canUse, canUseTile, useAuth, useMe } from "@/lib/auth";
 import { initTabGuard } from "@/lib/tabs";
@@ -372,6 +373,7 @@ export default function App() {
       <SettingsShortcut />
       <AppDialogs />
       <AppToaster />
+      <AppMenu />
       <ViewAsBanner />
       <MacAppUpdateBanner />
       <main className="contents">

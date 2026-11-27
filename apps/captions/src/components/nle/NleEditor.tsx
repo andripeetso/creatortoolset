@@ -1,6 +1,8 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode } from "react";
 import { toast } from "sonner";
-import { ChevronRight, Gauge, Keyboard, Link2, Loader2, Magnet, MousePointer2, MoveHorizontal, Pause, Play, Redo2, Repeat, Save, Scissors, SkipBack, SkipForward, Undo2, UnfoldHorizontal } from "lucide-react";
+import { Gauge, Keyboard, Link2, Loader2, Magnet, MousePointer2, MoveHorizontal, Pause, Play, Redo2, Repeat, Save, Scissors, SkipBack, SkipForward, Undo2, UnfoldHorizontal } from "lucide-react";
+import { DropdownMenuItem, DropdownMenuShortcut, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger } from "@/components/ui/dropdown-menu";
+import { PointMenu, WHY } from "@/components/ui/point-menu";
 import { freshHist, histChange, histGo, histRedo, histUndo, type Hist } from "@/lib/edit-history";
 import {
   addSource, blade, clipOfPart, editTracks, endOf, find, freeTrack, isVideo, lengthOf, linkTogether,
@@ -839,7 +841,6 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
   const textSrc = sel.length === 1 ? find(tl, sel[0])?.item.src : undefined;
   const textSource = textSrc && isDesign(tl.sources[textSrc]) && typeof tl.sources[textSrc].path === "string" ? tl.sources[textSrc] : null;
   const newTextRow: MenuRow = ["New Text", "", () => run("newText"), !!readOnly || !!gate, gate ?? undefined];
-  const menuRow = "flex w-full items-center justify-between gap-4 px-3 py-1.5 text-left text-[13px] text-zinc-200 hover:bg-zinc-800 disabled:opacity-40 disabled:hover:bg-transparent";
   const linked = sel.some((k) => find(tl, k)?.item.link !== undefined);
   const selTracks = [...new Set(sel.flatMap((k) => find(tl, k)?.track ?? []))];
   // a track whose renders can't play a speed change says so, as the Inspector's Speed Change does
@@ -1028,20 +1029,18 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
       {durationOf && <DurationDialog tl={tl} keys={durationOf} onCommit={(next) => commit(next, "Change Clip Duration")} onClose={() => setDurationOf(null)} />}
       {speedOf && <SpeedDialog tl={tl} keys={speedOf} onCommit={(next) => commit(next, "Change Clip Speed")} onClose={() => setSpeedOf(null)} />}
       {menu && (
-        <div className="fixed inset-0 z-50" onPointerDown={() => setMenu(null)} onContextMenu={(e) => { e.preventDefault(); setMenu(null); }}>
-          <div role="menu" className="fixed w-52 rounded-md border border-zinc-800 bg-zinc-950 py-1 shadow-xl" style={{ left: menu.x, top: Math.max(8, Math.min(menu.y, window.innerHeight - (menu.on === "clip" ? 520 : 300))) }}
-            onPointerDown={(e) => e.stopPropagation()}>
+        <PointMenu at={menu} onClose={() => setMenu(null)} className="w-60">
             {menu.on === "clip" && menu.cut && (
-              <div className="group/sub relative">
-                <button type="button" role="menuitem" aria-haspopup="menu" className={menuRow}><span>Add Transition</span><ChevronRight className="size-3.5 text-zinc-500" /></button>
-                <div role="menu" aria-label="Add Transition" className="absolute -top-1 left-full hidden w-44 rounded-md border border-zinc-800 bg-zinc-950 py-1 shadow-xl group-focus-within/sub:block group-hover/sub:block">
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger>Add Transition</DropdownMenuSubTrigger>
+                <DropdownMenuSubContent className="w-48">
                   {(isVideo(find(tl, menu.cut)?.track ?? "V") ? [["Cross Dissolve", "addDissolve"], ["Dip to Black", "addDipToBlack"], ["Dip to White", "addDipToWhite"]] : [["Cross Fade", "addDissolve"]]).map(([l, id]) => (
-                    <button key={id} type="button" role="menuitem" disabled={!!gate} title={gate ?? undefined} className={menuRow} onClick={() => { setMenu(null); runAtCut(id, menu.cut!); }}>
-                      <span>{l}</span><span className="text-zinc-500">{kl(id)}</span>
-                    </button>
+                    <DropdownMenuItem key={id} disabled={!!gate} title={gate ?? undefined} className={WHY} onSelect={() => runAtCut(id, menu.cut!)}>
+                      {l}<DropdownMenuShortcut>{kl(id)}</DropdownMenuShortcut>
+                    </DropdownMenuItem>
                   ))}
-                </div>
-              </div>
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
             )}
             {(menu.on === "gap" ? [["Close Gap", kl("closeGap"), () => run("closeGap"), false], newTextRow] as MenuRow[]
               : menu.on === "ruler" ? [
@@ -1067,44 +1066,38 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
               ["Freeze Frame", kl("freezeFrame"), () => run("freezeFrame"), !!readOnly || !!freezeWhy, freezeWhy ?? undefined],
               ["Find in Media Pool", kl("findInMediaPool"), () => findInPool(menu.key ?? sel[0]), false],
             ] as MenuRow[]).map(([l, key, fn, off, why]) => (
-              <button key={l} type="button" role="menuitem" disabled={off} title={why} className={menuRow} onClick={() => { setMenu(null); fn(); }}>
-                <span>{l}</span><span className="text-zinc-500">{key}</span>
-              </button>
+              <DropdownMenuItem key={l} disabled={off} title={why} className={WHY} onSelect={fn}>
+                {l}{key && <DropdownMenuShortcut>{key}</DropdownMenuShortcut>}
+              </DropdownMenuItem>
             ))}
             {menu.on === "clip" && (
-              <div className="group/color relative">
-                <button type="button" role="menuitem" aria-haspopup="menu" disabled={clipOff} title={lockedWhy ?? undefined} className={menuRow}><span>Clip Color</span><ChevronRight className="size-3.5 text-zinc-500" /></button>
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger disabled={clipOff} title={lockedWhy ?? undefined} className={WHY}>Clip Color</DropdownMenuSubTrigger>
                 {!clipOff && (
-                  <div role="menu" aria-label="Clip Color" className="absolute -bottom-1 left-full hidden w-40 rounded-md border border-zinc-800 bg-zinc-950 py-1 shadow-xl group-focus-within/color:block group-hover/color:block">
+                  <DropdownMenuSubContent className="w-44">
                     {([...Object.keys(MARKER_COLORS), "None"] as (MarkerColor | "None")[]).map((c) => (
-                      <button key={c} type="button" role="menuitem" className={menuRow} onClick={() => { setMenu(null); commit(setItems(tl, sel, { color: c === "None" ? undefined : c }), "Clip Color"); }}>
-                        <span className="flex items-center gap-2">
-                          <span className="size-2.5 rounded-full border border-zinc-600" style={{ background: c === "None" ? "transparent" : MARKER_HEX[c] }} />{c}
-                        </span>
-                      </button>
+                      <DropdownMenuItem key={c} onSelect={() => commit(setItems(tl, sel, { color: c === "None" ? undefined : c }), "Clip Color")}>
+                        <span className="size-2.5 rounded-full border border-zinc-600" style={{ background: c === "None" ? "transparent" : MARKER_HEX[c] }} />{c}
+                      </DropdownMenuItem>
                     ))}
-                  </div>
+                  </DropdownMenuSubContent>
                 )}
-              </div>
+              </DropdownMenuSub>
             )}
-          </div>
-        </div>
+        </PointMenu>
       )}
       {keysOpen && <NleKeyboard onClose={() => setKeysOpen(false)} />}
       {designing && <Suspense><DesignEditor id={designing.id} onDone={() => void designDone()} /></Suspense>}
       {capMenu && (
-        <div className="fixed inset-0 z-50" onPointerDown={() => setCapMenu(null)} onContextMenu={(e) => { e.preventDefault(); setCapMenu(null); }}>
-          <div role="menu" className="fixed w-52 rounded-md border border-zinc-800 bg-zinc-950 py-1 shadow-xl" style={{ left: capMenu.x, top: Math.min(capMenu.y, window.innerHeight - 160) }}
-            onPointerDown={(e) => e.stopPropagation()}>
+        <PointMenu at={capMenu} onClose={() => setCapMenu(null)} className="w-56">
             {([
               [tl.captions ? "Update Captions" : "Make Captions", () => run(tl.captions ? "updateCaptions" : "makeCaptions"), readOnly || capBusy || (!!tl.captions && !captionsStale(tl))],
               ["Open in Caption Studio", () => tl.captions && captions?.open(captionsHref(tl.captions)), !tl.captions],
               ["Export Subtitles…", () => cap?.clip && downloadSrt(tl.timeline.name ?? "", cap.clip), !cap?.clip?.cues?.length],
             ] as [string, () => void, boolean][]).map(([l, fn, off]) => (
-              <button key={l} type="button" role="menuitem" disabled={off} className={menuRow} onClick={() => { setCapMenu(null); fn(); }}>{l}</button>
+              <DropdownMenuItem key={l} disabled={off} onSelect={fn}>{l}</DropdownMenuItem>
             ))}
-          </div>
-        </div>
+        </PointMenu>
       )}
       {markerEdit !== null && markersOf(tl).some((m) => m.frame === markerEdit) && (
         <NleMarkerDialog key={markerEdit} marker={markersOf(tl).find((m) => m.frame === markerEdit)!} fps={fps} onClose={() => setMarkerEdit(null)}
