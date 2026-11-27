@@ -444,6 +444,20 @@ export function libraryStatus(libraryId: string): LibraryStatus {
 // the job kinds the library's Stop takes off the queue: a job is named as its kind (made.ts SPEC)
 const STOPPED: ReadonlySet<string> = new Set(MADE_KINDS.filter((k) => !k.auto && !k.ready).map((k) => k.kind));
 
+/**
+ * Seconds a timeline in `libraryId`, from the last ones made (the last quarter of an hour, each clip once: a blurred
+ * copy's is its original's). Null with fewer than three.
+ */
+function watchPace(db: DatabaseSync, libraryId: string, now = Date.now()): number | null {
+  const r = db
+    .prepare(
+      `SELECT MIN(at) AS a, MAX(at) AS b, COUNT(*) AS n FROM (SELECT t.at FROM timelines t JOIN asset_versions v ON v.id = t.version_id JOIN assets a ON a.id = v.asset_id
+         WHERE a.library_id = ? AND t.error IS NULL AND v.blurred_of IS NULL AND t.at >= ? ORDER BY t.at DESC LIMIT 30)`,
+    )
+    .get(libraryId, now - 15 * 60_000) as { a: number | null; b: number | null; n: number };
+  return r.n >= 3 && r.b! > r.a! ? (r.b! - r.a!) / 1000 / (r.n - 1) : null;
+}
+
 export async function progress(libraryId: string, username: string): Promise<LibraryProgress> {
   const db = libraryDb();
   const snap = statusOf(libraryId);
@@ -630,6 +644,13 @@ export async function progress(libraryId: string, username: string): Promise<Lib
     // the server's own steps each at their own pace: a lighter copy takes many pictures' time
     if (step === "files") {
       parts.push({ step, route, seconds: mine.reduce((t, r) => t + r.n * (paceOf(db, r.kind) ?? filesGuess(r.kind, secondsPerClip)), 0) / laneSize("files") });
+      continue;
+    }
+    // a run of timelines goes at the pace timelines come in, end to end (a computer reads each file, Gemini watches
+    // it): a look that runs again for one is over in a moment here, and its pace would say a minute for an hour's work
+    const each = step === "look" && watches ? watchPace(db, libraryId) : null;
+    if (each) {
+      parts.push({ step, route, seconds: each * n });
       continue;
     }
     const p = await perClip(db, step, route, secondsPerClip, proxyShare);

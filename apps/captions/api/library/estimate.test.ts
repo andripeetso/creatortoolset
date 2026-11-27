@@ -264,6 +264,14 @@ describe("a run of timelines", () => {
       const p = await progress("lib_e", "local");
       expect(p).toMatchObject({ left: 3, canStop: true });
       expect(p.stages?.find((x) => x.kind === "look")).toMatchObject({ of: 3 });
+      // the time left is the pace timelines come in at (one every 30 s here), not the moment a look takes this server
+      const at = Date.now();
+      for (const [i, id] of ["p1", "p2", "p3"].entries()) {
+        d.prepare("INSERT INTO assets (id, library_id, kind, title, current_version_id, created_by, created_at, roll) VALUES (?, 'lib_e', 'video', ?, ?, 'local', 1, 'b')").run(`ast-${id}`, id, `ver-${id}`);
+        d.prepare("INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, state, created_by, created_at) VALUES (?, ?, 1, 'k', 1, ?, 'ready', 'local', 1)").run(`ver-${id}`, `ast-${id}`, `sha-${id}`);
+        d.prepare("INSERT INTO timelines (version_id, events, error, at) VALUES (?, '[]', NULL, ?)").run(`ver-${id}`, at - 60_000 + i * 30_000);
+      }
+      expect((await progress("lib_e", "local")).seconds).toBeCloseTo(90, 0);
       // Cancel on shot descriptions leaves a look that runs again for its timeline; Cancel on the timelines ends the run
       stopQueued("lib_e", "look", "local");
       expect((d.prepare("SELECT state FROM jobs WHERE version_id = 'ver-t1' AND kind = 'look'").get() as { state: string }).state).toBe("queued");
@@ -273,7 +281,7 @@ describe("a run of timelines", () => {
       expect(sweepWatch(d, () => true)).toBe(false);
     } finally {
       saveMyKey("local", "GEMINI_API_KEY", null);
-      d.prepare("UPDATE assets SET trashed_at = 1 WHERE id IN ('ast-t1', 'ast-t2', 'ast-t3')").run();
+      d.prepare("UPDATE assets SET trashed_at = 1 WHERE id IN ('ast-t1', 'ast-t2', 'ast-t3', 'ast-p1', 'ast-p2', 'ast-p3')").run();
       d.prepare("UPDATE libraries SET settings = json_remove(settings, '$.timelineSince') WHERE id = 'lib_e'").run();
     }
   });
