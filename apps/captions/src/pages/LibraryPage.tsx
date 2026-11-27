@@ -208,7 +208,8 @@ export default function LibraryPage() {
   const adding = !!watch?.folders.some((f) => f.adding > 0);
   // the setup: the owner's only (watch is theirs alone). Until the library is set up it is the page itself, with no way
   // around it; after that ?setup=1 opens it again as a sheet
-  const needsSetup = !!watch && !!library && !library.settings.setupAt;
+  // an account that only reads here (Read, or a plain browser) is never asked to set the library up
+  const needsSetup = !!watch && !!library && !library.settings.setupAt && !readOnly;
   const setupOpen = !!watch && linked.get("setup") === "1" && !needsSetup;
   const closeSetup = () => navigate("/library", { replace: true });
 
