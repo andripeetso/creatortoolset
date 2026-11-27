@@ -657,12 +657,12 @@ export async function applyLibraryResult(jobId: number, deviceId: string, r: Lib
     if (job.kind === "describe") await describeFromStills(db, job.library_id, job.version_id!, job.actor, stills);
     await recordDerived(job.version_id!, { files, ...(probe ? { probe } : {}), ...(fingerprint ? { fingerprint } : {}), ...(sha256 ? { sha256 } : {}), ...(quick ? { quick } : {}) }, job.actor);
     if (files.thumb) wakePictures();
-    finishJob(db, job.id, true, undefined, Date.now());
+    finishJob(db, job.id, true, undefined, Date.now(), "jobs", job.claim_id);
     sortAfter(job);
     return "done";
   } catch (e) {
     // no AI for it: parked, as the server's own run parks it; a usage limit or a busy AI waits, never fails (library/worker.ts)
-    if (e instanceof NeedsKey) return (parkJob(db, job.id, e.message), libraryChanged(job.library_id), "failed");
+    if (e instanceof NeedsKey) return (parkJob(db, job.id, e.message, "jobs", job.claim_id), libraryChanged(job.library_id), "failed");
     if (job.kind === "describe" && aiWaits(db, job, e)) return "failed";
     return failed(e instanceof Error ? e.message : String(e));
   } finally {
@@ -686,7 +686,7 @@ function transcriptOf(x: unknown): LibraryTranscript | null {
 function failLibrary(job: JobRow, error: string): true {
   const db = libraryDb();
   void rm(incoming(job.id), { recursive: true, force: true }); // what it sent (a description's stills): not kept past the try
-  finishJob(db, job.id, false, error, Date.now());
+  finishJob(db, job.id, false, error, Date.now(), "jobs", job.claim_id);
   const after = db.prepare("SELECT state FROM jobs WHERE id = ?").get(job.id) as { state: string } | undefined; // gone when the clip was removed meanwhile
   if (after?.state === "failed" && (job.kind === "send" || job.kind === "proxy")) db.prepare("UPDATE asset_versions SET state = 'failed' WHERE id = ?").run(job.version_id);
   libraryChanged(job.library_id);
@@ -734,7 +734,7 @@ libWorkApp.post("/:id/beat", async (c) => {
     if (!m || m.claim !== job.claim_id || m.done !== b.done) moved.set(job.id, { claim: job.claim_id, done: b.done, at: now });
     else if (now - m.at >= STALL_MS) return c.json({ ok: true });
   }
-  extendLease(libraryDb(), job.id, LEASE_S);
+  extendLease(libraryDb(), job.id, LEASE_S, undefined, "jobs", job.claim_id);
   return c.json({ ok: true });
 });
 
@@ -820,7 +820,7 @@ libWorkApp.post("/:id/fail", async (c) => {
   // app the server could not tell of): a wait, never a failed try. The job comes back in ten minutes with its try given
   // back, and three such answers no longer fail the clip for good
   if (error.includes(NEEDS_DISK)) {
-    defer(libraryDb(), job.id, 600);
+    defer(libraryDb(), job.id, 600, undefined, "jobs", job.claim_id);
     libraryChanged(job.library_id);
     return c.json({ ok: true });
   }

@@ -46,7 +46,7 @@ describe("a blurred copy and its original", () => {
     const j = claimJob(d, 300, Date.now(), "jobs", ["look"])!;
     expect(j.version_id).toBe("v1");
     d.prepare("INSERT INTO stretches (version_id, seg, a, b, motion, text, source, created_at) VALUES ('v1', 0, 0, 2, 0.1, 'Spins', 'ai', 1)").run();
-    finishJob(d, j.id, true);
+    finishJob(d, j.id, true, undefined, undefined, "jobs", j.claim_id);
     expect(d.prepare("SELECT text FROM stretches WHERE version_id = 'v2'").get()).toEqual({ text: "Spins" });
   });
 
@@ -56,7 +56,7 @@ describe("a blurred copy and its original", () => {
     enqueueJob(d, "lib_b", "v2", "describe", "local", true);
     const j = claimJob(d, 300, Date.now(), "jobs", ["describe"])!;
     expect(j.version_id).toBe("v1");
-    finishJob(d, j.id, true);
+    finishJob(d, j.id, true, undefined, undefined, "jobs", j.claim_id);
     expect(d.prepare("SELECT source, text FROM descriptions WHERE version_id = 'v2' ORDER BY source").all()).toEqual([
       { source: "ai", text: "A cartwheel, then a bow." },
       { source: "user", text: "My words" },

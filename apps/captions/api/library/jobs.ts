@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { move, type Moves } from "../../contracts/transition";
 import { BUDGET_STOP } from "../../contracts/service-usage";
@@ -100,16 +101,26 @@ export function enqueueJob(db: DatabaseSync, libraryId: string, versionId: strin
 export function claimJob(db: DatabaseSync, leaseSeconds = 300, now = Date.now(), table: JobTable = "jobs", kinds?: readonly string[], id?: number): JobRow | null {
   const only = kinds?.length ? ` AND kind IN (${kinds.map(() => "?").join(",")})` : "";
   const pick = id === undefined ? `(SELECT id FROM ${table} WHERE state = 'queued' AND run_after <= ?${only} ORDER BY id LIMIT 1)` : "? AND state = 'queued'";
+  // each claim has its own id: a writer holding an older claim (a Mac that slept past its lease) changes nothing (ownClaim)
+  const jobs = table === "jobs";
   return (
     (db
       .prepare(
-        `UPDATE ${table} SET state = 'running', lease_until = ?, attempts = attempts + 1, started_at = ?${table === "jobs" ? ", held_by = NULL, claim_id = NULL" : ""}
+        `UPDATE ${table} SET state = 'running', lease_until = ?, attempts = attempts + 1, started_at = ?${jobs ? ", held_by = NULL, claim_id = ?" : ""}
          WHERE id = ${pick}
          RETURNING *`,
       )
-      .get(now + leaseSeconds * 1000, now, ...(id === undefined ? [now, ...(kinds ?? [])] : [id])) as JobRow | undefined) ?? null
+      .get(now + leaseSeconds * 1000, now, ...(jobs ? [randomUUID()] : []), ...(id === undefined ? [now, ...(kinds ?? [])] : [id])) as JobRow | undefined) ??
+    null
   );
 }
+
+/**
+ * The write-side guard for a library job's claim: a writer passes the claim_id it was given (JobRow.claim_id), and a
+ * claim that has since expired and been taken again matches nothing. edit_jobs has no claim, so it adds nothing.
+ */
+const ownClaim = (table: JobTable, claim: string | null | undefined): { sql: string; args: (string | null)[] } =>
+  table === "jobs" ? { sql: " AND claim_id IS ?", args: [claim ?? null] } : { sql: "", args: [] };
 
 /** Libraries whose watch folders are handing clips over right now (watch.ts): their slower steps wait (worker.ts). */
 export const takingClips = new Set<string>();
@@ -150,23 +161,27 @@ export const firstClips = (now = Date.now()): string[] => [...waitedOn].filter((
  * A try that did not work, a park and a defer change only a job that is still running: one stopped, removed or taken
  * back while its step was out stays as it is (a late answer never puts a stopped job back in the queue).
  */
-export function finishJob(db: DatabaseSync, id: number, ok: boolean, error?: string, now = Date.now(), table: JobTable = "jobs"): void {
+export function finishJob(db: DatabaseSync, id: number, ok: boolean, error?: string, now = Date.now(), table: JobTable = "jobs", claim?: string | null): void {
+  const own = ownClaim(table, claim);
   if (ok) {
-    const done = db.prepare(`UPDATE ${table} SET state = 'done', lease_until = NULL, error = NULL, done_at = ? WHERE id = ? AND state = 'running'`).run(now, id).changes;
+    const done = db.prepare(`UPDATE ${table} SET state = 'done', lease_until = NULL, error = NULL, done_at = ? WHERE id = ? AND state = 'running'${own.sql}`).run(now, id, ...own.args).changes;
     // an original's new result goes to its blurred copies too (blur-mirror.ts)
     const j = done && table === "jobs" ? (db.prepare("SELECT version_id, kind FROM jobs WHERE id = ?").get(id) as { version_id: string | null; kind: string } | undefined) : undefined;
     if (j?.version_id && ON_ORIGINAL.has(j.kind)) mirrorFromOriginal(db, j.version_id);
     return;
   }
   // the next state is chosen here (checked against JOB_MOVES); the read and the write are one synchronous run, so nothing moves the row between them
-  const row = db.prepare(`SELECT attempts, run_after FROM ${table} WHERE id = ? AND state = 'running'`).get(id) as Pick<JobRow, "attempts" | "run_after"> | undefined;
+  const row = db.prepare(`SELECT attempts, run_after FROM ${table} WHERE id = ? AND state = 'running'${own.sql}`).get(id, ...own.args) as
+    | Pick<JobRow, "attempts" | "run_after">
+    | undefined;
   if (!row) return;
   const to = move(JOB_MOVES, "running", row.attempts >= MAX_ATTEMPTS ? "failed" : "queued", `${table} job ${id}`);
-  db.prepare(`UPDATE ${table} SET state = ?, lease_until = NULL, error = ?, run_after = ? WHERE id = ? AND state = 'running'`).run(
+  db.prepare(`UPDATE ${table} SET state = ?, lease_until = NULL, error = ?, run_after = ? WHERE id = ? AND state = 'running'${own.sql}`).run(
     to,
     error ?? "failed",
     to === "failed" ? row.run_after : now + BACKOFF_MS * row.attempts,
     id,
+    ...own.args,
   );
 }
 
@@ -193,8 +208,9 @@ export function graceHeld(db: DatabaseSync, seconds: number, now = Date.now()): 
 }
 
 /** A claimed job its actor has no key or AI route for: parked as needs_key (not failed) until someone queues it again. */
-export function parkJob(db: DatabaseSync, id: number, why: string, table: JobTable = "jobs"): void {
-  db.prepare(`UPDATE ${table} SET state = 'needs_key', lease_until = NULL, error = ? WHERE id = ? AND state = 'running'`).run(why, id);
+export function parkJob(db: DatabaseSync, id: number, why: string, table: JobTable = "jobs", claim?: string | null): void {
+  const own = ownClaim(table, claim);
+  db.prepare(`UPDATE ${table} SET state = 'needs_key', lease_until = NULL, error = ? WHERE id = ? AND state = 'running'${own.sql}`).run(why, id, ...own.args);
 }
 
 /**
@@ -210,14 +226,17 @@ export const heldBy = (db: DatabaseSync, id: number, device: string): JobRow | u
   db.prepare("SELECT * FROM edit_jobs WHERE id = ? AND device = ? AND state = 'running'").get(id, device) as JobRow | undefined;
 
 /** A long step's heartbeat: a running job's lease runs `seconds` from now, so requeueExpired leaves it alone. */
-export function extendLease(db: DatabaseSync, id: number, seconds: number, now = Date.now(), table: JobTable = "jobs"): void {
-  db.prepare(`UPDATE ${table} SET lease_until = ? WHERE id = ? AND state = 'running'`).run(now + seconds * 1000, id);
+export function extendLease(db: DatabaseSync, id: number, seconds: number, now = Date.now(), table: JobTable = "jobs", claim?: string | null): void {
+  const own = ownClaim(table, claim);
+  db.prepare(`UPDATE ${table} SET lease_until = ? WHERE id = ? AND state = 'running'${own.sql}`).run(now + seconds * 1000, id, ...own.args);
 }
 
 /** A claimed job that waits on something else (a transcript): back in the queue after `seconds`, the attempt not counted. */
-export function defer(db: DatabaseSync, id: number, seconds: number, now = Date.now(), table: JobTable = "jobs"): void {
-  db.prepare(`UPDATE ${table} SET state = 'queued', lease_until = NULL, attempts = MAX(attempts - 1, 0), run_after = ? WHERE id = ? AND state = 'running'`).run(
+export function defer(db: DatabaseSync, id: number, seconds: number, now = Date.now(), table: JobTable = "jobs", claim?: string | null): void {
+  const own = ownClaim(table, claim);
+  db.prepare(`UPDATE ${table} SET state = 'queued', lease_until = NULL, attempts = MAX(attempts - 1, 0), run_after = ? WHERE id = ? AND state = 'running'${own.sql}`).run(
     now + seconds * 1000,
     id,
+    ...own.args,
   );
 }

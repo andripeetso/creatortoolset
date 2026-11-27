@@ -52,4 +52,11 @@ describe("POST /:id/watch/scan", () => {
     writeFileSync(path.join(watched, "tiny-roll.mp4"), "x");
     expect(await (await scan("owner-s")).json()).toEqual({ added: 0, settling: 1 });
   });
+
+  it("a file removed while it settles stops counting as settling", async () => {
+    writeFileSync(path.join(watched, "gone-roll.mp4"), "y");
+    expect(await (await scan("owner-s")).json()).toEqual({ added: 0, settling: 2 });
+    rmSync(path.join(watched, "gone-roll.mp4"));
+    expect(await (await scan("owner-s")).json()).toEqual({ added: 0, settling: 1 });
+  });
 });

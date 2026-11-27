@@ -188,7 +188,8 @@ const onThisComputer = (db: ReturnType<typeof libraryDb>, id: number) => {
   return false;
 };
 
-const running = new Set<number>();
+/** The jobs this server runs, with the claim each was taken under (a late write under an older claim changes nothing). */
+const running = new Map<number, string | null>();
 /** Jobs this server is running: an update waits for them (/api/health, server-update.ts draining). */
 export const libraryJobsAtRisk = (): number => running.size;
 
@@ -330,7 +331,7 @@ function leftToComputers(db: ReturnType<typeof libraryDb>, now: number, kinds: r
 
 /** The app is stopping (an update, Quit): the jobs this server runs go back in the queue at once, the try not counted. */
 export function releaseRunningJobs(now = Date.now()): void {
-  for (const id of running) defer(libraryDb(), id, 0, now);
+  for (const [id, claim] of running) defer(libraryDb(), id, 0, now, "jobs", claim);
 }
 
 /** The month this server last woke budget-parked jobs in (tick). */
@@ -355,24 +356,24 @@ export async function tick(now = Date.now(), kinds: readonly string[] = LANES.fl
   // on a connected AI, two descriptions at a time: the others wait in the queue (describe.ts describeSlot)
   const release = job.kind === "describe" ? describeSlot(job.actor) : () => {};
   if (!release) {
-    defer(db, job.id, 10, now);
+    defer(db, job.id, 10, now, "jobs", job.claim_id);
     return false;
   }
-  running.add(job.id);
+  running.set(job.id, job.claim_id ?? null);
   // a slow step starts: the open pages say which clip it is on (a picture is over before they would ask)
   if (!PICTURES.includes(job.kind)) libraryChanged(job.library_id);
   // a job waiting its turn (the Mac's AI, this computer's transcriber) keeps its lease, so no second copy starts
-  const beat = setInterval(() => extendLease(db, job.id, LEASE_S), 60_000);
+  const beat = setInterval(() => extendLease(db, job.id, LEASE_S, undefined, "jobs", job.claim_id), 60_000);
   beat.unref();
   try {
     // a job runs in no request: its AI calls count under its library's workspace (Settings → Usage)
     const workspace = ON_AI.includes(job.kind) ? await workspaceIdOf(db, job.version_id ?? "").catch(() => undefined) : undefined;
     await usageIn(workspace, () => run(job));
-    finishJob(db, job.id, true, undefined, Math.max(now, Date.now())); // its end, so done_at - started_at is how long it took
+    finishJob(db, job.id, true, undefined, Math.max(now, Date.now()), "jobs", job.claim_id); // its end, so done_at - started_at is how long it took
     if (ON_AI.includes(job.kind)) releaseLimit(db, job.actor);
   } catch (e) {
     if (e instanceof NeedsKey) {
-      parkJob(db, job.id, e.message);
+      parkJob(db, job.id, e.message, "jobs", job.claim_id);
       // a timeline asked for goes with a look that parks (the person asks again), not one waiting for its Mac to read it
       if (job.kind === "look" && e.message !== MAC_WAITS) askedWatch.delete(job.version_id ?? "");
       return true;
@@ -384,12 +385,12 @@ export async function tick(now = Date.now(), kinds: readonly string[] = LANES.fl
     // one made on the person's computer waits for one with its model to be on, saying so
     const wait = ON_AI.includes(job.kind) ? waitFor(e) : e instanceof ModelNotReady || e instanceof ComputerOff ? MODEL_RETRY_S : 0;
     if (wait) {
-      defer(db, job.id, wait);
+      defer(db, job.id, wait, undefined, "jobs", job.claim_id);
       if (isLimit(e)) holdForLimit(db, job.actor, limitLine((e as Error).message), Date.now() + wait * 1000);
       if (e instanceof ModelNotReady || e instanceof ComputerOff) db.prepare("UPDATE jobs SET error = ? WHERE id = ?").run(e instanceof ComputerOff ? e.message : MODEL_WAITS, job.id);
       return true;
     }
-    finishJob(db, job.id, false, e instanceof Error ? e.message : String(e), Math.max(now, Date.now()));
+    finishJob(db, job.id, false, e instanceof Error ? e.message : String(e), Math.max(now, Date.now()), "jobs", job.claim_id);
     const after = db.prepare("SELECT state FROM jobs WHERE id = ?").get(job.id) as { state: string } | undefined; // gone when the clip was removed meanwhile
     if (after?.state === "failed" && !EXTRA.has(job.kind)) db.prepare("UPDATE asset_versions SET state = 'failed' WHERE id = ?").run(job.version_id);
     if (job.kind === "look" && after?.state !== "queued") askedWatch.delete(job.version_id ?? ""); // tried again: the ask waits for that try
@@ -839,7 +840,7 @@ export async function describeFromStills(db: ReturnType<typeof libraryDb>, libra
 export function aiWaits(db: ReturnType<typeof libraryDb>, job: JobRow, e: unknown): boolean {
   const wait = waitFor(e);
   if (!wait) return false;
-  defer(db, job.id, wait);
+  defer(db, job.id, wait, undefined, "jobs", job.claim_id);
   if (isLimit(e)) holdForLimit(db, job.actor, limitLine((e as Error).message), Date.now() + wait * 1000);
   libraryChanged(job.library_id);
   return true;

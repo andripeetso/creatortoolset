@@ -789,4 +789,8 @@ export const MIGRATIONS: string[] = [
   UPDATE libraries SET settings = json_remove(settings, '$.lookBudget') WHERE json_type(settings, '$.lookBudget') IS NOT NULL;`,
   // a piece's kind from the Workshop project it is linked to ('carousel'); NULL: Finals tells it by its files
   `ALTER TABLE pieces ADD COLUMN kind TEXT;`,
+  // the queue's lookups (jobs.ts claimJob and requeueExpired, worker.ts nextJob) read by state and when a job may run or
+  // its lease ends; without these every tick (each lane, every 2 s) scanned the whole jobs table
+  `CREATE INDEX IF NOT EXISTS jobs_state_run ON jobs(state, run_after);
+  CREATE INDEX IF NOT EXISTS jobs_state_lease ON jobs(state, lease_until);`,
 ];

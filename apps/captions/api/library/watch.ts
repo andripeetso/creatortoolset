@@ -960,6 +960,17 @@ async function scanFolders(libraryId: string, now: number, folders: WatchFolder[
       tell(libraryId);
     }
   }
+  // a file moved, removed or in a folder this pass did not read is not waiting any more: its settle timer and failed mark go
+  const prefix = `${libraryId}\0`;
+  for (const key of [...pending.keys(), ...stuck]) {
+    if (key.startsWith(prefix) && !pass.live.has(key.slice(prefix.length))) {
+      pending.delete(key);
+      stuck.delete(key);
+    }
+  }
+  // a folder taken off the list keeps its walk's count otherwise (stillToCome reads only the listed folders)
+  const listed = watchedFolders.get(libraryId) ?? new Set<string>();
+  for (const key of [...walked.keys()]) if (key.startsWith(prefix) && !listed.has(key.slice(prefix.length))) walked.delete(key);
   // no list left in the library: what the watch hid while a folder was unread is shown again (nothing would show it else)
   const unhid = copies ? 0 : Number(db().prepare("UPDATE assets SET left_hidden_at = NULL WHERE library_id = ? AND left_hidden_at IS NOT NULL AND left_hidden_on IS NULL").run(libraryId).changes);
   if ((copies && (await leaveWatched(libraryId, media, host, pass, copies, now))) || took || unhid) libraryChanged(libraryId);

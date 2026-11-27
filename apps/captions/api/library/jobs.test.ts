@@ -22,11 +22,11 @@ describe("a stopped job", () => {
   it("stays stopped when its step's late finish or failure arrives: neither marks it done nor queues it again", () => {
     enqueueJob(db, "lib_1", "ver_stop", "stoptest", "u1");
     const id = (db.prepare("SELECT id FROM jobs WHERE kind = 'stoptest'").get() as { id: number }).id;
-    claimJob(db, 300, 1000, "jobs", undefined, id);
+    const claim = claimJob(db, 300, 1000, "jobs", undefined, id)!.claim_id;
     db.prepare("UPDATE jobs SET state = 'failed', lease_until = NULL, error = 'Stopped' WHERE id = ?").run(id); // what stopEdit does
-    finishJob(db, id, true, undefined, 2000);
+    finishJob(db, id, true, undefined, 2000, "jobs", claim);
     expect(state("stoptest").state).toBe("failed");
-    finishJob(db, id, false, "late", 2000);
+    finishJob(db, id, false, "late", 2000, "jobs", claim);
     expect(state("stoptest")).toMatchObject({ state: "failed", error: "Stopped" });
   });
 });
@@ -37,7 +37,7 @@ describe("job queue", () => {
     enqueueJob(db, "lib_1", "ver_a", "probe", "u1");
     expect((db.prepare("SELECT COUNT(*) AS n FROM jobs WHERE kind = 'probe'").get() as { n: number }).n).toBe(1);
     const job = claimJob(db, 300, 1000)!;
-    finishJob(db, job.id, true, undefined, 1000);
+    finishJob(db, job.id, true, undefined, 1000, "jobs", job.claim_id);
     enqueueJob(db, "lib_1", "ver_a", "probe", "u1");
     expect(state("probe").state).toBe("done");
   });
@@ -56,15 +56,15 @@ describe("job queue", () => {
     enqueueJob(db, "lib_1", "ver_c", "proxy", "u1");
     let t = 10_000;
     const job1 = claimJob(db, 300, t)!;
-    finishJob(db, job1.id, false, "boom", t);
+    finishJob(db, job1.id, false, "boom", t, "jobs", job1.claim_id);
     expect(state("proxy").state).toBe("queued");
     expect(claimJob(db, 300, t + 59_999)).toBeNull(); // backoff: 60 s after the first failure
     t += 60_000;
     const job2 = claimJob(db, 300, t)!;
-    finishJob(db, job2.id, false, "boom", t);
+    finishJob(db, job2.id, false, "boom", t, "jobs", job2.claim_id);
     t += 120_000;
     const job3 = claimJob(db, 300, t)!;
-    finishJob(db, job3.id, false, "boom", t);
+    finishJob(db, job3.id, false, "boom", t, "jobs", job3.claim_id);
     expect(state("proxy")).toEqual({ state: "failed", attempts: 3, error: "boom" });
     expect(claimJob(db, 300, t + 10 * 60_000)).toBeNull();
   });
@@ -87,7 +87,7 @@ describe("long jobs and the editor's table", () => {
   it("a heartbeat keeps a running job out of requeueExpired", () => {
     enqueueJob(db, "lib_1", "ver_d", "render", "u1");
     const job = claimJob(db, 300, 1000)!;
-    extendLease(db, job.id, 300, 1000 + 250_000); // lease now runs to 551 s
+    extendLease(db, job.id, 300, 1000 + 250_000, "jobs", job.claim_id); // lease now runs to 551 s
     expect(requeueExpired(db, 1000 + 400_000)).toBe(0);
     expect(state("render").state).toBe("running");
   });
@@ -105,7 +105,9 @@ describe("long jobs and the editor's table", () => {
     expect(state("own")).toMatchObject({ state: "queued", attempts: 1 });
     // claimed again, it is no one's until its claimer says (work/library-package.ts)
     db.prepare("UPDATE jobs SET state = 'queued' WHERE id = ?").run(held.id);
-    expect(claimJob(db, 300, 10 ** 13, "jobs", ["held"])).toMatchObject({ held_by: null, claim_id: null });
+    const again = claimJob(db, 300, 10 ** 13, "jobs", ["held"])!;
+    expect(again).toMatchObject({ held_by: null });
+    expect(again.claim_id).not.toBe("c1"); // a new claim: the old holder's claim matches nothing
     db.prepare("DELETE FROM jobs WHERE kind IN ('held', 'own')").run(); // the tests after count this table's jobs
   });
 
@@ -113,7 +115,7 @@ describe("long jobs and the editor's table", () => {
     enqueueJob(db, "lib_1", "ver_e", "analyze", "u1");
     const job = claimJob(db, 300, 1000)!;
     expect(job.attempts).toBe(1);
-    defer(db, job.id, 30, 1000);
+    defer(db, job.id, 30, 1000, "jobs", job.claim_id);
     expect(state("analyze")).toMatchObject({ state: "queued", attempts: 0 });
     expect(claimJob(db, 300, 1000 + 29_999)).toBeNull();
     expect(claimJob(db, 300, 1000 + 30_000)!.attempts).toBe(1);
@@ -123,9 +125,9 @@ describe("long jobs and the editor's table", () => {
     enqueueJob(db, "lib_1", "ver_g", "stopped", "u1");
     const job = claimJob(db, 300, 2_000_000, "jobs", ["stopped"])!;
     db.prepare("UPDATE jobs SET state = 'failed', error = 'Stopped' WHERE id = ?").run(job.id);
-    finishJob(db, job.id, false, "boom", 2_000_000);
-    parkJob(db, job.id, "no key");
-    defer(db, job.id, 0, 2_000_000);
+    finishJob(db, job.id, false, "boom", 2_000_000, "jobs", job.claim_id);
+    parkJob(db, job.id, "no key", "jobs", job.claim_id);
+    defer(db, job.id, 0, 2_000_000, "jobs", job.claim_id);
     expect(db.prepare("SELECT state, error FROM jobs WHERE id = ?").get(job.id)).toEqual({ state: "failed", error: "Stopped" });
     // removed while its step was out: nothing to record, and nothing thrown
     db.prepare("DELETE FROM jobs WHERE id = ?").run(job.id);
@@ -145,12 +147,45 @@ describe("a job parked by a key's spent budget", () => {
     for (const [ver, why] of [["ver_budget", "Deepgram key reached its monthly budget of $10: raise it in Settings → API keys"], ["ver_nokey", "Add your Deepgram key in Settings → API keys"]]) {
       enqueueJob(db, "lib_b", ver, "budgettest", "u1");
       const id = (db.prepare("SELECT id FROM jobs WHERE version_id = ?").get(ver) as { id: number }).id;
-      claimJob(db, 300, 1000, "jobs", undefined, id);
-      parkJob(db, id, why);
+      const c = claimJob(db, 300, 1000, "jobs", undefined, id)!;
+      parkJob(db, id, why, "jobs", c.claim_id);
     }
     expect(wakeBudgetStops(db)).toBe(1);
     const of = (ver: string) => (db.prepare("SELECT state, error FROM jobs WHERE version_id = ?").get(ver) as { state: string; error: string | null });
     expect(of("ver_budget")).toEqual({ state: "queued", error: null });
     expect(of("ver_nokey").state).toBe("needs_key");
+  });
+});
+
+describe("a claim", () => {
+  it("an old claim's finish, beat, defer or park changes nothing once its job is claimed again", () => {
+    enqueueJob(db, "lib_c", "ver_claim", "claimtest", "u1");
+    const id = (db.prepare("SELECT id FROM jobs WHERE kind = 'claimtest'").get() as { id: number }).id;
+    const first = claimJob(db, 300, 1000, "jobs", ["claimtest"])!;
+    requeueExpired(db, 1000 + 301_000); // the Mac slept past its lease
+    expect(state("claimtest").state).toBe("queued");
+    const second = claimJob(db, 300, 400_000, "jobs", ["claimtest"])!;
+    expect(second.claim_id).not.toBe(first.claim_id);
+    finishJob(db, id, true, undefined, 401_000, "jobs", first.claim_id); // the first run's late finish
+    expect(state("claimtest")).toMatchObject({ state: "running", attempts: 2 });
+    const lease = (db.prepare("SELECT lease_until FROM jobs WHERE id = ?").get(id) as { lease_until: number }).lease_until;
+    extendLease(db, id, 1, 402_000, "jobs", first.claim_id);
+    defer(db, id, 0, 402_000, "jobs", first.claim_id);
+    parkJob(db, id, "late", "jobs", first.claim_id);
+    finishJob(db, id, false, "late", 402_000, "jobs", first.claim_id);
+    expect(state("claimtest")).toMatchObject({ state: "running", attempts: 2, error: null });
+    expect((db.prepare("SELECT lease_until FROM jobs WHERE id = ?").get(id) as { lease_until: number }).lease_until).toBe(lease);
+    finishJob(db, id, true, undefined, 403_000, "jobs", second.claim_id);
+    expect(state("claimtest").state).toBe("done");
+  });
+});
+
+describe("the queue's lookups", () => {
+  it("claim, expiry and the lane's pick search the jobs index instead of scanning every row", () => {
+    const plan = (sql: string) => (db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all() as { detail: string }[]).map((r) => r.detail).join(" | ");
+    const search = /SEARCH (jobs|j) USING (COVERING )?INDEX/;
+    expect(plan("SELECT id FROM jobs WHERE state = 'queued' AND run_after <= 1 ORDER BY id LIMIT 1")).toMatch(search);
+    expect(plan("UPDATE jobs SET state = 'queued' WHERE state = 'running' AND lease_until < 1")).toMatch(search);
+    expect(plan("SELECT id FROM jobs j WHERE state = 'queued' AND run_after <= 1 AND kind IN ('a') ORDER BY id LIMIT 1")).toMatch(search);
   });
 });

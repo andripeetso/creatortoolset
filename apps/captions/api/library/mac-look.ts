@@ -10,6 +10,7 @@ import { wakeEditorPolls } from "../lib/mac-claude";
 import type { DeviceJobSlot } from "../lib/plugin";
 import { parseStorageFile, storageFilePath, withMounts } from "../lib/storage";
 import { libraryChanged } from "./access";
+import { randomUUID } from "node:crypto";
 import { libraryDb, libraryLookLevel } from "./db";
 import { defer, extendLease, finishJob, firstClips } from "./jobs";
 import { SHEET_STRETCHES } from "./look";
@@ -53,7 +54,8 @@ export const TOO_BIG = "This video is too long to describe shot by shot: its she
 
 type Sheet = LookSheet & { ph: string[] };
 /** The looks Macs hold now, by job id: the Mac, the version, its length, and the sheets sent so far and their bytes. */
-const held = new Map<number, { device: string; versionId: string; libraryId: string; duration: number; level: LookLevel; sheets: Sheet[]; bytes: number; watch: boolean; copy?: string }>();
+/** `claim`: the claim the Mac took the look under (jobs.ts), so its late answers change nothing once the look is taken again. */
+const held = new Map<number, { device: string; versionId: string; libraryId: string; duration: number; level: LookLevel; sheets: Sheet[]; bytes: number; watch: boolean; copy?: string; claim: string }>();
 /**
  * The sheets a Mac finished sending, by version, until the look lane takes them for its AI call. Only in memory: a
  * restart loses them and the look waits for the Mac again (lookOnMac), which sends the sheets it kept, its video unread.
@@ -239,7 +241,8 @@ export const macLookJob: DeviceJobSlot = {
     const db = libraryDb();
     const now = Date.now();
     // the lane's claim that parked it counted this try
-    db.prepare("UPDATE jobs SET state = 'running', lease_until = ?, started_at = ?, error = NULL WHERE id = ? AND state = 'needs_key'").run(now + LEASE_S * 1000, now, r.id);
+    const claim = randomUUID();
+    db.prepare("UPDATE jobs SET state = 'running', lease_until = ?, started_at = ?, error = NULL, claim_id = ? WHERE id = ? AND state = 'needs_key'").run(now + LEASE_S * 1000, now, claim, r.id);
     const duration = Number((JSON.parse(r.probe ?? "null") as { duration?: number } | null)?.duration) || 0;
     // stretches found at another level than the library's are found again: the Mac reads the picture (none sent)
     const level = libraryLookLevel(r.library_id);
@@ -248,7 +251,7 @@ export const macLookJob: DeviceJobSlot = {
     // watched once and deleted (one a restart leaves: dropLeftCopies)
     const watch = wantsWatch(db, r.version_id, r.actor);
     lastTaken.set(d.id, { id: r.id, at: Date.now() });
-    held.set(r.id, { device: d.id, versionId: r.version_id, libraryId: r.library_id, duration, level, sheets: [], bytes: 0, watch });
+    held.set(r.id, { device: d.id, versionId: r.version_id, libraryId: r.library_id, duration, level, sheets: [], bytes: 0, watch, claim });
     libraryChanged(r.library_id);
     const stretches = (db.prepare("SELECT a, b FROM stretches WHERE version_id = ? AND source = 'ai' ORDER BY seg").all(r.version_id) as { a: number; b: number }[]).map((s) => [s.a, s.b]);
     return {
@@ -271,7 +274,7 @@ export const macLookJob: DeviceJobSlot = {
     const h = holding(device, id);
     if (!h) return { error: "Not found", status: 404 };
     const db = libraryDb();
-    extendLease(db, id, LEASE_S);
+    extendLease(db, id, LEASE_S, undefined, "jobs", h.claim);
     const b = (body ?? {}) as Record<string, unknown>;
     if (b.beat === true) return { reply: {} };
     if (b.signal !== undefined) {
@@ -289,7 +292,7 @@ export const macLookJob: DeviceJobSlot = {
         // for good: the file would send the same sheets again; Retry or Describe again on the clip asks once more
         dropCopy(h.copy);
         held.delete(id);
-        db.prepare("UPDATE jobs SET state = 'failed', lease_until = NULL, error = ? WHERE id = ? AND state = 'running'").run(TOO_BIG, id);
+        db.prepare("UPDATE jobs SET state = 'failed', lease_until = NULL, error = ? WHERE id = ? AND state = 'running' AND claim_id IS ?").run(TOO_BIG, id, h.claim);
         libraryChanged(h.libraryId);
         void wakeEditorPolls();
         return { error: TOO_BIG, status: 413 };
@@ -311,7 +314,7 @@ export const macLookJob: DeviceJobSlot = {
     }
     held.delete(id);
     // back to the look lane, the try not counted again: it asks the AI from the sheets (worker.ts)
-    defer(db, id, 0);
+    defer(db, id, 0, undefined, "jobs", h.claim);
     libraryChanged(h.libraryId);
     void wakeEditorPolls(); // the Mac's long poll hears of its next look at once
     return { reply: {} };
@@ -322,7 +325,7 @@ export const macLookJob: DeviceJobSlot = {
     if (!h) return { error: "Not found", status: 404 };
     if (!h.watch) return { error: "Send the sheets as JSON.", status: 400 };
     if ((await stat(file)).size > WATCH_COPY_MAX) return { error: "The copy for the timeline is too big.", status: 413 };
-    extendLease(libraryDb(), id, LEASE_S);
+    extendLease(libraryDb(), id, LEASE_S, undefined, "jobs", h.claim);
     const dir = copiesDir();
     const dest = path.join(dir, `watch-${h.versionId}-${id}.mp4`);
     await mkdir(dir, { recursive: true });
@@ -336,7 +339,7 @@ export const macLookJob: DeviceJobSlot = {
     if (!h) return false;
     dropCopy(h.copy);
     held.delete(id);
-    finishJob(libraryDb(), id, false, why.slice(0, 500));
+    finishJob(libraryDb(), id, false, why.slice(0, 500), undefined, "jobs", h.claim);
     libraryChanged(h.libraryId);
     void wakeEditorPolls();
     return true;

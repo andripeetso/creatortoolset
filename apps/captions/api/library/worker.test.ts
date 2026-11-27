@@ -23,7 +23,7 @@ const next = (name: string, now = Date.now()) => {
   const id = nextJob(d, now, lane(name));
   if (id === null) return null;
   const job = claimJob(d, 300, now, "jobs", lane(name), id)!;
-  finishJob(d, job.id, true);
+  finishJob(d, job.id, true, undefined, undefined, "jobs", job.claim_id);
   return `${job.version_id} ${job.kind}`;
 };
 
@@ -462,4 +462,22 @@ it("works out where a waiting job goes once per PLACE_MS, not on every tick of e
     Object.assign(leaveToComputers, before);
     db.exec("DELETE FROM jobs WHERE version_id = 'ver_place'");
   }
+});
+
+describe("the lanes' pick", () => {
+  it("reads the jobs index for its queue and its held check, never a scan of every job", () => {
+    const orig = d.prepare.bind(d);
+    const plans: string[] = [];
+    (d as unknown as { prepare: unknown }).prepare = (sql: string) => {
+      if (/FROM jobs j/.test(sql)) plans.push((orig(`EXPLAIN QUERY PLAN ${sql}`).all() as { detail: string }[]).map((r) => r.detail).join(" | "));
+      return orig(sql);
+    };
+    try {
+      for (const l of LANES) nextJob(d, Date.now(), l.kinds);
+    } finally {
+      delete (d as unknown as { prepare?: unknown }).prepare;
+    }
+    expect(plans.length).toBeGreaterThan(0);
+    for (const p of plans) expect(p).not.toMatch(/SCAN j(?! USING)/);
+  });
 });
