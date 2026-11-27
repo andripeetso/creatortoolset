@@ -361,6 +361,7 @@ export function PieceEditor({
       );
       if (next) {
         onPiece(next);
+        onReload(); // the new files' cards
         setPickId(next.items[next.items.length - 1]?.id ?? null);
       }
     } catch (e) {
@@ -381,6 +382,7 @@ export function PieceEditor({
         setUpload({ name: file.name, pct: file.size ? Math.min(100, Math.round((sent / file.size) * 100)) : 0 }),
       );
       onPiece(await patchPieceItem(libraryId, piece.id, item.id, { versionId }));
+      onReload(); // the new file's card (its kind, thumbnail, name): without it the piece reads as missing a version
       setPickId(item.id);
       const old = item.versionId;
       if (old) undoable("file replaced", () => patchPieceItem(libraryId, piece.id, item.id, { versionId: old }).then(onPiece, (e: unknown) => setError(message(e))));
