@@ -12,6 +12,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { APP_WINDOW } from "./app-window.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const app = path.resolve(here, "../..");
@@ -156,7 +157,7 @@ try {
   // The setup as the Mac app shows it (its folder rows, picked in the app's folder window), in both themes before any Done:
   // a page that says it is in the Mac app, walked to the last step and left there.
   for (const theme of ["light", "dark"]) {
-    const ctx = await browser.newContext({ colorScheme: theme, viewport: { width: 1280, height: 860 } });
+    const ctx = await browser.newContext({ colorScheme: theme, viewport: { width: 1280, height: 860 }, userAgent: APP_WINDOW });
     await login(ctx, OWNER);
     const asMac = await ctx.newPage();
     await asMac.addInitScript(SKIP_APP_SETUP);
@@ -197,7 +198,7 @@ try {
   }
   for (const theme of ["light", "dark"]) {
     // Owner: the setup dialog opens itself on the fresh library; then the owner page and the empty Library.
-    const owner = await browser.newContext({ colorScheme: theme, viewport: { width: 1280, height: 860 } });
+    const owner = await browser.newContext({ colorScheme: theme, viewport: { width: 1280, height: 860 }, userAgent: APP_WINDOW });
     await login(owner, OWNER);
     const op = await owner.newPage();
     await op.addInitScript(SKIP_APP_SETUP);
@@ -290,7 +291,7 @@ try {
     await owner.close();
 
     // Member: its own page (no setup, no owner sections).
-    const member = await browser.newContext({ colorScheme: theme, viewport: { width: 1280, height: 860 } });
+    const member = await browser.newContext({ colorScheme: theme, viewport: { width: 1280, height: 860 }, userAgent: APP_WINDOW });
     await login(member, MEMBER);
     await switchMember(member, seeded.shared);
     const mp = await member.newPage();

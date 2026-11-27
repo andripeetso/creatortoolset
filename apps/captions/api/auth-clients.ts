@@ -40,7 +40,7 @@ import {
   type SessionState,
   type TokenError,
 } from "./lib/clients";
-import { LOCAL_USER, findUser, type SessionUser } from "./users";
+import { LOCAL_USER, findUser, viewOnlyIn, type SessionUser } from "./users";
 import { accountTicketHost, accountTicketUser } from "./sign-in";
 
 /**
@@ -80,7 +80,7 @@ export function callerOf(c: Context): Caller {
     const signedIn = cookieSession(c.req.header("cookie"));
     if (!signedIn) return { kind: "none" };
     touchSession(signedIn.row);
-    return { kind: "cookie", ...signedIn };
+    return { kind: "cookie", ...signedIn, user: viewOnlyIn(signedIn.user, c.req.header("user-agent")) };
   }
   const r = resolveToken(t.token);
   if (!r.ok) return { kind: "error", code: r.code };

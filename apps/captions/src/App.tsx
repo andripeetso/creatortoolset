@@ -297,6 +297,8 @@ export default function App() {
   // the setup window on screen: no dock, no popup, no bubble behind it. Not "setup unfinished": an account that never
   // pressed Done but has projects gets no setup window, and lost its assistant with the old check
   const setupUp = useSetupShown((s) => s.shown);
+  // a plain browser is for viewing: no setup, no assistant and no chats there (lib/auth.ts Me.viewOnly)
+  const viewing = useMe()?.viewOnly === true;
   // Home's welcome animation: the dock and the popup wait for it, and leaving Home (or opening Settings over it) ends it
   const introOn = useIntro((s) => s.on);
   useEffect(() => {
@@ -435,12 +437,12 @@ export default function App() {
       {/* phones have their own export screens; the tray's memory of dismissed
           cards is per browser, so a new one (the iPhone app) got every old export */}
       {!onMobile && !publicPage && !isPhoneHub() && <ExportTray />}
-      {!publicPage && !inSettings && !inCommunity && <SetupDialog />}
-      {!publicPage && !inSettings && !inCommunity && <FirstOpen />}
+      {!publicPage && !inSettings && !inCommunity && !viewing && <SetupDialog />}
+      {!publicPage && !inSettings && !inCommunity && !viewing && <FirstOpen />}
       {/* the assistant is there in every way of working (owner, 2026-11-10: "it shouldn't be gone"); talk only says
           whether the person's own AI also gets Creator Toolset */}
-      {!onMobile && !publicPage && !setupUp && !introOn && <AssistantDock />}
-      {!onMobile && !publicPage && !setupUp && !introOn && <AskAboutSelection />}
+      {!onMobile && !publicPage && !setupUp && !introOn && !viewing && <AssistantDock />}
+      {!onMobile && !publicPage && !setupUp && !introOn && !viewing && <AskAboutSelection />}
       {!onMobile && !publicPage && <CornerNav />}
       {inSettings && <SettingsModal onClose={closeSettings} />}
       {inCommunity && <CommunityModal onClose={closeSettings} />}

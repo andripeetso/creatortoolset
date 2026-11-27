@@ -113,15 +113,28 @@ export interface SessionUser {
   off: (Tool | PluginGateId)[];
   /** apps it may open but not change (UserRecord.read) */
   read?: Tool[];
+  /** a sign-in in a plain browser (viewOnlyIn): it reads and changes nothing, an admin's too */
+  viewOnly?: true;
 }
+
+/**
+ * A plain browser, by what it says of itself: each one names Safari or Firefox (Chrome and Edge say "Safari/" too),
+ * and the system web view the Mac app's window and the iPhone app's pages are drawn in names neither.
+ * shortcut: told by the User-Agent, upgrade to a mark the apps send once a release of each carries one
+ */
+export const plainBrowser = (userAgent: string | undefined): boolean => /(?:Safari|Firefox)\//.test(userAgent ?? "");
+
+/** The browser is for viewing (AGENTS.md): on a server that asks for a sign-in, an account in a plain browser is view-only. */
+export const viewOnlyIn = <U extends SessionUser | null>(user: U, userAgent: string | undefined): U =>
+  user && env.appSecret && plainBrowser(userAgent) ? { ...user, viewOnly: true as const } : user;
 
 /** An app or a plug-in gate is on unless the account's `off` list has it; admins are never refused. */
 export const mayUse = (user: SessionUser, tool: Tool | PluginGateId): boolean =>
   user.role === "admin" || !user.off.includes(tool);
 
 /** The app is on and not set to Read for this account: it may change things there. Admins always may. */
-export const mayChange = (user: Pick<SessionUser, "role" | "off" | "read">, tool: Tool): boolean =>
-  user.role === "admin" || (!user.off.includes(tool) && !user.read?.includes(tool));
+export const mayChange = (user: Pick<SessionUser, "role" | "off" | "read" | "viewOnly">, tool: Tool): boolean =>
+  !user.viewOnly && (user.role === "admin" || (!user.off.includes(tool) && !user.read?.includes(tool)));
 
 /** A thing an account owns (a project, clip, document, export, post): its owner sees it, and so does an admin. */
 export const canSee = (thing: { owner?: string }, user: Pick<SessionUser, "username" | "role">): boolean =>

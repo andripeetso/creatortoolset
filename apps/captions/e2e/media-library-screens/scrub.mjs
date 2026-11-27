@@ -9,6 +9,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { APP_WINDOW } from "./app-window.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const app = path.resolve(here, "../..");
@@ -38,7 +39,7 @@ try {
   const browser = await chromium.launch();
   const newStrip = readFileSync(path.join(data, "new-strip.jpg")).toString("base64");
   const pass = async (theme, shots) => {
-    const ctx = await browser.newContext({ colorScheme: theme, viewport: { width: 1280, height: 860 } });
+    const ctx = await browser.newContext({ colorScheme: theme, viewport: { width: 1280, height: 860 }, userAgent: APP_WINDOW });
     const login = await ctx.request.post(BASE + "/api/auth/login", { data: OWNER, timeout: 180_000 });
     if (login.status() !== 200) throw new Error(`login failed: ${login.status()}`);
     const page = await ctx.newPage();
@@ -68,7 +69,7 @@ try {
   };
   for (const theme of ["light", "dark"]) await pass(theme, [["Scrub upright", "scrub-upright"], ["Scrub landscape", "scrub-landscape"], ["Old strip upright", "strip-old-before"]]);
   // the computer that has the old clip hands in its strip, as onMac.ts repairStrips does
-  const owner = await (await browser.newContext()).request;
+  const owner = await (await browser.newContext({ userAgent: APP_WINDOW })).request;
   await owner.post(BASE + "/api/auth/login", { data: OWNER });
   console.log(`PUT sprite: ${(await owner.put(BASE + "/api/library/lib_ready/versions/ver_old/sprite", { data: { sprite: newStrip } })).status()}`);
   for (const theme of ["light", "dark"]) await pass(theme, [["Old strip upright", "strip-old-after"]]);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canUse, returnTo, type Me } from "./auth";
+import { canChange, canUse, returnTo, type Me } from "./auth";
 
 const admin: Me = {
   username: "owner",
@@ -8,6 +8,14 @@ const admin: Me = {
   off: [],
   logins: 12,
 };
+
+describe("canChange in a plain browser", () => {
+  it("changes nothing there, an admin's account too, and still opens every tool", () => {
+    expect(canChange(admin, "editor")).toBe(true);
+    expect(canChange({ ...admin, viewOnly: true }, "editor")).toBe(false);
+    expect(canUse({ ...admin, viewOnly: true }, "editor")).toBe(true);
+  });
+});
 
 describe("canUse", () => {
   it("opens an app unless it is switched off; admins get every one", () => {

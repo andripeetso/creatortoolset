@@ -17,6 +17,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { APP_WINDOW } from "./app-window.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const app = path.resolve(here, "../..");
@@ -93,7 +94,7 @@ try {
   }
   const browser = await engine.launch(process.env.SCREENS_CHROMIUM ? { executablePath: process.env.SCREENS_CHROMIUM } : {});
   for (const theme of ["light", "dark"]) {
-    const ctx = await browser.newContext({ colorScheme: theme, viewport: { width: 1280, height: 860 } });
+    const ctx = await browser.newContext({ colorScheme: theme, viewport: { width: 1280, height: 860 }, userAgent: APP_WINDOW });
     const login = await ctx.request.post(BASE + "/api/auth/login", { data: OWNER, timeout: 180_000 });
     if (login.status() !== 200) throw new Error(`login failed: ${login.status()}`);
     const page = await ctx.newPage();

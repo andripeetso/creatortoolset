@@ -38,6 +38,7 @@ import {
   userForApiKey,
   verifyPassword,
   listUsers,
+  viewOnlyIn,
 } from "./users";
 import { INVITE_TOKEN_RE, type InviteInfo } from "../contracts/workspaces";
 import { acceptInvite, inviteByToken, isTeamMember, memberIn, workspaceOf } from "./lib/workspaces";
@@ -224,6 +225,7 @@ const toPublic = (u: SessionUser) => ({
   cloud: u.cloud || u.role === "admin",
   off: u.off,
   read: u.read ?? [],
+  ...(u.viewOnly ? { viewOnly: true as const } : {}),
 });
 
 const appMade = new Map<string, boolean>();
@@ -240,7 +242,7 @@ export function passwordIsAppMade(user: UserRecord): boolean {
 }
 
 /** Login count for real accounts — lets the client spot a first login. */
-const withLogins = (u: SessionUser) => ({
+const withLogins = (who: SessionUser, c: Context, u = viewOnlyIn(who, c.req.header("user-agent"))) => ({
   ...toPublic(u),
   ...(findUser(u.username) && passwordIsAppMade(findUser(u.username)!) ? { noPassword: true as const } : {}),
   logins: findUser(u.username)?.usage.logins ?? null,
@@ -262,7 +264,7 @@ authApp.get("/check", (c) => {
   return c.json({
     required: !!env.appSecret,
     authed: !!user,
-    user: user ? withLogins(user) : null,
+    user: user ? withLogins(user, c) : null,
     kind: serverKind(),
     viewedBy: viewed && session ? session.username : null,
     // a team that signs in with Google / Apple, and this account has neither linked yet: link one before anything else
@@ -319,7 +321,7 @@ authApp.post("/login", async (c) => {
   setLoginCookie(c, user);
   return c.json({
     ok: true,
-    user: withLogins(sessionOf(user)),
+    user: withLogins(sessionOf(user), c),
   });
 });
 
@@ -628,7 +630,7 @@ authApp.post("/app", async (c) => {
   const said = clientSaid(b?.client);
   // the Mac app's window signs in here too and says it is a computer: its word only gives up a phone's session, so it is taken
   setLoginCookie(c, user, !said.desktop, { ...said.words, ...(said.desktop ? { deviceType: "desktop" as const } : said.tablet ? { deviceType: "tablet" as const } : {}) });
-  return c.json({ ok: true, user: withLogins(sessionOf(user)) });
+  return c.json({ ok: true, user: withLogins(sessionOf(user), c) });
 });
 
 /**
@@ -711,7 +713,7 @@ authApp.post("/code", async (c) => {
   clearTries(user.username, from);
   bumpUsage(user.username, { logins: 1 });
   setLoginCookie(c, user);
-  return c.json({ ok: true, user: withLogins(sessionOf(user)), ...(made ? { recovery: made.recovery } : {}) });
+  return c.json({ ok: true, user: withLogins(sessionOf(user), c), ...(made ? { recovery: made.recovery } : {}) });
 });
 
 /** Settings → Account: whether the code is on, whether this server asks everyone, and whether this is this Mac's own window. */
@@ -788,7 +790,7 @@ authApp.patch("/account", async (c) => {
   if (!user) return c.json({ error: "Sign in with an account first" }, 401);
   const b = (await c.req.json().catch(() => ({}))) as { name?: unknown };
   if (typeof b.name === "string") setDisplayName(user, b.name);
-  return c.json({ ok: true, user: withLogins(sessionOf(user)) });
+  return c.json({ ok: true, user: withLogins(sessionOf(user), c) });
 });
 
 /**

@@ -19,6 +19,8 @@ export interface Me {
   off: (Tool | PluginGateId)[];
   /** Apps it opens but doesn't change (Settings → Team → Access: Read); the server refuses their writes. */
   read?: Tool[];
+  /** This page is in a plain browser, which is for viewing: nothing is made or changed here, and the server refuses it (api/users.ts viewOnlyIn). */
+  viewOnly?: true;
   /** a member of someone else's team: never deletes the owner's footage or finals (the server refuses it) */
   member?: true;
   logins?: number | null; // real accounts only — used to spot a first login
@@ -50,7 +52,7 @@ export function setOffHere(ids: string[]): void {
 }
 export const pluginOffHere = (id: string): boolean => offHere.includes(id);
 /** The app is on and not set to Read: this account may change things there, so its edit controls show. */
-export const canChange = (me: Me | null, tool: Tool): boolean => canUse(me, tool) && (me!.role === "admin" || !me!.read?.includes(tool));
+export const canChange = (me: Me | null, tool: Tool): boolean => canUse(me, tool) && !me!.viewOnly && (me!.role === "admin" || !me!.read?.includes(tool));
 
 /** A Home tile: a tool, or the Screen Recorder, which is open to whoever can use Review or Video Notes (where a recording goes). */
 export const canUseTile = (me: Me | null, tile: HomeTile): boolean =>

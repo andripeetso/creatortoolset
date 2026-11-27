@@ -1,6 +1,7 @@
 import { useRef } from "react";
 import { clickChatMode, holdChatMode, readyChatMode, useChatMode } from "@/lib/chat-mode";
 import { cn } from "@/lib/utils";
+import { useMe } from "@/lib/auth";
 
 /** A speech bubble: an outline while chat mode is off, filled in the project's colour while it's on. */
 export function ChatModeIcon({ on, className }: { on: boolean; className?: string }) {
@@ -21,6 +22,8 @@ export function ChatModeIcon({ on, className }: { on: boolean; className?: strin
 export function ChatModeButton({ className, ...rest }: { className?: string } & React.HTMLAttributes<HTMLButtonElement>) {
   const on = useChatMode((s) => s.on);
   const ref = useRef<HTMLButtonElement>(null);
+  // a plain browser is for viewing: no chats there
+  if (useMe()?.viewOnly) return null;
   return (
     <button
       {...rest}

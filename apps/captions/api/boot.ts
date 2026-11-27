@@ -462,7 +462,12 @@ app.use("/api/*", async (c, next) => {
   if (gate && !gate[1].some((t) => mayUse(user, t))) {
     return c.json({ error: "This app isn't switched on for your account", code: "TOOL_ACCESS" }, 403);
   }
-  const writeGate = c.req.method === "GET" || c.req.method === "HEAD" ? undefined : WRITE_GATES.find(([p]) => c.req.path === p || c.req.path.startsWith(p + "/"));
+  const write = c.req.method !== "GET" && c.req.method !== "HEAD";
+  const writeGate = !write ? undefined : WRITE_GATES.find(([p]) => c.req.path === p || c.req.path.startsWith(p + "/"));
+  // a plain browser is for viewing (users.ts viewOnlyIn): no tool takes a change from it, and the assistant no message
+  if (user.viewOnly && (writeGate || (write && (c.req.path === "/api/assistant" || c.req.path.startsWith("/api/assistant/"))))) {
+    return c.json({ error: "A browser is for viewing: changes are made in the Mac app", code: "READ_ONLY" }, 403);
+  }
   if (writeGate && !mayChange(user, writeGate[1])) {
     return c.json({ error: `${TOOL_NAMES[writeGate[1]]} is read-only for your account`, code: "READ_ONLY" }, 403);
   }
