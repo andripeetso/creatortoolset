@@ -490,6 +490,8 @@ export interface SessionFinals {
   folder?: string;
   /** the server reads that folder itself: a file put there comes in with nothing more to do */
   reads?: boolean;
+  /** the project is a carousel: its final is the slides (images) */
+  carousel?: boolean;
 }
 /** Whether this project has a final video in Finals yet, the library a dropped final goes to (null: no Media Library),
  *  and its folder on this computer (`device`: the Mac app's id on this server). */

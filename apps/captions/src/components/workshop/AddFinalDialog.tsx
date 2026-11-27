@@ -13,6 +13,7 @@ import { underFolder } from "@contracts/storage";
 
 type Ask = { id: string; title: string; libraryId: string; finals: SessionFinals };
 const VIDEO = /\.(mp4|mov|m4v|mxf|mkv|avi|webm)$/i;
+const IMAGE = /\.(jpe?g|png|heic|heif|webp)$/i;
 /** The finals folder on this Mac can be read and written from this page (the Mac app's copy and scan). */
 const onMac = (f: SessionFinals) => !!f.folder && macImports();
 
@@ -23,7 +24,7 @@ const onMac = (f: SessionFinals) => !!f.folder && macImports();
 async function finalsNow(id: string): Promise<SessionFinals> {
   const f = await getSessionFinals(id, thisMacBridge() ? await deviceHere() : undefined);
   if (f.linked || f.reads || !f.libraryId || !onMac(f)) return f;
-  const files = (await importScan(f.folder!).catch(() => [])).filter((x) => VIDEO.test(x.path));
+  const files = (await importScan(f.folder!).catch(() => [])).filter((x) => (f.carousel ? IMAGE : VIDEO).test(x.path));
   if (!files.length) return f;
   const prints = await importPrint(files.map((x) => x.path)).catch(() => ({}) as Record<string, string>);
   for (const x of files) {
@@ -84,7 +85,7 @@ export function AddFinalButton({ id, title, status }: { id: string; title: strin
         onClick={() => setOpen(true)}
         className="h-7 shrink-0 rounded-md border border-zinc-700 px-2 text-[11px] text-zinc-300 hover:bg-zinc-800 hover:text-zinc-50"
       >
-        Add final video
+        {ask.finals.carousel ? "Add final slides" : "Add final video"}
       </button>
       {open && <AddFinalDialog ask={ask} onClose={() => setOpen(false)} />}
     </>
@@ -121,15 +122,20 @@ export async function copyIn(file: File, folder: string, signal: AbortSignal, on
 }
 
 const isVideo = (f: File) => f.type.startsWith("video/") || VIDEO.test(f.name);
+const isImage = (f: File) => f.type.startsWith("image/") || IMAGE.test(f.name);
+const byName = new Intl.Collator(undefined, { numeric: true }).compare;
 
 /**
- * Several finals (versions A, B, C) one after another: one that fails doesn't stop the rest, a file that isn't a video
- * is left out, and Cancel stops the ones not started. The lines for what didn't go in; null once cancelled.
+ * Several finals (versions A, B, C) one after another: one that fails doesn't stop the rest, a file of the wrong kind
+ * is left out, and Cancel stops the ones not started. A carousel's slides are images, sent in name order (2.png before
+ * 10.png) so Finals keeps the slide order. The lines for what didn't go in; null once cancelled.
  */
-export async function sendEach(files: File[], one: (f: File, i: number, n: number) => Promise<void>, signal: AbortSignal): Promise<string[] | null> {
+export async function sendEach(files: File[], one: (f: File, i: number, n: number) => Promise<void>, signal: AbortSignal, carousel = false): Promise<string[] | null> {
   const line = (f: File, why: string) => (files.length > 1 ? `${f.name}: ${why}` : why);
-  const videos = files.filter(isVideo);
-  const failed = files.filter((f) => !isVideo(f)).map((f) => line(f, "Not a video"));
+  const fits = carousel ? isImage : isVideo;
+  const videos = files.filter(fits);
+  if (carousel) videos.sort((a, b) => byName(a.name, b.name));
+  const failed = files.filter((f) => !fits(f)).map((f) => line(f, carousel ? "Not an image" : "Not a video"));
   for (const [i, f] of videos.entries()) {
     if (signal.aborted) return null;
     try {
@@ -178,7 +184,7 @@ function AddFinalDialog({ ask, onClose }: { ask: Ask; onClose: () => void }) {
     const ctl = new AbortController();
     stop.current = ctl;
     setError("");
-    const failed = await sendEach(files, (f, i, n) => (setAt({ i, n }), one(f, ctl.signal)), ctl.signal);
+    const failed = await sendEach(files, (f, i, n) => (setAt({ i, n }), one(f, ctl.signal)), ctl.signal, carousel);
     if (!failed) return;
     setError(failed.join("\n"));
     setStage(failed.length ? "pick" : "done");
@@ -188,6 +194,7 @@ function AddFinalDialog({ ask, onClose }: { ask: Ask; onClose: () => void }) {
     onClose();
   };
 
+  const carousel = !!ask.finals.carousel;
   const pct = file?.size ? Math.min(100, Math.round((sent / file.size) * 100)) : 0;
   return (
     <Dialog open onOpenChange={(o) => !o && close()}>
@@ -206,9 +213,11 @@ function AddFinalDialog({ ask, onClose }: { ask: Ask; onClose: () => void }) {
           void send([...e.dataTransfer.files]);
         }}
       >
-        <DialogTitle>Add the final video</DialogTitle>
+        <DialogTitle>{carousel ? "Add the final slides" : "Add the final video"}</DialogTitle>
         <DialogDescription className="text-zinc-500">
-          {ask.title || "This project"} has no final video in Finals yet. The finished file goes there, linked to this project.
+          {carousel
+            ? `${ask.title || "This project"} has no final slides in Finals yet. The finished images go there in name order, linked to this project.`
+            : `${ask.title || "This project"} has no final video in Finals yet. The finished file goes there, linked to this project.`}
         </DialogDescription>
         {ask.finals.folder && <p className="break-all font-mono text-xs text-zinc-500">{ask.finals.folder}</p>}
         {stage === "pick" ? (
@@ -221,7 +230,7 @@ function AddFinalDialog({ ask, onClose }: { ask: Ask; onClose: () => void }) {
             )}
           >
             <UploadCloud className="h-6 w-6 text-zinc-500" />
-            <span className="font-medium text-zinc-200">Drop the final videos here</span>
+            <span className="font-medium text-zinc-200">{carousel ? "Drop all the slides here" : "Drop the final videos here"}</span>
             <span className="text-xs text-zinc-500">or click to pick</span>
           </button>
         ) : (
@@ -247,7 +256,7 @@ function AddFinalDialog({ ask, onClose }: { ask: Ask; onClose: () => void }) {
         <input
           ref={input}
           type="file"
-          accept="video/*,.mov,.mxf,.mkv"
+          accept={carousel ? "image/*,.heic" : "video/*,.mov,.mxf,.mkv"}
           multiple
           hidden
           onChange={(e) => {

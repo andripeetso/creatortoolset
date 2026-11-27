@@ -27,9 +27,9 @@ async function account(username: string) {
 const call = (user: string, method: string, url: string, body?: unknown) =>
   app.request(url, { method, headers: { cookie: cookies[user]!, "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
 
-const video = (lib: string, id: string, probe: { width: number; height: number } | null) =>
+const video = (lib: string, id: string, probe: { width: number; height: number } | null, kind = "video") =>
   libraryDb().exec(`
-    INSERT INTO assets (id, library_id, kind, title, created_by, created_at, current_version_id) VALUES ('${id}', '${lib}', 'video', '${id}.mp4', 'maker', 0, 'v_${id}');
+    INSERT INTO assets (id, library_id, kind, title, created_by, created_at, current_version_id) VALUES ('${id}', '${lib}', '${kind}', '${id}.mp4', 'maker', 0, 'v_${id}');
     INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, probe, state, created_by, created_at)
       VALUES ('v_${id}', '${id}', 1, 'k_${id}', 1, 's_${id}', ${probe ? `'${JSON.stringify(probe)}'` : "NULL"}, '${probe ? "ready" : "processing"}', 'maker', 0);
   `);
@@ -68,5 +68,19 @@ describe.skipIf(rootReplaced)("Workshop: the final video of a project", () => {
     expect(linked.status).toBe(200);
     expect(((await linked.json()) as { pieceId: string }).pieceId).toBeTruthy();
     expect(((await (await call("maker", "GET", url)).json()) as { linked: boolean }).linked).toBe(true);
+  });
+
+  it("a carousel project's final is its slides: the ask says so, and each image goes into the one piece", async () => {
+    const s = (await (await call("maker", "POST", "/api/workshop/sessions", { title: "Tiny Acrobatics carries" })).json()) as { id: string };
+    expect((await call("maker", "POST", `/api/workshop/sessions/${s.id}/docs`, { kind: "carousel", title: "Slides", text: "Slide one" })).status).toBe(201);
+    const url = `/api/workshop/sessions/${s.id}/finals`;
+    const ask = (await (await call("maker", "GET", url)).json()) as { linked: boolean; carousel: boolean; libraryId: string };
+    expect(ask).toMatchObject({ linked: false, carousel: true });
+    video(ask.libraryId, "ast_s1", { width: 1080, height: 1350 }, "image");
+    video(ask.libraryId, "ast_s2", { width: 1080, height: 1350 }, "image");
+    const a = (await (await call("maker", "POST", url, { assetId: "ast_s1" })).json()) as { pieceId: string };
+    const b = (await (await call("maker", "POST", url, { assetId: "ast_s2" })).json()) as { pieceId: string };
+    expect(b.pieceId).toBe(a.pieceId);
+    expect(libraryDb().prepare("SELECT COUNT(*) AS n FROM piece_items WHERE piece_id = ?").get(a.pieceId)).toEqual({ n: 2 });
   });
 });

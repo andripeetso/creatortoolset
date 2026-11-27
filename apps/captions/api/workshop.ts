@@ -3468,6 +3468,8 @@ export interface SessionFinals {
   folder?: string;
   /** the server reads that folder itself (it is on its own disk): a file put there comes in with nothing more to do */
   reads?: boolean;
+  /** the project's main piece is a carousel: its final is the slides (images), not a video */
+  carousel: boolean;
 }
 
 /**
@@ -3478,7 +3480,9 @@ export interface SessionFinals {
  * `device`: the computer asking, for the folder's place there.
  */
 export async function sessionFinals(meta: SessionMeta, device?: string): Promise<SessionFinals> {
-  const mainId = (await mainPiece(meta.id))?.id;
+  const main = await mainPiece(meta.id);
+  const mainId = main?.id;
+  const carousel = main?.kind === "carousel";
   const own = libraryDb().prepare("SELECT 1 FROM pieces WHERE workshop_session = ? AND trashed_at IS NULL LIMIT 1").get(meta.id);
   let linked = !!own || (mainId ? (await pluginFinalsVersions(meta.id, mainId, mainId)).length > 0 : false);
   const lib = await ensureLibrary(meta.owner, meta.projectId ?? "");
@@ -3488,14 +3492,14 @@ export async function sessionFinals(meta: SessionMeta, device?: string): Promise
   const libraryId = as === "owner" || as === "member" ? lib : null;
   // the upload goes straight into Finals, so the Media Library never lists it as footage
   const finalsId = libraryId ? finalsCollectionId(libraryId) : null;
-  const out: SessionFinals = { linked, libraryId, finalsId, upload: libraryId ? finalsUpload(libraryId) : "all" };
+  const out: SessionFinals = { linked, libraryId, finalsId, upload: libraryId ? finalsUpload(libraryId) : "all", carousel };
   const place = libraryId && finalsId ? await finalsPlace(meta) : null;
   if (!place) return out;
   const { root, dir } = place;
   const local = root.origin.host === THIS_COMPUTER || isThisMachine(root.origin.host);
   const sub = local && watchAllowed(meta.owner) ? await watchFinals(meta.owner, libraryId!, root.origin.path, dir, meta.id, finalsId!) : null;
   if (sub) {
-    linked ||= (await readdir(sub, { recursive: true }).catch(() => [] as string[])).some((f) => kindOf(f) === "video" && !f.split(path.sep).some((s) => s.startsWith(".")));
+    linked ||= (await readdir(sub, { recursive: true }).catch(() => [] as string[])).some((f) => kindOf(f) === (carousel ? "image" : "video") && !f.split(path.sep).some((s) => s.startsWith(".")));
     const taken = libraryDb()
       .prepare(
         `SELECT s.version_id AS v FROM watch_seen s WHERE s.library_id = ? AND substr(s.path, 1, ?) = ? AND s.version_id IS NOT NULL
