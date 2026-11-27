@@ -370,6 +370,8 @@ export function ConnectorsSection({ back = "/settings/connectors", compact, proj
       <AddAccountDialog
         platform={adding}
         signIn={!!adding && !!loginOf(adding) && !!view.logins[loginOf(adding)!] && !off.includes(loginOf(adding)!)}
+        needsKey={!view.apify.configured}
+        onKey={() => void reload()}
         busy={!!asking}
         onClose={() => setAdding(null)}
         onSignIn={(p) => void choose(p)}
@@ -483,9 +485,12 @@ function ChooseAccountDialog({ choose, onDone }: { choose: ConnectorsView["choos
 }
 
 /** Add one platform's account: with its sign-in where this server has one, or by handle (public posts only). */
-function AddAccountDialog({ platform, signIn, busy, onClose, onSignIn, onAdd }: {
+function AddAccountDialog({ platform, signIn, needsKey, busy, onClose, onSignIn, onAdd, onKey }: {
   platform: SocialPlatform | null;
   signIn: boolean;
+  /** No Apify key yet: its row sits above the handle, so setup can add it without leaving the dialog. */
+  needsKey: boolean;
+  onKey: () => void;
   busy: boolean;
   onClose: () => void;
   onSignIn: (p: SocialPlatform) => void;
@@ -570,6 +575,12 @@ function AddAccountDialog({ platform, signIn, busy, onClose, onSignIn, onAdd }: 
           </div>
           {error && <p role="alert" className="text-xs text-red-600 dark:text-red-400">{error}</p>}
         </form>
+        {/* outside the form: the key's own dialog submits through React's bubbling, which would also add the handle */}
+        {needsKey && (
+          <div className="-mt-2 rounded-md border">
+            <ApifyKeyRow onChanged={onKey} />
+          </div>
+        )}
       </SettingsDialogContent>
     </SettingsDialog>
   );
