@@ -1,7 +1,7 @@
 // Shot descriptions of a file kept on a Mac (mac-look.ts) on the device routes: only the Mac the file is on takes its
 // look, with its own token; the picture it sends gives the stretches; the sheets it sends are looked at once by the look
 // lane and never kept; a usage limit gives the look back to that Mac, which sends its kept sheets again.
-import { mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -23,7 +23,7 @@ delete process.env.ANTHROPIC_API_KEY;
 
 const app = (await import("../boot")).default;
 const { pairDevice } = await import("../lib/devices");
-const { libraryDb } = await import("./db");
+const { blobs, libraryDb } = await import("./db");
 const { enqueueJob } = await import("./jobs");
 const { tick } = await import("./worker");
 const { stretchesOf } = await import("./stretches");
@@ -200,7 +200,7 @@ describe("a look of a file kept on a Mac", () => {
     expect(completeVisionWithFallback).toHaveBeenCalledTimes(2); // the one the limit stopped, and the one that wrote the lines
   });
 
-  it("with a Gemini key the claim asks for a copy to watch; the copy goes to Gemini and is deleted, and a Mac that sends none is named", async () => {
+  it("with a Gemini key the claim asks for a copy to watch; the copy goes to Gemini and is deleted, a Mac that sends none is named, and a blurred copy here is watched in its place", async () => {
     const { saveMyKey } = await import("../my-keys");
     const { timelineOf, watching, watchTiming } = await import("./timeline");
     const longPost = watchTiming.post;
@@ -220,8 +220,17 @@ describe("a look of a file kept on a Mac", () => {
     );
     vi.mocked(completeVisionWithFallback).mockImplementation(answerAll as never);
     try {
-      for (const sends of [true, false]) {
-        const v = await seed(`ast-m-w${sends ? 1 : 2}`);
+      for (const [n, sends, blurred] of [[1, true, false], [2, false, false], [3, false, true]] as const) {
+        const v = await seed(`ast-m-w${n}`);
+        if (blurred) {
+          // Blur faces keeps the original on its Mac: its blurred render, held here, is what Gemini watches
+          const f = path.join(dir, "blurred.mp4");
+          writeFileSync(f, "blurred video");
+          await blobs.put(`libraries/lib_m/v/${v}-b/source`, f);
+          libraryDb()
+            .prepare("INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, state, created_by, created_at, blurred_of) VALUES (?, ?, 2, ?, 1, 'b', 'ready', 'local', 2, ?)")
+            .run(`${v}-b`, `ast-m-w${n}`, `libraries/lib_m/v/${v}-b/source`, `mac:ast-m-w${n}`);
+        }
         const got = (await claim())!;
         expect(got.options).toMatchObject({ watch: "1" });
         await post(road(got.id), { signal });
@@ -235,7 +244,8 @@ describe("a look of a file kept on a Mac", () => {
         await Promise.all([...watching.values()]); // the watch runs beside the look lane; its copy goes right after
         await new Promise((go) => setTimeout(go, 20));
         expect(job(v).state).toBe("done");
-        if (sends) {
+        if (blurred) expect(timelineOf(libraryDb(), v)).toEqual([{ a: 3, b: 6, what: "a jump" }]);
+        else if (sends) {
           expect(timelineOf(libraryDb(), v)).toEqual([{ a: 3, b: 6, what: "a jump" }]);
           expect(asked.some((a) => a.startsWith("DELETE"))).toBe(true);
           expect(files(dir).filter((f) => f.includes("watch-"))).toEqual([]);

@@ -86,12 +86,13 @@ const SPEC: Record<MadeKind, { job?: string; of: string; have: string; can?: str
   },
   // a look that ran and wrote no line counts as made: pressed again it would only spend again
   look: { job: "look", of: LOOKABLE, have: `(${LINES} OR EXISTS (SELECT 1 FROM jobs x WHERE x.version_id IN ${jobVersions("look")} AND x.kind = 'look' AND x.state = 'done'))` },
-  // on its way: its look running, or pressed for with no watch since (one that failed after the press is missing again)
+  // on its way: its look running, or pressed for with no watch since (one that failed after the press is missing again).
+  // A blurred copy's watch is its original's (blur-mirror.ts): a failure stays there, so both are read
   timeline: {
     job: "look",
     of: `${LOOKABLE} AND ${LINES}`,
     have: has("timelines", " AND x.error IS NULL"),
-    open: `(${open("look")} OR (${pressed("timeline")} AND NOT ${has("timelines", " AND x.at >= json_extract(l.settings, '$.timelineAsked')")}))`,
+    open: `(${open("look")} OR (${pressed("timeline")} AND NOT EXISTS (SELECT 1 FROM timelines x WHERE x.version_id IN ${jobVersions("look")} AND x.at >= json_extract(l.settings, '$.timelineAsked'))))`,
   },
   // sorted by itself (sound-kind.ts): a tag the person (or Gemini, hearing talk) turned down is never given again, so settled
   sound: {
