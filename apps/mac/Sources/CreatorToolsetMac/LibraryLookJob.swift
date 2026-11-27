@@ -167,7 +167,8 @@ struct LibraryLookJob {
     static func watchCopy(ffmpeg: URL, src: URL, fps: Double, out: URL, beat: () throws -> Void) throws {
         let p = Process()
         p.executableURL = ffmpeg
-        p.arguments = ["-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", src.path,
+        // the first sound track by name: left to ffmpeg, an iPhone video's spatial track (apac, no decoder) was picked and no copy was made
+        p.arguments = ["-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", src.path, "-map", "0:v:0", "-map", "0:a:0?",
                        "-vf", "fps=\(max(fps, 1)),scale=-2:'min(480,ih)'", "-c:v", "libx264", "-preset", "veryfast", "-crf", "30",
                        "-pix_fmt", "yuv420p", "-c:a", "aac", "-ac", "1", "-b:a", "48k", "-movflags", "+faststart", out.path]
         p.standardInput = FileHandle.nullDevice

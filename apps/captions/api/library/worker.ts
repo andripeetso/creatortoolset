@@ -490,14 +490,14 @@ export async function backfillThumb(): Promise<boolean> {
   const db = libraryDb();
   const v = db
     .prepare(
-      `SELECT v.id, a.library_id FROM assets a JOIN asset_versions v ON v.id = a.current_version_id JOIN libraries l ON l.id = a.library_id
+      `SELECT v.id, a.library_id, v.created_by FROM assets a JOIN asset_versions v ON v.id = a.current_version_id JOIN libraries l ON l.id = a.library_id
        WHERE a.kind IN ('video', 'image') AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND v.state = 'ready'
          AND l.storage_kind = 'local' AND v.source_key NOT LIKE 'mac:%'
          AND NOT EXISTS (SELECT 1 FROM derivatives d WHERE d.version_id = v.id AND d.kind = 'thumb')
          AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.version_id = v.id AND j.kind = 'thumb' AND j.state <> 'done')
        ORDER BY a.created_at DESC, a.id DESC LIMIT 1`,
     )
-    .get() as { id: string; library_id: string } | undefined;
+    .get() as { id: string; library_id: string; created_by: string | null } | undefined;
   if (!v) return false;
   const job: JobRow = { id: 0, library_id: v.library_id, version_id: v.id, kind: "thumb", state: "running", attempts: 1, run_after: 0, lease_until: null, actor: null, error: null };
   try {
@@ -505,10 +505,11 @@ export async function backfillThumb(): Promise<boolean> {
     // a run that made nothing (it returned early) is a failure too, else the lane picks this clip at every idle turn
     if (!db.prepare("SELECT 1 FROM derivatives WHERE version_id = ? AND kind = 'thumb'").get(v.id)) throw new Error("No card picture made");
   } catch (e) {
+    // named for whoever added the file: queued again with no name (a computer connecting, made.ts), no computer may take it
     db.prepare(
-      `INSERT INTO jobs (library_id, version_id, kind, state, attempts, error) VALUES (?, ?, 'thumb', 'failed', 1, ?)
+      `INSERT INTO jobs (library_id, version_id, kind, state, attempts, error, actor) VALUES (?, ?, 'thumb', 'failed', 1, ?, ?)
        ON CONFLICT (version_id, kind) DO UPDATE SET state = 'failed', error = excluded.error`,
-    ).run(v.library_id, v.id, e instanceof Error ? e.message : String(e));
+    ).run(v.library_id, v.id, e instanceof Error ? e.message : String(e), v.created_by);
   }
   return true;
 }

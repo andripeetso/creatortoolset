@@ -133,7 +133,8 @@ export async function runLook(c: Client, job: DeviceJob, roots?: string[]): Prom
  * job's file route. One that can't be made is skipped: the look still finishes.
  */
 async function sendWatchCopy(c: Client, base: string, src: string, fps: number, out: string, signal: AbortSignal): Promise<void> {
-  const args = ["-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", src, "-vf", `fps=${Math.max(fps, 1)},scale=-2:'min(480,ih)'`, "-c:v", "libx264", "-preset", "veryfast", "-crf", "30"];
+  // the first sound track by name: left to FFmpeg, an iPhone video's spatial track (apac, no decoder) was picked and no copy was made
+  const args = ["-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", src, "-map", "0:v:0", "-map", "0:a:0?", "-vf", `fps=${Math.max(fps, 1)},scale=-2:'min(480,ih)'`, "-c:v", "libx264", "-preset", "veryfast", "-crf", "30"];
   args.push("-pix_fmt", "yuv420p", "-c:a", "aac", "-ac", "1", "-b:a", "48k", "-movflags", "+faststart", out);
   const ok = await new Promise<boolean>((resolve) => {
     const p = spawn(ffmpegCommand(), args, { stdio: "ignore", signal });

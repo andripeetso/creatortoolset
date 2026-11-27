@@ -120,7 +120,21 @@ export function mirrorBlurred(db: DatabaseSync): number {
     for (const r of rows) short.set(r.copy, r.original);
   }
   for (const [copy, original] of short) mirrorTo(db, original, copy);
+  endPicturesOfOriginals(db);
   return short.size;
+}
+
+/**
+ * What shows the blur is made from the copy (above): a card picture, strip or proxy still queued on an original whose
+ * blurred copy plays in its place ends. Nothing may be cut of that original and no screen would show it, so the job
+ * waited for good: counted on the Activity list and as a step of every run its clip was in, and never taken.
+ */
+function endPicturesOfOriginals(db: DatabaseSync): void {
+  db.prepare(
+    `UPDATE jobs SET state = 'stopped', lease_until = NULL, error = NULL
+     WHERE state = 'queued' AND kind IN ('thumb', 'sprite', 'proxy')
+       AND EXISTS (SELECT 1 FROM asset_versions o JOIN assets a ON a.id = o.asset_id JOIN asset_versions b ON b.id = a.current_version_id WHERE o.id = jobs.version_id AND ${pairOn("b", "o")})`,
+  ).run();
 }
 
 // the clip's search row reads the description of its current version (query.ts indexAsset), and a shot's row the line

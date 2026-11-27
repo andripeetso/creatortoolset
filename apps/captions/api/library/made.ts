@@ -16,7 +16,7 @@ import { wantsProxy } from "./media/proxy";
 import type { ProbeSummary } from "./media/probe";
 import { wakePictures } from "./pictures";
 import { FIRST_LOOK, hasLines, LOOK_LABEL, LOOK_MIN_S, MAC_WAITS, queueLook, RELOOK_WAITS } from "./shots";
-import { libraryWatchModel } from "./timeline";
+import { libraryWatchModel, REFUSED } from "./timeline";
 import { transcribeRoute } from "./transcribe";
 import { mayLeave } from "./upload-gate";
 import { leaveToComputers } from "./worker";
@@ -93,9 +93,10 @@ const SPEC: Record<MadeKind, { job?: string; of: string; have: string; can?: str
   look: { job: "look", of: LOOKABLE, have: `(${LINES} OR EXISTS (SELECT 1 FROM jobs x WHERE x.version_id IN ${jobVersions("look")} AND x.kind = 'look' AND x.state = 'done'))` },
   // on its way: its look running, or pressed for with no watch since (one that failed after the press is missing again).
   // One whose look failed is failed, not on its way: the sweep takes only a look that is done (timeline.ts sweepWatch)
+  // a clip Gemini turned down is settled (timeline.ts REFUSED): skipped, never missing, or Make would only be turned down again
   timeline: {
     job: "look",
-    of: `${LOOKABLE} AND ${LINES}`,
+    of: `${LOOKABLE} AND ${LINES} AND NOT ${watched(` AND x.error LIKE '${REFUSED}%'`)}`,
     have: watched(" AND x.error IS NULL"),
     open: `(${open("look")} OR (${pressed("timeline")} AND NOT ${watched(" AND x.at >= json_extract(l.settings, '$.timelineAsked')")} AND NOT ${failedJob("look")}))`,
   },
@@ -197,7 +198,7 @@ const SKIP: Partial<Record<MadeKind, { of: string; why: string }>> = {
   transcribe: { of: "a.kind IN ('video', 'audio')", why: "no sound, or music" },
   look: { of: "a.kind = 'video'", why: `shorter than ${LOOK_MIN_S} s, or talking takes` },
   embed: { of: "a.kind IN ('video', 'audio', 'image')", why: "no transcript or description yet" },
-  timeline: { of: LOOKABLE, why: "no shot descriptions yet" },
+  timeline: { of: LOOKABLE, why: "no shot descriptions yet, or refused by Gemini" },
 };
 
 /** Of `kind`'s missing and queued files, the B-roll ones (videos nobody talks in: roll.ts). */
@@ -422,7 +423,7 @@ export function retryFailedPictures(now = Date.now()): number {
   const db = libraryDb();
   const rows = db
     .prepare(
-      `SELECT j.library_id, j.version_id, j.kind, j.actor FROM jobs j JOIN assets a ON a.current_version_id = j.version_id
+      `SELECT j.library_id, j.version_id, j.kind, IFNULL(j.actor, v.created_by) AS actor FROM jobs j JOIN assets a ON a.current_version_id = j.version_id
        JOIN asset_versions v ON v.id = j.version_id
        WHERE j.kind IN ('thumb', 'sprite') AND j.state = 'failed' AND v.created_at > ?
          AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL`,

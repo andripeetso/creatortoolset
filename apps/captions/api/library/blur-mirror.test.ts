@@ -63,6 +63,19 @@ describe("a blurred copy and its original", () => {
     ]);
   });
 
+  it("a card picture still queued on the original ends once its copy plays: nothing may be cut of it, and nobody would see it", () => {
+    // queued with no account (a backfill's failed row, tried again): no computer may take it, so it waited for good
+    d.prepare("INSERT INTO jobs (library_id, version_id, kind, state, actor) VALUES ('lib_b', 'v1', 'thumb', 'queued', NULL)").run();
+    d.prepare("INSERT INTO jobs (library_id, version_id, kind, state, actor) VALUES ('lib_b', 'v2', 'thumb', 'queued', 'local')").run();
+    d.prepare("INSERT INTO jobs (library_id, version_id, kind, state, actor) VALUES ('lib_b', 'v1', 'fingerprint', 'queued', 'local')").run();
+    mirrorBlurred(d);
+    expect(jobOf("v1", "thumb")?.state).toBe("stopped");
+    // the copy's own picture and the analysis that runs on the original are untouched
+    expect(jobOf("v2", "thumb")?.state).toBe("queued");
+    expect(jobOf("v1", "fingerprint")?.state).toBe("queued");
+    d.prepare("DELETE FROM jobs WHERE kind IN ('thumb', 'fingerprint')").run();
+  });
+
   it("the minute's pass brings what lands without a job (a timeline)", () => {
     d.prepare("INSERT INTO timelines (version_id, events, level, model, at) VALUES ('v1', '[]', 'standard', 'gemini', 1)").run();
     expect(mirrorBlurred(d)).toBe(1);

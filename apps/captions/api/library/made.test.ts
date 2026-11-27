@@ -124,6 +124,11 @@ describe("what's made", () => {
     d.prepare("UPDATE jobs SET state = 'failed' WHERE version_id = ?").run(recent);
     expect(retryFailedPictures(now)).toBe(1);
     expect(job(old, "sprite")?.state).toBe("failed");
+    // one that failed with nobody named (the server's own backfill) is queued for whoever added the file: with no name
+    // no computer may take it, and it waited for good
+    d.prepare("UPDATE jobs SET state = 'failed', actor = NULL WHERE version_id = ?").run(recent);
+    retryFailedPictures(now);
+    expect(d.prepare("SELECT state, actor FROM jobs WHERE version_id = ? AND kind = 'thumb'").get(recent)).toEqual({ state: "queued", actor: "local" });
     d.prepare("DELETE FROM jobs WHERE version_id IN (?, ?)").run(recent, old);
     d.prepare("DELETE FROM asset_versions WHERE id IN (?, ?)").run(recent, old);
     d.prepare("DELETE FROM assets WHERE id IN ('ast-pic-recent', 'ast-pic-old')").run();
@@ -234,6 +239,13 @@ describe("what's made", () => {
     expect(await row("timeline")).toMatchObject({ missing: 0, queued: before.queued + before.missing });
     d.prepare("INSERT INTO timelines (version_id, events, error, at) VALUES (?, '[]', 'failed', ?)").run(v, Date.now());
     expect((await row("timeline")).missing).toBe(1);
+    // one Gemini turned down is settled: skipped, never missing (Make would only be turned down again), and said so
+    d.prepare("UPDATE timelines SET error = 'Refused by Gemini: PROHIBITED_CONTENT' WHERE version_id = ?").run(v);
+    const refused = await row("timeline");
+    expect(refused.missing).toBe(0);
+    expect(refused.skipped).toMatchObject({ why: "no shot descriptions yet, or refused by Gemini" });
+    expect(refused.skipped!.n).toBeGreaterThanOrEqual(1);
+    d.prepare("UPDATE timelines SET error = 'failed' WHERE version_id = ?").run(v);
   });
 
   it("timelines of a blurred copy are read off its original: covered by a press from before it was blurred, made once the watch lands there, failed when its look failed", async () => {

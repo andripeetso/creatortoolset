@@ -265,7 +265,7 @@ export function wantsWatch(db: DatabaseSync, versionId: string, actor: string | 
   if (!r || !(asked || r.pressed || r.auto) || !canWatch(db, r.library_id, actor)) return false;
   const t = rowOf(db, versionId);
   if (!t) return true;
-  if (t.error) return asked || !!r.pressed || now - t.at >= RETRY_MS;
+  if (t.error) return asked || (!t.error.startsWith(REFUSED) && (!!r.pressed || now - t.at >= RETRY_MS));
   // a picture-only timeline is made again with its sound once the library watches on a Gemini key that has credit
   return (
     t.level !== libraryLookLevel(r.library_id) ||
@@ -293,7 +293,9 @@ export function storeTimeline(db: DatabaseSync, versionId: string, t: { events: 
   db.exec("BEGIN");
   try {
     if ("error" in t) {
-      // a failed watch keeps a timeline made before: only its error and when are written
+      // a failed watch keeps a timeline made before: only its error and when are written. Said in the log: What's made
+      // counts the clip missing and no screen says why
+      console.warn(`[library] timeline of ${versionId} failed: ${t.error.slice(0, 300)}`);
       db.prepare(
         "INSERT INTO timelines (version_id, error, at) VALUES (?, ?, ?) ON CONFLICT (version_id) DO UPDATE SET error = excluded.error, at = excluded.at",
       ).run(versionId, t.error.slice(0, 1000), Date.now());
@@ -559,17 +561,35 @@ const callPart = (key: string, model: GeminiModel, f: { uri: string; mimeType: s
     CALL_MS,
   );
 
+/**
+ * A watch Gemini turned down by its own rules (its error starts with this): the clip is settled. It is not watched again
+ * by itself or by Make for the missing (each try uploads the video and is turned down the same), only when asked for by
+ * name, and What's made counts it skipped, not missing.
+ */
+export const REFUSED = "Refused by Gemini";
+const REFUSAL = /SAFETY|PROHIBITED|BLOCKLIST|SPII|RECITATION/;
+
 /** A part's answer: its events inside a..b and what it cost. */
-async function answerOf(r: Response, model: GeminiModel, a: number, b: number, sound: boolean) {
+export async function answerOf(r: Response, model: GeminiModel, a: number, b: number, sound: boolean) {
   const body = (await r.json()) as {
-    candidates?: { content?: { parts?: { text?: string; thought?: boolean }[] } }[];
+    candidates?: { content?: { parts?: { text?: string; thought?: boolean }[] }; finishReason?: string }[];
+    promptFeedback?: { blockReason?: string };
     usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number; thoughtsTokenCount?: number };
   };
   const text = (body.candidates?.[0]?.content?.parts ?? []).filter((p) => !p.thought && p.text).map((p) => p.text).join("");
+  // no answer at all: Gemini's own reason is the error kept (it read "The AI's answer could not be read", which said nothing)
+  const why = body.promptFeedback?.blockReason ?? body.candidates?.[0]?.finishReason ?? "no reason given";
+  if (!text.trim()) throw new Error(REFUSAL.test(why) ? `${REFUSED}: ${why}` : `Gemini gave no answer (${why})`);
   const u = body.usageMetadata ?? {};
   const out = (u.candidatesTokenCount ?? 0) + (u.thoughtsTokenCount ?? 0);
   const usage = { tokens: (u.promptTokenCount ?? 0) + out, costUsd: ((u.promptTokenCount ?? 0) * GEMINI_PRICE[model].in + out * GEMINI_PRICE[model].out) / 1e6, input: u.promptTokenCount ?? 0, output: out, model };
-  return { events: parseTimeline(text, a, b, sound), usage, inTokens: u.promptTokenCount ?? 0, outTokens: out };
+  let events: TimelineEvent[];
+  try {
+    events = parseTimeline(text, a, b, sound);
+  } catch {
+    throw new Error(`Gemini's answer could not be read (${why})`);
+  }
+  return { events, usage, inTokens: u.promptTokenCount ?? 0, outTokens: out };
 }
 
 /** The name of the part's copy in the Antigravity run's folder. */
@@ -730,9 +750,7 @@ export function watchAfter(db: DatabaseSync, versionId: string, src: () => Promi
       if (!r) return;
       console.log(`[library] timeline of ${versionId}: ${r.events} events, $${r.usd.toFixed(4)}, ${Math.round(r.ms / 1000)} s`);
     } catch (e) {
-      const why = e instanceof Error ? e.message : String(e);
-      storeTimeline(db, versionId, { error: why });
-      console.warn(`[library] timeline of ${versionId} failed: ${why.slice(0, 300)}`); // What's made counts it missing and no screen says why
+      storeTimeline(db, versionId, { error: e instanceof Error ? e.message : String(e) });
       return;
     }
     libraryChanged(lib); // an open clip panel shows the new timeline
@@ -768,7 +786,8 @@ const WANTS = `FROM assets a JOIN asset_versions c ON c.id = a.current_version_i
     JOIN libraries l ON l.id = a.library_id LEFT JOIN timelines t ON t.version_id = v.id
   WHERE a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND v.created_by IS NOT NULL AND ((${AUTO} AND ${SINCE_STOP}) OR ${PRESSED})
     AND (t.version_id IS NULL OR (t.error IS NOT NULL AND (t.at <= ? OR ${PRESSED})) OR (t.error IS NULL AND IFNULL(t.level, '') != IFNULL(json_extract(l.settings, '$.lookLevel'), 'standard'))
-         OR (t.error IS NULL AND t.model = 'antigravity' AND IFNULL(json_extract(l.settings, '$.timelineModel'), '') != 'antigravity'))`;
+         OR (t.error IS NULL AND t.model = 'antigravity' AND IFNULL(json_extract(l.settings, '$.timelineModel'), '') != 'antigravity'))
+    AND IFNULL(t.error, '') NOT LIKE '${REFUSED}%'`;
 /** A failed watch the sweep asks again as soon as there is room, not RETRY_MS later. */
 function askSoon(db: DatabaseSync, versionId: string): void {
   db.prepare("UPDATE timelines SET at = 0 WHERE version_id = ?").run(versionId);

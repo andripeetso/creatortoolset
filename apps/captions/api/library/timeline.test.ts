@@ -415,9 +415,27 @@ describe("in the look job", () => {
       expect(sweepWatch(libraryDb(), (id) => id === v, pressed + 20)).toBe(false);
       press(pressed + 30);
       expect(sweepWatch(libraryDb(), (id) => id === v, pressed + 40)).toBe(true);
+      // one Gemini turned down is settled: not by the wait, not by a press (each try uploads it to be turned down again),
+      // only asked for by name
+      libraryDb().prepare("UPDATE timelines SET error = 'Refused by Gemini: PROHIBITED_CONTENT' WHERE version_id = ?").run(v);
+      press(pressed + 50);
+      expect(sweepWatch(libraryDb(), (id) => id === v, pressed + 60)).toBe(false);
+      expect(wantsWatch(libraryDb(), v, "local", pressed + RETRY_MS * 2)).toBe(false);
+      askedWatch.add(v);
+      expect(wantsWatch(libraryDb(), v, "local")).toBe(true);
+      askedWatch.delete(v);
     } finally {
       libraryDb().prepare(`UPDATE libraries SET settings = json_remove(settings, '$.timelineAsked') WHERE id = 'lib_t'`).run();
     }
+  });
+
+  it("an answer with nothing in it keeps Gemini's own reason: a refusal is named as one, anything else as no answer", async () => {
+    const { answerOf, REFUSED } = await import("./timeline");
+    const answer = (body: unknown) => answerOf(new Response(JSON.stringify(body)), "gemini-3.8-flash" as never, 0, 10, true);
+    await expect(answer({ promptFeedback: { blockReason: "PROHIBITED_CONTENT" } })).rejects.toThrow(`${REFUSED}: PROHIBITED_CONTENT`);
+    await expect(answer({ candidates: [{ finishReason: "SAFETY" }] })).rejects.toThrow(`${REFUSED}: SAFETY`);
+    await expect(answer({ candidates: [{ finishReason: "MAX_TOKENS" }] })).rejects.toThrow("Gemini gave no answer (MAX_TOKENS)");
+    await expect(answer({ candidates: [{ content: { parts: [{ text: "not json" }] }, finishReason: "STOP" }] })).rejects.toThrow("could not be read (STOP)");
   });
 
   it("a blurred copy's watch is its original's: one that failed there leaves the sweep, which goes on to the next clip", async () => {

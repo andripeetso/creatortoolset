@@ -42,10 +42,10 @@ export async function makeProxy(src: string, out: string, soundOnly = false, qua
   const kbps = Math.max(100, Math.floor(Math.min(q.maxKbps, duration > 0 ? (0.8 * bytes * 8) / duration / 1000 : q.maxKbps)));
   // a sound file, or a song with album art: its sound only (the mp4 muxer refuses the cover picture as a video stream)
   if (soundOnly) await ffmpegTo(out, ["-i", src, "-map", "0:a", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", "-f", "mp4"]);
-  else
-    await ffmpegTo(out, [
+  else {
+    const args = (sound: string) => [
       "-i", src,
-      "-map", "0:v:0", "-map", "0:a?",
+      "-map", "0:v:0", "-map", sound,
       // short side to the quality's cap at most, never upscaled, both sides kept even for libx264
       "-vf", `scale=w='trunc(min(iw,${q.short}*iw/min(iw,ih))/2)*2':h='trunc(min(ih,${q.short}*ih/min(iw,ih))/2)*2'`,
       // no -r: every frame is kept at its own time, whatever the rate. Time is counted in the source's own ticks (a clip of
@@ -58,7 +58,14 @@ export async function makeProxy(src: string, out: string, soundOnly = false, qua
       "-maxrate", `${kbps}k`, "-bufsize", `${kbps * 2}k`,
       "-c:a", "aac", "-b:a", "128k",
       "-movflags", "+faststart", "-f", "mp4",
-    ]);
+    ];
+    // every sound track; with one FFmpeg has no decoder for (an iPhone video's spatial track, apac) the whole copy
+    // failed, so then the first track alone
+    await ffmpegTo(out, args("0:a?")).catch((e: unknown) => {
+      if (!/no decoder found/i.test(e instanceof Error ? e.message : String(e))) throw e;
+      return ffmpegTo(out, args("0:a:0?"));
+    });
+  }
   if ((await stat(out)).size < bytes) return true;
   await rm(out, { force: true });
   return false;
