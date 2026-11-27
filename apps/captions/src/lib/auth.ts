@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { HomeTile, PluginGateId, Tool } from "@contracts/tools";
+import { VIEWED, isTool, type HomeTile, type PluginGateId, type Tool } from "@contracts/tools";
 import { clearLocalCache } from "./local-cache";
 
 /**
@@ -39,7 +39,7 @@ export const canUseCloud = (me: Me | null): boolean => !!me;
  *  the same for the apps boot.ts gates and for a plug-in's requireGate routes. A plug-in off in the workspace this window
  *  is in (setOffHere) is off for everyone, admins too: its server routes refuse there (api/lib/plugin-workspaces.ts). */
 export const canUse = (me: Me | null, tool: Tool | PluginGateId): boolean =>
-  !!me && !offHere.includes(tool) && (me.role === "admin" || !me.off.includes(tool));
+  !!me && !offHere.includes(tool) && !(me.viewOnly && isTool(tool) && !VIEWED.includes(tool)) && (me.role === "admin" || !me.off.includes(tool));
 
 let offHere: string[] = [];
 /** The plug-ins (by id and gate) off in the workspace this window is in; set on each switch (workspace.ts). */
@@ -56,7 +56,7 @@ export const canChange = (me: Me | null, tool: Tool): boolean => canUse(me, tool
 
 /** A Home tile: a tool, or the Screen Recorder, which is open to whoever can use Review or Video Notes (where a recording goes). */
 export const canUseTile = (me: Me | null, tile: HomeTile): boolean =>
-  tile === "record" ? canUse(me, "review") || canUse(me, "notes") : canUse(me, tile);
+  tile === "record" ? !me?.viewOnly && (canUse(me, "review") || canUse(me, "notes")) : canUse(me, tile);
 
 export type { ServerKind } from "@contracts/work";
 import type { ServerKind } from "@contracts/work";

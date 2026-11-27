@@ -45,7 +45,7 @@ import { AppDialogs } from "@/components/AppDialogs";
 import { ViewAsBanner } from "@/components/ViewAsBanner";
 import { Toaster } from "@/components/ui/sonner";
 import { useShareTheme } from "@/components/ShareTheme";
-import { canUse, useAuth, useMe } from "@/lib/auth";
+import { canUse, canUseTile, useAuth, useMe } from "@/lib/auth";
 import { initTabGuard } from "@/lib/tabs";
 import { useStudio } from "@/lib/store";
 import { getProjectPersistenceStatus } from "@/lib/persistence-status";
@@ -108,7 +108,7 @@ function AppRoute({ tool, children }: { tool: Tool; children: ReactNode }) {
 
 function RecordRoute() {
   const me = useMe();
-  return canUse(me, "review") || canUse(me, "notes") ? <ScreenRecorderPage /> : <Navigate to="/" replace />;
+  return canUseTile(me, "record") ? <ScreenRecorderPage /> : <Navigate to="/" replace />;
 }
 
 function ClipsRoute() {

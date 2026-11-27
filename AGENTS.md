@@ -124,8 +124,9 @@ account, and, signed in, what the account may see (the Media Library, Review, Fi
   (`apps/captions/src/components/AuthGate.dom.test.tsx` holds the sign-in page).
 - On a server that asks for a sign-in, an account in a plain browser is view-only (`viewOnlyIn`, `api/users.ts`; the
   page's `me.viewOnly`): every tool is Read there, an admin's too (the gates in `api/boot.ts`, `canChange` in the
-  pages), and there is no assistant, no chat mode and no setup. A new way to make or change something checks
-  `canChange`, and its route is in `WRITE_GATES`. Settings, workspaces and Community are not held yet.
+  pages), and there is no assistant, no chat mode and no setup. Only the tools that hold something to look at are
+  there (`VIEWED`, `contracts/tools.ts`): the others have no tile and no page (`canUse`). A new way to make or change
+  something checks `canChange`, and its route is in `WRITE_GATES`. Settings, workspaces and Community are not held yet.
 - Tools are built for the apps. A control that needs the Mac app stays hidden in a plain browser (`thisMacBridge()`,
   `hasThisMac()`), as it does in the iPhone app's pages, and gets no stand-in there. "Does nothing in a browser" is
   not a finding for such a control: judge a tool's screen as the Mac app shows it.

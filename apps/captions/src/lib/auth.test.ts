@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { canChange, canUse, returnTo, type Me } from "./auth";
+import { TOOLS } from "@contracts/tools";
+import { canChange, canUse, canUseTile, returnTo, type Me } from "./auth";
 
 const admin: Me = {
   username: "owner",
@@ -14,6 +15,15 @@ describe("canChange in a plain browser", () => {
     expect(canChange(admin, "editor")).toBe(true);
     expect(canChange({ ...admin, viewOnly: true }, "editor")).toBe(false);
     expect(canUse({ ...admin, viewOnly: true }, "editor")).toBe(true);
+  });
+
+  it("has only the tools with something to look at", () => {
+    const viewing: Me = { ...admin, viewOnly: true };
+    expect(TOOLS.filter((t) => canUse(viewing, t))).toEqual(["instagram", "workshop", "review", "media", "editor", "notes"]);
+    expect(canUseTile(viewing, "record")).toBe(false);
+    expect(canUseTile(admin, "record")).toBe(true);
+    // a plug-in's gate is not a tool: it stays as the account has it
+    expect(canUse(viewing, "sponsors")).toBe(true);
   });
 });
 

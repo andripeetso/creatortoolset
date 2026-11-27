@@ -130,9 +130,11 @@ export default function ToolsetHome() {
     const missing = readiness(tool, view.have).missing;
     return missing.length ? needsLine(missing) : null;
   };
+  // a plain browser shows only what it opens: a tool with nothing to look at has no tile there (contracts/tools.ts VIEWED)
+  const tileHere = (k: Parameters<typeof shownOnHome>[0]) => shownOnHome(k) && !(me?.viewOnly && !canUseKey(me, k));
   const extrasGroup = TOOL_GROUPS.find((g) => g.id === "tools");
   // the Designer is worked with a pointer and keys on a wide canvas: a phone's Home leaves it out
-  const extras: Key[] = [...(extrasGroup?.tools ?? []), "record" as const].filter(shownOnHome).filter((t) => !(phone && t === "design"));
+  const extras: Key[] = [...(extrasGroup?.tools ?? []), "record" as const].filter(tileHere).filter((t) => !(phone && t === "design"));
 
   // the current project's colour (Settings → Appearance can keep it violet), as CSS variables for the tiles and glow
   const c = accentTones(accentFor(projectTint, ownColour, project ? projectColor(project) : null));
@@ -206,7 +208,7 @@ export default function ToolsetHome() {
   const boxes = (known ? TOOL_GROUPS : []).filter((g) => g.id !== "tools")
     .map((g) => ({
       g,
-      nodes: [...(g.id === "distribute" ? ["finals" as Key] : g.tools.filter(shownOnHome)).map((t) => tile(t)), ...pluginTilesFor(g.label, me).map((t) => pluginTile(t))],
+      nodes: [...(g.id === "distribute" ? ["finals" as Key] : g.tools.filter(tileHere)).map((t) => tile(t)), ...pluginTilesFor(g.label, me).map((t) => pluginTile(t))],
     }))
     .filter((b) => b.nodes.length > 0);
   // In production, the stop between Plan and Make (components/HomeProduction.tsx), sits on the arrow into Make. What
