@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -559,5 +559,28 @@ describe("attached library clips the caller can't see", () => {
     expect(external.status).toBe(404);
     expect(external.body.error).toBe("A Media Library clip was not found");
     expect(mocked).not.toHaveBeenCalled(); // refused before any model call
+  });
+});
+
+describe("a session with a reply running is not deleted", () => {
+  it("refuses the delete until the reply ends, and the folder is gone after", async () => {
+    const { id, docId } = seed(["Piece"]);
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    once(async (_s, _u, _sig, parse) => {
+      await gate;
+      return { result: parse(answer({ reply: "Done.", edits: [] })), provider: "Claude (Mac)" };
+    });
+
+    const { body } = await send(id, docId, "Tidy it.");
+    const refused = await call("DELETE", `/api/workshop/sessions/${id}`);
+    expect(refused.status).toBe(409);
+    expect(((await refused.json()) as { error: string }).error).toBe("Could not delete the project: a reply is still running");
+    expect(existsSync(path.join(dataDir, "workshop", "sessions", id, "meta.json"))).toBe(true);
+
+    release();
+    expect((await settled(id, body.reply!.id)).status).toBe("done");
+    expect((await call("DELETE", `/api/workshop/sessions/${id}`)).status).toBe(200);
+    expect(existsSync(path.join(dataDir, "workshop", "sessions", id))).toBe(false);
   });
 });

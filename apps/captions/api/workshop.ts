@@ -3,7 +3,7 @@ import { stream, streamSSE } from "hono/streaming";
 import { checkDraft } from "./lib/workshop/rule-check";
 import { createHash, randomUUID } from "node:crypto";
 import { cp, mkdir, open, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
-import { createReadStream, createWriteStream } from "node:fs";
+import { createReadStream, createWriteStream, existsSync } from "node:fs";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { notifyWorkshopOwner, sendFile } from "./review";
@@ -44,7 +44,7 @@ import { bumpUsage, canSee, findUser } from "./users";
 import { scriptsOwnerFor, sharedWith } from "./lib/workspaces";
 import { currentWorkspaceId, inCurrentWorkspace, listWorkspaceId } from "./lib/workspace-scope";
 import { mayLeave, workspaceLibrary } from "./library/upload-gate";
-import { deleteWorkspaceContents, workspaceContents } from "./lib/workspace-delete";
+import { deleteWorkspaceContents, WorkspaceBusy, workspaceContents } from "./lib/workspace-delete";
 import type { ClaudeSession, ClipRef, FileRef, GenerateInput, ImageRef, PastedRef, TurnStep } from "./lib/workshop/types";
 import { ATTACH_EXT, attachedFile, messageAttachments } from "./lib/workshop/attached";
 import type { AuditMeta, AuditTarget, Chat, ChatMessage, DocKind, Document, DraftKind, DraftMeta, Framework, KnowledgeFile, KnowledgeSource, LoadedSource, Posting, Project, Proposal, ResearchNote, Rule, SessionMeta, SessionStatus, SourcePart } from "./lib/workshop/types";
@@ -737,15 +737,19 @@ const chains = new Map<string, Promise<unknown>>();
 function chained<T>(id: string, fn: () => Promise<T>): Promise<T> {
   const prev = chains.get(id) ?? Promise.resolve();
   const next = prev.then(fn, fn);
-  chains.set(
-    id,
-    next.then(
-      () => undefined,
-      () => undefined,
-    ),
+  const tail = next.then(
+    () => undefined,
+    () => undefined,
   );
+  chains.set(id, tail);
+  // the map keeps only sessions with work queued: a tail nothing queued behind is dropped
+  void tail.then(() => {
+    if (chains.get(id) === tail) chains.delete(id);
+  });
   return next;
 }
+/** Sessions with a write queued (for tests: the map does not grow without bound). */
+export const chainsOpen = () => chains.size;
 
 const RESTART_MSG = "Interrupted by a server restart — regenerate.";
 
@@ -851,10 +855,18 @@ async function readNotes(id: string): Promise<string> {
 }
 
 async function writeNotes(id: string, text: string, by: "user" | "ai" = "user"): Promise<void> {
-  await mkdir(sessionDir(id), { recursive: true });
-  const tmp = `${notesPath(id)}.tmp-${process.pid}`;
-  await writeFile(tmp, text);
-  await rename(tmp, notesPath(id));
+  // one save at a time per session, each with a temp name of its own; a deleted session's notes are not written back
+  await chained(id, async () => {
+    if (!existsSync(sessionMetaPath(id))) return;
+    const tmp = `${notesPath(id)}.tmp-${process.pid}-${randomUUID()}`;
+    try {
+      await writeFile(tmp, text);
+      await rename(tmp, notesPath(id));
+    } catch (e) {
+      await rm(tmp, { force: true }).catch(() => {});
+      throw e;
+    }
+  });
   // an opened session shows its Notes document, so the notes go there too (never called inside chained: updateDoc is)
   const doc = (await listDocs(id)).find((d) => d.kind === "notes");
   if (doc) await updateDoc(id, doc.id, (d) => void userEdit(d, [{ id: d.blocks[0]?.id, text }], Date.now(), {}, by));
@@ -1098,7 +1110,8 @@ async function updateChat(sessionId: string, fn: (chat: Chat) => void): Promise<
     const chat = (await readJson<Chat>(chatPath(sessionId))) ?? { messages: [] };
     fn(chat);
     if (chat.messages.length > 200) chat.messages.splice(0, chat.messages.length - 200);
-    await writeJsonAtomic(chatPath(sessionId), chat);
+    // a deleted session's folder stays deleted: a late write for it is dropped, not a new folder
+    if (existsSync(sessionMetaPath(sessionId))) await writeJsonAtomic(chatPath(sessionId), chat);
     return chat;
   });
 }
@@ -1117,7 +1130,7 @@ async function patchMessage(sessionId: string, messageId: string, patch: Partial
 async function startTurn(sessionId: string, pair: ChatMessage[], retryOf: string[] = []): Promise<boolean> {
   let started = false;
   await updateChat(sessionId, (chat) => {
-    if (chat.messages.some((m) => m.status === "thinking")) return;
+    if (!existsSync(sessionMetaPath(sessionId)) || chat.messages.some((m) => m.status === "thinking")) return;
     started = true;
     if (retryOf.length) chat.messages = chat.messages.filter((m) => !retryOf.includes(m.id));
     chat.messages.push(...pair);
@@ -2372,7 +2385,12 @@ workshopApp.delete("/projects/:id", async (c) => {
   const project = await readProject(c.req.param("id"), user);
   if (project?.owner !== user.username) return c.json({ error: "Not found" }, 404);
   // everything in it goes first, while it still exists: the first brand is worked out from it (owner, 2026-11-16)
-  await deleteWorkspaceContents(user, project.id);
+  try {
+    await deleteWorkspaceContents(user, project.id);
+  } catch (e) {
+    if (e instanceof WorkspaceBusy) return c.json({ error: e.message }, 409);
+    throw e;
+  }
   await rm(projectPath(project.id), { force: true });
   const ws = await getWorkspace(user);
   if (ws.currentProjectId === project.id) await setCurrentProjectId(user, ws.projects[0]?.id ?? null);
@@ -3102,13 +3120,31 @@ workshopApp.patch("/sessions/:id", async (c) => {
   }
 });
 
+/** Why a session can't be deleted now (a draft or a reply still running in it), or null. */
+export async function sessionBusy(sessionId: string): Promise<string | null> {
+  if ((await readSession(sessionId))?.drafts.some((d) => d.status === "generating")) return "a draft is still being written";
+  if ((await readChat(sessionId)).messages.some(turnRunning)) return "a reply is still running";
+  return null;
+}
+
+/**
+ * Deletes a session's folder, unless something is still running in it (then the reason). Inside chained, so a turn's
+ * write lands before the delete or waits for it, and a turn that starts after finds no session and writes nothing.
+ */
+export function dropSession(sessionId: string): Promise<string | null> {
+  return chained(sessionId, async () => {
+    const why = await sessionBusy(sessionId);
+    if (why) return why;
+    await rm(sessionDir(sessionId), { recursive: true, force: true });
+    return null;
+  });
+}
+
 workshopApp.delete("/sessions/:id", async (c) => {
   const meta = await ownedSession(c.req.param("id"), c.get("user"));
   if (!meta) return c.json({ error: "Not found" }, 404);
-  if (meta.drafts.some((d) => d.status === "generating")) {
-    return c.json({ error: "A draft is still being written" }, 409);
-  }
-  await rm(sessionDir(meta.id), { recursive: true, force: true });
+  const why = await dropSession(meta.id);
+  if (why) return c.json({ error: `Could not delete the project: ${why}` }, 409);
   return c.json({ ok: true });
 });
 
@@ -3738,26 +3774,31 @@ workshopApp.post("/sessions/:id/docs/:docId/keep", async (c) => {
 workshopApp.delete("/sessions/:id/docs/:docId", async (c) => {
   const meta = await ownedSession(c.req.param("id"), c.get("user"));
   if (!meta) return c.json({ error: "Not found" }, 404);
-  const doc = await readDoc(meta.id, c.req.param("docId"));
-  if (!doc) return c.json({ error: "Not found" }, 404);
-  if (doc.kind === "notes") return c.json({ error: "Notes stay with the project" }, 400);
-  await rm(trashPath(meta.id, doc.id), { force: true });
-  await rename(docPath(meta.id, doc.id), trashPath(meta.id, doc.id));
-  return c.json({ ok: true });
+  // in the session's write queue, so an edit that read the piece cannot write it back after this move
+  return chained(meta.id, async () => {
+    const doc = await readDoc(meta.id, c.req.param("docId"));
+    if (!doc) return c.json({ error: "Not found" }, 404);
+    if (doc.kind === "notes") return c.json({ error: "Notes stay with the project" }, 400);
+    await rm(trashPath(meta.id, doc.id), { force: true });
+    await rename(docPath(meta.id, doc.id), trashPath(meta.id, doc.id));
+    return c.json({ ok: true });
+  });
 });
 
 workshopApp.post("/sessions/:id/docs/:docId/restore", async (c) => {
   const meta = await ownedSession(c.req.param("id"), c.get("user"));
   if (!meta) return c.json({ error: "Not found" }, 404);
   const id = c.req.param("docId");
-  try {
-    await rename(trashPath(meta.id, id), docPath(meta.id, id));
-  } catch {
-    return c.json({ error: "Nothing to restore" }, 404);
-  }
-  const doc = await readDoc(meta.id, id);
-  if (!doc) return c.json({ error: "Nothing to restore" }, 404);
-  return c.json(publicDoc(doc));
+  return chained(meta.id, async () => {
+    try {
+      await rename(trashPath(meta.id, id), docPath(meta.id, id));
+    } catch {
+      return c.json({ error: "Nothing to restore" }, 404);
+    }
+    const doc = await readDoc(meta.id, id);
+    if (!doc) return c.json({ error: "Nothing to restore" }, 404);
+    return c.json(publicDoc(doc));
+  });
 });
 
 workshopApp.get("/sessions/:id/docs/:docId/export.md", async (c) => {

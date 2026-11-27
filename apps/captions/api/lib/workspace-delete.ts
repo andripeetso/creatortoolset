@@ -72,6 +72,20 @@ const FOOTAGE_FOLDERS: WorkspaceStore = {
   find: async (a, ws) => (await import("../devices-storage")).workspaceStorageFolders(a.username, ws.has),
 };
 
+/** Refused while a project of the workspace has a draft being written or a reply running: nothing is deleted (the route says so, 409). */
+export class WorkspaceBusy extends Error {}
+
+/** The Content Workshop sessions `has` holds for `a`: their owner's, stamped with the workspace's id. */
+async function sessionsOf(a: SessionUser, has: Has): Promise<string[]> {
+  const root = path.join(env.dataDir, "workshop", "sessions");
+  const hit: string[] = [];
+  for (const id of await readdir(root).catch(() => [] as string[])) {
+    const m = await json(path.join(root, id, "meta.json"));
+    if (m?.owner === a.username && stamped(has)(str(m.projectId))) hit.push(id);
+  }
+  return hit;
+}
+
 /** The workspace's Media Libraries, counted by their clips: the app's copies, proxies and index go; a file indexed in place stays. */
 const LIBRARIES: WorkspaceStore = {
   name: ["Media Library clip", "Media Library clips"],
@@ -99,13 +113,17 @@ export const STORES: WorkspaceStore[] = [
     // Content Workshop projects, with their pieces, drafts, pictures and deliveries (all in the session's folder)
     name: ["project", "projects"],
     find: async (a, ws) => {
-      const root = path.join(env.dataDir, "workshop", "sessions");
-      const hit: string[] = [];
-      for (const id of await readdir(root).catch(() => [] as string[])) {
-        const m = await json(path.join(root, id, "meta.json"));
-        if (m?.owner === a.username && stamped(ws.has)(str(m.projectId))) hit.push(id);
-      }
-      return { n: hit.length, drop: () => Promise.all(hit.map((id) => rm(path.join(root, id), { recursive: true, force: true, maxRetries: 3 }))) };
+      const hit = await sessionsOf(a, ws.has);
+      return {
+        n: hit.length,
+        drop: async () => {
+          const { dropSession } = await import("../workshop");
+          for (const id of hit) {
+            const why = await dropSession(id);
+            if (why) throw new WorkspaceBusy(`Could not delete the workspace: ${why} in one of its projects`);
+          }
+        },
+      };
     },
   },
   { name: ["chat", "chats"], find: async (a, ws) => (await import("../assistant")).workspaceChats(a.username, ws.has) },
@@ -227,11 +245,15 @@ const allStores = () => [...STORES, ...pluginWorkspaceStores()];
  * What deleting `id` would delete, store by store: its owner's records (projectOf's rule) and those the team members
  * it was given made in it. Read while the workspace still exists: the first brand is worked out from it.
  */
-async function plan(owner: SessionUser, id: string) {
+async function audience(owner: SessionUser, id: string): Promise<Array<[SessionUser, Has]>> {
   const of = await projectOf(owner);
   const team = workspaceOf(owner.username);
   const members = (team?.members ?? []).filter((m) => m.role !== "owner" && m.workspaces?.includes(id)).map((m) => ({ username: m.username, role: "user" }) as SessionUser);
-  const who: Array<[SessionUser, Has]> = [[owner, (s) => (of ? of(s) === id : s === id)], ...members.map((m): [SessionUser, Has] => [m, (s) => s === id])];
+  return [[owner, (s) => (of ? of(s) === id : s === id)], ...members.map((m): [SessionUser, Has] => [m, (s) => s === id])];
+}
+
+async function plan(owner: SessionUser, id: string) {
+  const who = await audience(owner, id);
   const out: Array<{ store: WorkspaceStore; found: Array<{ n: number; drop: () => Promise<unknown> }> }> = [];
   for (const store of allStores()) {
     const found = [];
@@ -252,5 +274,17 @@ export async function workspaceContents(owner: SessionUser, id: string): Promise
 
 /** Deletes everything in workspace `id`, before the workspace itself goes. A store that fails is logged; the rest carry on. */
 export async function deleteWorkspaceContents(owner: SessionUser, id: string): Promise<void> {
-  for (const { store, found } of await plan(owner, id)) for (const f of found) await f.drop().catch((e) => console.error("[workspace-delete]", store.name[1], e));
+  // refused before anything goes: a project with a reply or draft running keeps the whole workspace
+  const { sessionBusy } = await import("../workshop");
+  for (const [a, has] of await audience(owner, id))
+    for (const sid of await sessionsOf(a, has)) {
+      const why = await sessionBusy(sid);
+      if (why) throw new WorkspaceBusy(`Could not delete the workspace: ${why} in one of its projects`);
+    }
+  for (const { store, found } of await plan(owner, id))
+    for (const f of found)
+      await f.drop().catch((e) => {
+        if (e instanceof WorkspaceBusy) throw e;
+        console.error("[workspace-delete]", store.name[1], e);
+      });
 }

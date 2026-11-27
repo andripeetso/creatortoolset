@@ -199,3 +199,22 @@ describe.skipIf(pluginWorkspaceStores().length > 0)("deleting a workspace", () =
     expect(readFileSync(take, "utf-8")).toBe("the person's own video");
   });
 });
+
+describe("deleting a workspace with a draft being written", () => {
+  it("is refused before anything goes: the project and its draft stay", async () => {
+    const C = "bbbbbbbb-0000-4000-8000-000000000003";
+    const S = "cccccccc-0000-4000-8000-000000000001";
+    put(at("workshop", "projects", `${C}.json`), { id: C, owner: "alex", name: "Busy", audience: "", voice: "", cta: "", notes: "", createdAt: 3, updatedAt: 3 });
+    put(at("workshop", "sessions", S, "meta.json"), { id: S, owner: "alex", projectId: C, title: "Busy piece", query: "", sources: [], drafts: [{ id: "d1", status: "generating" }], createdAt: 1, updatedAt: 1 });
+    try {
+      const res = await call("alex", "DELETE", `/api/workshop/projects/${C}`);
+      expect(res.status).toBe(409);
+      expect(((await res.json()) as { error: string }).error).toBe("Could not delete the workspace: a draft is still being written in one of its projects");
+      expect(existsSync(at("workshop", "projects", `${C}.json`))).toBe(true);
+      expect(existsSync(at("workshop", "sessions", S, "meta.json"))).toBe(true);
+    } finally {
+      rmSync(at("workshop", "sessions", S), { recursive: true, force: true });
+      rmSync(at("workshop", "projects", `${C}.json`), { force: true });
+    }
+  });
+});
