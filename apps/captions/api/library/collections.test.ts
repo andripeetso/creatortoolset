@@ -336,6 +336,16 @@ describe("pieces", () => {
     ]);
   });
 
+  it("sets a piece's type by hand, back to Automatic with null, and refuses a type it does not know", async () => {
+    const p = await data(call("owner-a", "POST", "/api/library/lib_a/pieces", { label: "Typed" }));
+    expect(p.kind).toBeNull();
+    expect((await data(call("owner-a", "PATCH", `/api/library/lib_a/pieces/${p.id}`, { kind: "carousel" }))).kind).toBe("carousel");
+    // a rename leaves the type as it is
+    expect((await data(call("owner-a", "PATCH", `/api/library/lib_a/pieces/${p.id}`, { label: "Typed 2" }))).kind).toBe("carousel");
+    expect((await data(call("owner-a", "PATCH", `/api/library/lib_a/pieces/${p.id}`, { kind: null }))).kind).toBeNull();
+    expect((await call("owner-a", "PATCH", `/api/library/lib_a/pieces/${p.id}`, { kind: "ad" })).status).toBe(400);
+  });
+
   it("replaces an item's file and keeps its name, post description and postings", async () => {
     const p = await data(call("owner-a", "POST", "/api/library/lib_a/pieces", { label: "Swap" }));
     let piece = await data(call("owner-a", "POST", `/api/library/lib_a/pieces/${p.id}/items`, { versionId: "e1-v1", label: "Slide 1" }));
@@ -514,5 +524,42 @@ describe("piece zip (Save all)", () => {
     } finally {
       resetLibrarySlots();
     }
+  });
+});
+
+describe("piece merge and the Finals folder", () => {
+  beforeAll(() => {
+    for (const id of ["m1", "m2", "m3", "m4"]) seed(id, `Merge ${id}`, "owner-a");
+  });
+
+  const pieceWith = async (label: string, versionId: string) => {
+    const p = await data(call("owner-a", "POST", "/api/library/lib_a/pieces", { label }));
+    await data(call("owner-a", "POST", `/api/library/lib_a/pieces/${p.id}/items`, { versionId, label }));
+    return p;
+  };
+  const merge = (into: { id: string }, from: { id: string }) =>
+    call("owner-a", "POST", `/api/library/lib_a/pieces/${into.id}/merge`, { from: from.id });
+
+  it("a merged piece cannot merge again, and nothing merges into a trashed piece: the Undo record keeps where it went", async () => {
+    const p1 = await pieceWith("Merge P1", "m1-v1");
+    const p2 = await pieceWith("Merge P2", "m2-v1");
+    const p3 = await pieceWith("Merge P3", "m3-v1");
+    const p4 = await pieceWith("Merge P4", "m4-v1");
+    expect((await merge(p2, p1)).status).toBe(200);
+    expect((await merge(p3, p1)).status).toBe(409);
+    const trash = await data(call("owner-a", "GET", "/api/library/lib_a/pieces?trash=1"));
+    expect(trash.pieces.find((p: any) => p.id === p1.id).merged).toEqual({ into: "Merge P2", versions: 1 });
+
+    expect((await call("owner-a", "POST", `/api/library/lib_a/pieces/${p3.id}/trash`)).status).toBe(200);
+    expect((await merge(p3, p4)).status).toBe(409);
+    const live = await data(call("owner-a", "GET", "/api/library/lib_a/pieces"));
+    expect(live.pieces.find((p: any) => p.id === p4.id).items).toHaveLength(1);
+  });
+
+  it("the Finals folder cannot be deleted: 409, and it is still listed", async () => {
+    const f = await data(call("owner-a", "POST", "/api/library/lib_a/collections", { name: "Finals" }));
+    expect((await call("owner-a", "DELETE", `/api/library/lib_a/collections/${f.id}`)).status).toBe(409);
+    const list = await data(call("owner-a", "GET", "/api/library/lib_a/collections"));
+    expect(list.collections.some((c: any) => c.id === f.id)).toBe(true);
   });
 });

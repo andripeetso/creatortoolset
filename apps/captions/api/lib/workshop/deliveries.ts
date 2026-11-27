@@ -1,5 +1,5 @@
 import { createReadStream } from "node:fs";
-import { stat } from "node:fs/promises";
+import { rm, stat } from "node:fs/promises";
 import { Readable } from "node:stream";
 import { crc32 } from "node:zlib";
 
@@ -17,6 +17,11 @@ export interface Delivery {
 export function inSlideOrder<T extends Pick<Delivery, "name" | "at">>(files: T[]): T[] {
   const n = (f: T) => Number(/\d+/.exec(f.name)?.[0] ?? Infinity);
   return [...files].sort((a, b) => n(a) - n(b) || a.at - b.at);
+}
+
+/** Removes a folder once the zip streamed from `body` has ended, failed or been dropped (its copies go with it). */
+export function removeWhenDone(body: Readable, dir: string): void {
+  body.once("close", () => void rm(dir, { recursive: true, force: true }).catch(() => {}));
 }
 
 async function fileCrc(file: string): Promise<number> {

@@ -1,6 +1,6 @@
 import { Hono, type Context } from "hono";
 import { randomUUID } from "node:crypto";
-import { mkdir, rm } from "node:fs/promises";
+import { copyFile, mkdir, rm } from "node:fs/promises";
 import { Readable } from "node:stream";
 import path from "node:path";
 import type { AuthVars } from "../auth";
@@ -8,7 +8,7 @@ import type { AssetKind, Collection, Piece, PieceItem, Posting, SearchQuery } fr
 import type { LibraryViewer } from "../../contracts/library-source";
 import { env } from "../lib/env";
 import { sendFile } from "../lib/send-file";
-import { storedZip } from "../lib/workshop/deliveries";
+import { removeWhenDone, storedZip } from "../lib/workshop/deliveries";
 import { notifyLibraryChanges } from "../lib/events";
 import { sweepPlayCopies } from "../lib/play-copies";
 import { isFinal } from "./finals";
@@ -16,7 +16,7 @@ import { pushFinalCopy } from "./routes";
 import { libraryRole, mayWrite } from "./access";
 import { readerOf } from "./reader";
 import { mayKeepAsFilmed, mayLeave, mayServe, type Received } from "./upload-gate";
-import { blobs, libraryDb } from "./db";
+import { blobs, isFinalsCollection, libraryDb, libraryStore } from "./db";
 import { frameAt, frameWaits, whenFramed, type FrameInput } from "../lib/clip-frame";
 import { externalCanSee, externalRefById } from "./refs";
 import { FINISHED, KINDS } from "./query";
@@ -278,6 +278,8 @@ collectionApp.delete("/:id/collections/:cid", (c) => {
   const role = libraryRole(user.username, libraryId);
   const row = role ? rowIn(libraryId, c.req.param("cid")) : undefined;
   if (!role || !row) return notFound(c);
+  // Finals is the library's own folder (finalsCollectionId makes it again), so deleting it would only empty it
+  if (isFinalsCollection(row.id)) return c.json({ error: "Finals cannot be deleted: trash its pieces instead", code: "conflict" }, 409);
   const d = db();
   d.exec("BEGIN");
   try {
@@ -691,6 +693,10 @@ collectionApp.post("/:id/pieces/:pid/merge", async (c) => {
   const fromId = typeof body?.from === "string" ? body.from : "";
   const from = fromId && fromId !== c.req.param("pid") ? await writablePiece(user, libraryId, fromId) : undefined;
   if (!target || !from) return notFound(c);
+  // read here, with no await before the write: a merged piece's Undo record is kept, and a trashed one is not merged
+  const state = db().prepare("SELECT trashed_at, merged FROM pieces WHERE id IN (?, ?)").all(from.id, target.id) as { trashed_at: number | null; merged: string | null }[];
+  if (state.some((s) => s.trashed_at !== null || s.merged !== null))
+    return c.json({ error: "A piece in the trash or already merged cannot be merged: restore it first", code: "conflict" }, 409);
   const both = db()
     .prepare("SELECT 1 FROM piece_items a JOIN piece_items b ON b.version_id = a.version_id WHERE a.piece_id = ? AND b.piece_id = ? AND a.version_id IS NOT NULL")
     .get(from.id, target.id);
@@ -907,7 +913,11 @@ collectionApp.get("/:id/pieces/:pid/zip", async (c) => {
   const all = pieceOf(row);
   const seen = await visibleItems(viewer, libraryId, all);
   if (!seen.items.length && all.items.length) return notFound(c);
+  // a bucket's files come through the shared cache, which another request may evict mid-stream: the zip reads its own copies
+  const scratch = libraryStore(libraryId).kind === "local" ? null : path.join(env.dataDir, "tmp", `zip-${randomUUID()}`);
+  let streaming = false;
   try {
+    if (scratch) await mkdir(scratch, { recursive: true });
     const files: { path: string; name: string }[] = [];
     let refused: Received | undefined;
     for (const [n, item] of seen.items.entries()) {
@@ -924,11 +934,16 @@ collectionApp.get("/:id/pieces/:pid/zip", async (c) => {
       }
       const base = (item.label || v.title).replace(/[^\w.-]+/g, "_").slice(0, 80) || "version";
       const ext = path.extname(v.source_path ?? "") || EXT_OF[v.mime ?? ""] || "";
-      files.push({ path: await blobs.localCopy(v.source_key), name: `${String(n + 1).padStart(2, "0")}-${base}${ext}` });
+      const src = await blobs.localCopy(v.source_key);
+      const file = scratch ? path.join(scratch, String(n)) : src;
+      if (scratch) await copyFile(src, file); // at once: the next file's copy may evict this one
+      files.push({ path: file, name: `${String(n + 1).padStart(2, "0")}-${base}${ext}` });
     }
     if (refused && !refused.ok) return c.json(refused.body, refused.status);
     if (!files.length) return c.json({ error: "No versions to save", code: "conflict" }, 409);
     const zip = await storedZip(files);
+    if (scratch) removeWhenDone(zip.body, scratch);
+    streaming = true;
     const name = `${row.label.replace(/[^\w.-]+/g, "_").slice(0, 80) || "finals"}.zip`;
     return new Response(Readable.toWeb(zip.body) as never, {
       headers: {
@@ -940,6 +955,8 @@ collectionApp.get("/:id/pieces/:pid/zip", async (c) => {
     });
   } catch (e) {
     return c.json({ error: e instanceof Error ? e.message : String(e), code: "conflict" }, 409);
+  } finally {
+    if (scratch && !streaming) await rm(scratch, { recursive: true, force: true }).catch(() => {});
   }
 });
 

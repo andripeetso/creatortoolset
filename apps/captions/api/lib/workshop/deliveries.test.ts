@@ -1,9 +1,9 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { crc32 } from "node:zlib";
 import { describe, expect, it } from "vitest";
-import { inSlideOrder, storedZip } from "./deliveries";
+import { inSlideOrder, removeWhenDone, storedZip } from "./deliveries";
 
 describe("the freelancer's finals", () => {
   it("go in slide order by the number in the name, else by when they came in", () => {
@@ -45,5 +45,33 @@ describe("the freelancer's finals", () => {
     }
     expect(out).toEqual(files);
     expect(data.readUInt32LE(data.length - 22)).toBe(0x06054b50);
+  });
+});
+
+describe("a zip's folder of copies", () => {
+  const gone = async (dir: string) => {
+    for (let i = 0; i < 100 && existsSync(dir); i++) await new Promise((r) => setTimeout(r, 20));
+    return !existsSync(dir);
+  };
+  const copies = () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "ws-copies-"));
+    writeFileSync(path.join(dir, "0"), "slide");
+    return dir;
+  };
+
+  it("is removed once the zip has streamed", async () => {
+    const dir = copies();
+    const zip = await storedZip([{ path: path.join(dir, "0"), name: "1.jpg" }]);
+    removeWhenDone(zip.body, dir);
+    for await (const _ of zip.body) void _;
+    expect(await gone(dir)).toBe(true);
+  });
+
+  it("is removed when the download is dropped part way", async () => {
+    const dir = copies();
+    const zip = await storedZip([{ path: path.join(dir, "0"), name: "1.jpg" }]);
+    removeWhenDone(zip.body, dir);
+    zip.body.destroy();
+    expect(await gone(dir)).toBe(true);
   });
 });
