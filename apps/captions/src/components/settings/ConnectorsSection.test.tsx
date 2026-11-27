@@ -179,7 +179,9 @@ describe("an account's workspace", () => {
     putCached("sam", "/api/connectors", saved);
     vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
       if (init?.method) sent.push([`${init.method} ${url}`, JSON.parse(String(init.body ?? "null"))]);
-      return new Response(JSON.stringify(String(url) === "/api/connectors" ? saved : {}), { status: 200 });
+      // the Apify key row reads its usage: no use yet
+      const answers: Record<string, unknown> = { "/api/connectors": saved, "/api/usage/services": { lines: [], limits: [], budgets: [] } };
+      return new Response(JSON.stringify(answers[String(url).split("?")[0]!] ?? {}), { status: 200 });
     });
     root = createRoot(document.body.appendChild(document.createElement("div")));
     await act(async () => {
@@ -228,6 +230,7 @@ describe("an account's workspace", () => {
     // the dialog opens on its main action (here the handle), never on an info mark, whose bubble would cover it
     expect(document.activeElement).toBe(dialog.querySelector("input"));
     expect(dialog.textContent).not.toContain("Sign in");
+    expect(dialog.textContent).not.toContain("Apify"); // a key that works: no key row
     const input = dialog.querySelector("input")!;
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "@tinyx");
@@ -235,6 +238,13 @@ describe("an account's workspace", () => {
     });
     await press(dialog.querySelector('button[type="submit"]') as HTMLElement);
     expect(sent).toEqual([["POST /api/connectors/handles", { platform: "tiktok", handle: "@tinyx", projectId: "p1" }]]);
+  });
+
+  // a refused key is stored (configured, not valid): hiding the row then left no way to change it from setup
+  it.each([{ configured: false, valid: null }, { configured: true, valid: false }])("the Add dialog holds the Apify key row while no key works: %o", async (apify) => {
+    await open({ apify });
+    await press(document.body.querySelector('button[aria-label="Add TikTok"]') as HTMLElement);
+    expect(document.body.querySelector('[role="dialog"]')!.textContent).toContain("Apify");
   });
 
   it("the row menu moves an account to another workspace: an account is one workspace's or none's", async () => {

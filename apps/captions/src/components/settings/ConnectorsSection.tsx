@@ -370,7 +370,7 @@ export function ConnectorsSection({ back = "/settings/connectors", compact, proj
       <AddAccountDialog
         platform={adding}
         signIn={!!adding && !!loginOf(adding) && !!view.logins[loginOf(adding)!] && !off.includes(loginOf(adding)!)}
-        needsKey={!view.apify.configured}
+        needsKey={!view.apify.configured || view.apify.valid === false}
         onKey={() => void reload()}
         busy={!!asking}
         onClose={() => setAdding(null)}
@@ -488,7 +488,7 @@ function ChooseAccountDialog({ choose, onDone }: { choose: ConnectorsView["choos
 function AddAccountDialog({ platform, signIn, needsKey, busy, onClose, onSignIn, onAdd, onKey }: {
   platform: SocialPlatform | null;
   signIn: boolean;
-  /** No Apify key yet: its row sits above the handle, so setup can add it without leaving the dialog. */
+  /** No Apify key that works (none, or one Apify refused: the server keeps it): its row sits under the handle, so setup can add it without leaving the dialog. */
   needsKey: boolean;
   onKey: () => void;
   busy: boolean;
@@ -578,7 +578,12 @@ function AddAccountDialog({ platform, signIn, needsKey, busy, onClose, onSignIn,
         {/* outside the form: the key's own dialog submits through React's bubbling, which would also add the handle */}
         {needsKey && (
           <div className="-mt-2 rounded-md border">
-            <ApifyKeyRow onChanged={onKey} />
+            <ApifyKeyRow
+              onChanged={() => {
+                setError(null); // "Needs an Apify key" from an Add before the key was there
+                onKey();
+              }}
+            />
           </div>
         )}
       </SettingsDialogContent>
