@@ -163,7 +163,8 @@ export function stretchFilter(tl: Timeline, item: Item, s: Stretch, at: number, 
     }
   }
   if (scales.length) {
-    const z = scales.map((x) => `(${x})`).join("*");
+    // never under 1: a punch's float end (0.9999…) trunc'd 2 px under the crop, and ffmpeg failed or crashed
+    const z = `max(1,${scales.map((x) => `(${x})`).join("*")})`;
     out.push(`scale=w='trunc(${PW}*${z}/2)*2':h='trunc(${PH}*${z}/2)*2':eval=frame`);
     // copied after the crop: a filter drawing in place over a crop of a frame whose size changes every frame (negate,
     // lut) crashes ffmpeg 9 (measured on 9.0.2)
