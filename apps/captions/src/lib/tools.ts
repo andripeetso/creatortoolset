@@ -14,7 +14,7 @@ import {
   Scissors,
   Video,
 } from "lucide-react";
-import { canUse, type Me } from "@/lib/auth";
+import { canUse, type Me, canUseTile } from "@/lib/auth";
 import { useStudio } from "@/lib/store";
 import type { WebPlugin } from "@/lib/plugin";
 import { webPlugins } from "@/plugins.gen";
@@ -136,7 +136,7 @@ const BUILTIN_OTHER: Tool[] = [
     icon: ScreenShare,
     name: "Screen Recorder",
     desc: "Record your screen, a window or an area, with your camera and voice.",
-    can: (me) => canUse(me, "review") || canUse(me, "notes"),
+    can: (me) => canUseTile(me, "record"),
   },
   {
     to: "/documents",

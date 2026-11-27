@@ -19,7 +19,7 @@ describe("canChange in a plain browser", () => {
 
   it("has only the tools with something to look at", () => {
     const viewing: Me = { ...admin, viewOnly: true };
-    expect(TOOLS.filter((t) => canUse(viewing, t))).toEqual(["instagram", "workshop", "review", "media", "editor", "notes"]);
+    expect(TOOLS.filter((t) => canUse(viewing, t))).toEqual(["instagram", "workshop", "review", "media", "editor"]);
     expect(canUseTile(viewing, "record")).toBe(false);
     expect(canUseTile(admin, "record")).toBe(true);
     // a plug-in's gate is not a tool: it stays as the account has it

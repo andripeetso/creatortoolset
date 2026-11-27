@@ -16,11 +16,11 @@ export type Tool = (typeof TOOLS)[number];
 export const isTool = (t: unknown): t is Tool => TOOLS.includes(t as Tool);
 
 /**
- * The tools that hold something to look at (posts, scripts, clips, edits, reviews, recordings): the ones a plain
- * browser shows, where an account only views (AGENTS.md "The browser is for viewing"). The rest make something from a
- * file, which is done in the apps, so a plain browser has no tile or page for them.
+ * The tools that hold something to look at (posts, scripts, clips, edits, reviews): the ones a plain browser shows,
+ * where an account only views (AGENTS.md "The browser is for viewing"). The rest are worked with in the apps, so a
+ * plain browser has no tile or page for them. A Video Notes recording is watched there by its share link.
  */
-export const VIEWED: readonly Tool[] = ["instagram", "workshop", "media", "editor", "review", "notes"];
+export const VIEWED: readonly Tool[] = ["instagram", "workshop", "media", "editor", "review"];
 
 /**
  * A plug-in's access gate, kept in the same `off` list as the apps (users.json). Plug-ins declare their ids

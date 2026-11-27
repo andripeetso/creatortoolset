@@ -216,7 +216,8 @@ export default function ToolsetHome() {
   const make = showCounts ? boxes.findIndex((b) => b.g.id === "make") : -1;
   const stopAt = make > 0 ? make : Infinity;
   const boxColumns = ["", "hub:grid-cols-1", "hub:grid-cols-[1fr_auto_1fr]", "hub:grid-cols-[1fr_auto_1fr_auto_1fr]"][boxes.length] ?? "";
-  const extraTiles = known ? [...extras.map((k) => tile(k, true)), ...pluginTilesFor("Extras", me).map((t) => pluginTile(t, true))] : [];
+  // a plain browser has no Extras: none of them is for viewing, and a plug-in's tile is a tool too
+  const extraTiles = known && !me?.viewOnly ? [...extras.map((k) => tile(k, true)), ...pluginTilesFor("Extras", me).map((t) => pluginTile(t, true))] : [];
 
   return (
     <div
