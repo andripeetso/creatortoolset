@@ -26,15 +26,6 @@ export function originalOf(db: DatabaseSync, versionId: string): string | undefi
   return (db.prepare(`SELECT original FROM (${PAIRS}) WHERE copy = ? LIMIT 1`).get(versionId) as { original: string } | undefined)?.original;
 }
 
-/** The source key of `versionId`'s blurred copy when this server holds its file (not one kept on a Mac), else undefined. */
-export function blurredCopyKey(db: DatabaseSync, versionId: string): string | undefined {
-  return (
-    db.prepare(`SELECT c.source_key FROM (${PAIRS}) p JOIN asset_versions c ON c.id = p.copy WHERE p.original = ? AND c.source_key NOT LIKE 'mac:%' LIMIT 1`).get(versionId) as
-      | { source_key: string }
-      | undefined
-  )?.source_key;
-}
-
 // each analysis: its rows by version, the search index filled with it, the job whose result it is. `ai`: the rows a new
 // result replaces (what the person wrote stays); `keep`: copied once, never replaced (their notes from edits)
 const PARTS: { table: string; where?: string; ai?: string; keep?: true; fts?: { table: string; cols: string[] }; job?: string }[] = [

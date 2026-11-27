@@ -30,7 +30,6 @@ import { askedWatch, storeTimeline, sweepWatch, wantsWatch, watchAfter } from ".
 import { picturesHere, sheetPictures, startPictureCatchUp, wakePictures } from "./pictures";
 import { organizeOnProbe, refileAllShoots, rereadUploadedDates } from "./organize";
 import { dropHeldCopy, dropMacFrames, macFrames } from "./on-mac";
-import { blurredCopyKey } from "./blur-mirror";
 import { mayLeave } from "./upload-gate";
 import { backfillQuick, fillQuick } from "./locate";
 import { draining } from "../server-update";
@@ -811,17 +810,10 @@ async function lookOnMac(db: ReturnType<typeof libraryDb>, v: VersionRow, job: J
   const copy = takeWatchCopy(v.id);
   // the watch runs beside the look lane (timeline.ts watchAfter): the copy goes when it ends
   if (copy) void watchAfter(db, v.id, async () => copy, job.actor, true).finally(() => rm(copy, { force: true }));
+  // asked for and not sent: a Mac app from before timelines (tried again later, timeline.ts RETRY_MS)
   else {
-    // Blur faces: an original not blurred never leaves its Mac (mac-look.ts), so the timeline is watched from its blurred copy here
-    const blurred = blurredCopyKey(db, v.id);
-    // shortcut: a copy in a bucket is downloaded and left in its temp folder; delete it after the watch if buckets hold blurred copies
-    if (blurred && wantsWatch(db, v.id, job.actor)) void watchAfter(db, v.id, () => blobs.localCopy(blurred), job.actor, true);
-    else {
-      // asked for and not sent: a clip still waiting for its blur, or a Mac app from before timelines (tried again later, timeline.ts RETRY_MS)
-      if (wantsWatch(db, v.id, job.actor))
-        storeTimeline(db, v.id, { error: mayLeave(v.library_id, { versionId: v.id }).ok ? "The Mac this file is on sent no copy to watch: it could not make one, or Creator Toolset there needs an update" : "Needs its blurred copy: Blur faces sends no clip that is not blurred" });
-      askedWatch.delete(v.id);
-    }
+    if (wantsWatch(db, v.id, job.actor)) storeTimeline(db, v.id, { error: "The Mac this file is on sent no copy to watch: it could not make one, or Creator Toolset there needs an update" });
+    askedWatch.delete(v.id);
   }
 }
 
