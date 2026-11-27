@@ -4,7 +4,7 @@ import { CornerNav } from "@/components/CornerNav";
 import { MacAppUpdateBanner } from "@/components/MacAppUpdateBanner";
 import { Routes, Route, Navigate, useLocation, useNavigate, useParams, type Location } from "react-router";
 import { useTelemetry } from "@/lib/telemetry";
-import { lazy, Suspense, useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
+import { lazy, memo, Suspense, useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
 import ToolsetHome from "./pages/ToolsetHome";
 import Home from "./pages/Home";
 import EnhancePage from "./pages/EnhancePage";
@@ -71,7 +71,8 @@ function pluginScreens() {
     EditorScreen: replacementFor(webPlugins, "editor") ?? EditorPage,
     EditorEditScreen: replacementFor(webPlugins, "editorEdit") ?? EditorEditPage,
     LibraryScreen: replacementFor(webPlugins, "media") ?? LibraryPage,
-    FinalsScreen: replacementFor(webPlugins, "finals") ?? FinalsPage,
+    // memo: opening or closing a piece (the window over the list, same route) leaves the list's cards as they are
+    FinalsScreen: memo(replacementFor(webPlugins, "finals") ?? FinalsPage),
   };
 }
 let screens: ReturnType<typeof pluginScreens> | undefined;

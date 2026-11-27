@@ -18,7 +18,7 @@ const piece = (id: string, writable?: boolean, versions = 0): Piece => ({
   ...(writable === undefined ? {} : { writable }),
 });
 
-const actionsWith = (onTrash: (p: Piece) => void, onMerge = vi.fn()) => ({ zipUrl: () => "/zip", onShare: vi.fn(), onPostLink: vi.fn(), onMerge, onTrash });
+const actionsWith = (onTrash: (p: Piece) => void, onMerge = vi.fn(), onPosted = vi.fn()) => ({ zipUrl: () => "/zip", onShare: vi.fn(), onPostLink: vi.fn(), onPosted, onMerge, onTrash });
 
 /** Right-clicks `p`, reads the menu, then clicks the item that says `click`. No `actions`: a library this account only looks at. */
 async function rightClick(p: Piece, actions: PieceActions | undefined, others: Piece[] = [], click = "Move to trash"): Promise<string> {
@@ -62,6 +62,15 @@ describe("a Finals piece's right-click menu", () => {
     const onMerge = vi.fn();
     await rightClick(piece("a", true, 1), actionsWith(vi.fn(), onMerge), [piece("c", true, 1)], "Tiny c");
     expect(onMerge).toHaveBeenCalledWith(expect.objectContaining({ id: "a" }), expect.objectContaining({ id: "c" }));
+  });
+
+  it("marks a piece that is not posted as posted, and offers it no more once it is", async () => {
+    const onPosted = vi.fn();
+    await rightClick(piece("a", true, 1), actionsWith(vi.fn(), vi.fn(), onPosted), [], "Mark as posted");
+    expect(onPosted).toHaveBeenCalledWith(expect.objectContaining({ id: "a" }));
+    const posted = piece("p", true, 1);
+    posted.items[0].postings = [{ id: 1, platform: "instagram", url: null, postedAt: 1, createdBy: "owner" }];
+    expect(await rightClick(posted, actionsWith(vi.fn()))).not.toContain("Mark as posted");
   });
 
   it("offers nothing in a library the account only looks at", async () => {

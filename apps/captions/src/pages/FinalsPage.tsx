@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router";
-import { Clapperboard, Download, ExternalLink, GalleryHorizontalEnd, ImageOff, Layers, LayoutGrid, Link2, Merge, RotateCcw, Share2, Trash2 } from "lucide-react";
+import { CircleCheck, Clapperboard, Download, ExternalLink, GalleryHorizontalEnd, ImageOff, Layers, LayoutGrid, Link2, Merge, RotateCcw, Share2, Trash2 } from "lucide-react";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -14,6 +14,7 @@ import {
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { ClipShare } from "./library/ClipShare";
 import { PostingForm } from "./FinalsPiece";
+import { PLATFORMS } from "@contracts/connectors";
 import { undoable } from "@/lib/undo";
 import type { AssetCard, Collection, LibrarySummary, Piece } from "@contracts/library";
 import { LibraryFacetBar } from "@/components/LibraryFacetBar";
@@ -233,12 +234,14 @@ export interface PieceActions {
   onShare: (piece: Piece) => void;
   /** opens the post link form for the piece's winner (else its first version) */
   onPostLink: (piece: Piece) => void;
+  /** a posting with no link on the winner (else its first version), with Undo */
+  onPosted: (piece: Piece) => void;
   /** `from`'s versions move into `piece`, with Undo */
   onMerge: (piece: Piece, from: Piece) => void;
   onTrash: (piece: Piece) => void;
 }
 
-/** A piece's right-click menu (grid and list): Open, Download, Share, Add post link, Merge piece, Move to trash. */
+/** A piece's right-click menu (grid and list): Open, Download, Share, Mark as posted, Add post link, Merge piece, Move to trash. */
 function PieceMenu({ piece, others, actions, children }: { piece: Piece; others: Piece[]; actions?: PieceActions; children: React.ReactElement }) {
   if (!actions) return children;
   const into = others.filter((o) => o.id !== piece.id);
@@ -262,6 +265,11 @@ function PieceMenu({ piece, others, actions, children }: { piece: Piece; others:
         <ContextMenuItem onSelect={() => actions.onShare(piece)}>
           <Share2 /> Share
         </ContextMenuItem>
+        {has && !piece.items.some((i) => i.postings.length > 0) && (
+          <ContextMenuItem onSelect={() => actions.onPosted(piece)}>
+            <CircleCheck /> Mark as posted
+          </ContextMenuItem>
+        )}
         {has && (
           <ContextMenuItem onSelect={() => actions.onPostLink(piece)}>
             <Link2 /> Add post link
@@ -318,7 +326,7 @@ function PieceRow({ tile, work }: { tile: FinalsTile; work?: WorkshopFinal }) {
           {versions} {versions === 1 ? noun : `${noun}s`} · {posted ? "Posted" : "Not posted"}
         </span>
       </span>
-      {work?.status === "toPost" && <span className="shrink-0 rounded bg-emerald-600/90 px-1.5 py-0.5 text-[11px] font-medium text-white">Ready to post</span>}
+      {!posted && work?.status === "toPost" && <span className="shrink-0 rounded bg-emerald-600/90 px-1.5 py-0.5 text-[11px] font-medium text-white">Ready to post</span>}
       <span className={cn("shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium", KIND_BADGE[kind])}>{KIND_LABEL[kind]}</span>
     </Link>
   );
@@ -349,7 +357,7 @@ function PieceCard({ tile, work }: { tile: FinalsTile; work?: WorkshopFinal }) {
         )}
         <div className="absolute left-1.5 top-1.5 flex flex-wrap gap-1 sm:left-2 sm:top-2">
           <span className={cn("rounded px-1.5 py-0.5 text-[11px] font-medium", KIND_BADGE[kind])}>{KIND_LABEL[kind]}</span>
-          {work?.status === "toPost" && <span className="rounded bg-emerald-600/90 px-1.5 py-0.5 text-[11px] font-medium text-white">Ready to post</span>}
+          {!posted && work?.status === "toPost" && <span className="rounded bg-emerald-600/90 px-1.5 py-0.5 text-[11px] font-medium text-white">Ready to post</span>}
           {badges.map((b, i) => (
             <span key={i} className="rounded bg-black/70 px-1.5 py-0.5 text-[11px] font-medium text-white">
               {b.label}
@@ -389,6 +397,16 @@ export default function FinalsPage() {
   const [posting, setPosting] = useState<Piece | null>(null);
   const library = libraries?.[0] ?? null;
   const libId = library?.id;
+  // a posting on the piece's winner (else its first version); Undo takes it out again
+  const post = (lib: string, piece: Piece, input: { platform: string; url?: string }, what: string) => {
+    const item = piece.items.find((i) => i.winner) ?? piece.items[0];
+    void addPosting(lib, piece.id, item.id, input).then((next) => {
+      void shown.refresh();
+      // the new posting is the item's highest id
+      const added = Math.max(...(next.items.find((i) => i.id === item.id)?.postings.map((x) => x.id) ?? []));
+      if (added > 0) undoable(what, () => removePosting(lib, next.id, item.id, added).then(() => shown.refresh(), (e: unknown) => setError(message(e))));
+    }, (e: unknown) => setError(message(e)));
+  };
   const collections = useCachedLoad<Collection[]>(libId ? `/api/library/${libId}/collections` : null, () => listCollections(libId!));
   // undefined: not read yet; null: the library has no Finals collection (nothing is created on read)
   const finals = collections.data ? (collections.data.find(isFinals) ?? null) : undefined;
@@ -447,6 +465,7 @@ export default function FinalsPage() {
                   zipUrl: (p) => pieceZipUrl(library.id, p.id),
                   onShare: setSharing,
                   onPostLink: setPosting,
+                  onPosted: (p) => post(library.id, p, { platform: PLATFORMS[0].id }, "marked as posted"),
                   onMerge: (p, from) =>
                     void mergePiece(library.id, p.id, from.id).then(() => {
                       void shown.refresh();
@@ -482,14 +501,8 @@ export default function FinalsPage() {
             <PostingForm
               onCancel={() => setPosting(null)}
               onAdd={(input) => {
-                const item = posting.items.find((i) => i.winner) ?? posting.items[0];
                 setPosting(null);
-                void addPosting(library.id, posting.id, item.id, input).then((next) => {
-                  void shown.refresh();
-                  // the new posting is the item's highest id
-                  const added = Math.max(...(next.items.find((i) => i.id === item.id)?.postings.map((x) => x.id) ?? []));
-                  if (added > 0) undoable("post link added", () => removePosting(library.id, next.id, item.id, added).then(() => shown.refresh(), (e: unknown) => setError(message(e))));
-                }, (e: unknown) => setError(message(e)));
+                post(library.id, posting, input, "post link added");
               }}
             />
           )}

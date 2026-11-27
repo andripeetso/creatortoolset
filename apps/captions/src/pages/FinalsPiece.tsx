@@ -855,9 +855,13 @@ async function loadPieceView(pieceId: string): Promise<PieceView> {
   const found = hits.find((h): h is { library: LibrarySummary; piece: Piece } => h !== null) ?? null;
   if (!found) return { found, cards: [], others: [], workshop: await workshop };
   // the cards come with it: the versions would otherwise read "Not in the Media Library" until they arrive
-  const [cards, collections] = await Promise.all([cardsOfVersions(found.library.id, pieceVersions([found.piece])), listCollections(found.library.id)]);
-  const finals = collections.find(isFinals);
-  const siblings = finals ? await listPieces(found.library.id, finals.id) : [];
+  const [cards, siblings] = await Promise.all([
+    cardsOfVersions(found.library.id, pieceVersions([found.piece])),
+    listCollections(found.library.id).then((cs) => {
+      const finals = cs.find(isFinals);
+      return finals ? listPieces(found.library.id, finals.id) : [];
+    }),
+  ]);
   return { found, cards, others: siblings.filter((p) => p.id !== pieceId), workshop: await workshop };
 }
 
