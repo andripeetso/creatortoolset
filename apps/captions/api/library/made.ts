@@ -5,6 +5,7 @@ import { PICTURE_MODEL } from "../lib/device-picture";
 import { deviceOf, isOnline, listDevices } from "../lib/devices";
 import { pluginDeviceJobs } from "../lib/plugin";
 import { libraryWorkspace, serverWorks } from "../work/server-work";
+import { libraryRole } from "./access";
 import { jobVersions } from "./blur-mirror";
 import { BLUR_SQL, keepsOnlyOriginals, libraryDb, librarySetting, libraryUploadStored } from "./db";
 import { FINISHED } from "./query";
@@ -16,7 +17,7 @@ import { wantsProxy } from "./media/proxy";
 import type { ProbeSummary } from "./media/probe";
 import { wakePictures } from "./pictures";
 import { FIRST_LOOK, hasLines, LOOK_LABEL, LOOK_MIN_S, MAC_WAITS, queueLook, RELOOK_WAITS } from "./shots";
-import { libraryWatchModel, REFUSED } from "./timeline";
+import { libraryWatchModel, ON_GEMINI, REFUSED } from "./timeline";
 import { transcribeRoute } from "./transcribe";
 import { mayLeave } from "./upload-gate";
 import { leaveToComputers } from "./worker";
@@ -96,7 +97,7 @@ const SPEC: Record<MadeKind, { job?: string; of: string; have: string; can?: str
   // a clip Gemini turned down is settled (timeline.ts REFUSED): skipped, never missing, or Make would only be turned down again
   timeline: {
     job: "look",
-    of: `${LOOKABLE} AND ${LINES} AND NOT ${watched(` AND x.error LIKE '${REFUSED}%'`)}`,
+    of: `${LOOKABLE} AND ${LINES} AND NOT (${watched(` AND x.error LIKE '${REFUSED}%'`)} AND ${ON_GEMINI})`,
     have: watched(" AND x.error IS NULL"),
     open: `(${open("look")} OR (${pressed("timeline")} AND NOT ${watched(" AND x.at >= json_extract(l.settings, '$.timelineAsked')")} AND NOT ${failedJob("look")}))`,
   },
@@ -176,7 +177,7 @@ export async function libraryMade(libraryId: string, username: string): Promise<
       ...(r.failed ? { failed: r.failed } : {}),
       ...(r.stopped ? { stopped: r.stopped } : {}),
       ...(r.queued && s.job ? waitOf(libraryId, kind, username) : {}),
-      ...(r.queued && kind === "blur" ? blurWait(libraryId) : {}),
+      ...(r.queued && kind === "blur" ? blurWait(libraryId, username) : {}),
       ...(await makeCost(libraryId, username, kind, n, seconds)),
       ...engineOf(libraryId, kind, username),
       ...(n ? { minutes: await makeMinutes(libraryId, username, kind, n, seconds) } : {}),
@@ -187,10 +188,14 @@ export async function libraryMade(libraryId: string, username: string): Promise<
   return out;
 }
 
-/** Why the files marked Blur faces wait, as the slot that covers them says (lib/plugin.ts preparing): switched off, no AI provider. */
-function blurWait(libraryId: string): Pick<LibraryMade, "why" | "href"> {
+/**
+ * Why the files marked Blur faces wait, as the slot that covers them says (lib/plugin.ts preparing): switched off, no AI
+ * provider. Where it is changed only for the library's owner: the switch and the provider are theirs, and anyone else
+ * would open their own.
+ */
+function blurWait(libraryId: string, username: string): Pick<LibraryMade, "why" | "href"> {
   const w = pluginDeviceJobs().flatMap((j) => j.preparing?.(libraryId) ?? []).find((p) => p.waiting && p.why);
-  return w ? { why: w.why, ...(w.href ? { href: w.href } : {}) } : {};
+  return w ? { why: w.why, ...(w.href && libraryRole(username, libraryId) === "owner" ? { href: w.href } : {}) } : {};
 }
 
 /** The files of a media kind a kind never makes, and why in a few words (the rest of `of` is in SPEC). */
@@ -373,13 +378,17 @@ export function makeMissing(libraryId: string, kind: MadeKind, username: string,
 // a job's clip (a) and that clip's current version (v), each by its key: one row per job
 const CLIP_OF_JOB = "JOIN asset_versions jv ON jv.id = j.version_id JOIN assets a ON a.id = jv.asset_id JOIN asset_versions v ON v.id = a.current_version_id";
 
-/** Retry: the failed and stopped jobs of `kind` in the library queued again as whoever queued them (a failed file that has it is marked done, jobs.ts). */
+/**
+ * Retry: the failed and stopped jobs of `kind` in the library queued again as whoever queued them (a failed file that has
+ * it is marked done, jobs.ts). One with nobody named (the server's own backfill, worker.ts) goes to whoever added the file:
+ * with no name no computer may take it, and it waited for good.
+ */
 export function retryFailed(libraryId: string, kind: string, again = false): number {
   const db = libraryDb();
   // `again` (Retry on the timelines): only a look of a clip that has its lines, never a clip's first, failed or stopped
   const rows = db
     .prepare(
-      `SELECT j.version_id, j.actor FROM jobs j ${CLIP_OF_JOB}
+      `SELECT j.version_id, IFNULL(j.actor, jv.created_by) AS actor FROM jobs j ${CLIP_OF_JOB}
        WHERE j.library_id = ? AND j.kind = ? AND j.state = 'failed' AND j.version_id IN ${jobVersions(kind)} AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL${again ? ` AND ${hasLines("j")}` : ""}`,
     )
     .all(libraryId, kind) as { version_id: string; actor: string | null }[];

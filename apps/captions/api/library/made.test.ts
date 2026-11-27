@@ -245,6 +245,10 @@ describe("what's made", () => {
     expect(refused.missing).toBe(0);
     expect(refused.skipped).toMatchObject({ why: "no shot descriptions yet, or refused by Gemini" });
     expect(refused.skipped!.n).toBeGreaterThanOrEqual(1);
+    // switched to Antigravity, it is a failed watch as any other: missing again, so Make reaches it
+    d.prepare("UPDATE libraries SET settings = json_set(settings, '$.timelineModel', 'antigravity') WHERE id = 'lib_m'").run();
+    expect((await row("timeline")).missing).toBe(1);
+    d.prepare("UPDATE libraries SET settings = json_remove(settings, '$.timelineModel') WHERE id = 'lib_m'").run();
     d.prepare("UPDATE timelines SET error = 'failed' WHERE version_id = ?").run(v);
   });
 
@@ -401,6 +405,13 @@ describe("what's made", () => {
     expect(job(v, "sprite")?.state).toBe("stopped");
     expect(retryFailed("lib_m", "sprite")).toBeGreaterThanOrEqual(1);
     expect(job(v, "sprite")?.state).toBe("queued");
+    // a failed one with nobody named (the server's own backfill) is queued for whoever added the file: with no name no
+    // computer may take it, and Retry left "1 file queued" for good
+    const nobody = clip("ast-nobody");
+    d.prepare("INSERT INTO jobs (library_id, version_id, kind, state, actor, error) VALUES ('lib_m', ?, 'sprite', 'failed', NULL, 'x')").run(nobody);
+    retryFailed("lib_m", "sprite");
+    expect(d.prepare("SELECT state, actor FROM jobs WHERE version_id = ? AND kind = 'sprite'").get(nobody)).toEqual({ state: "queued", actor: "local" });
+    d.prepare("UPDATE assets SET trashed_at = 1 WHERE id = 'ast-nobody'").run();
     // stopping pressed timelines leaves shot descriptions queued
     const look = clip("ast-look", { seconds: 120 });
     d.prepare("INSERT INTO jobs (library_id, version_id, kind, state, actor) VALUES ('lib_m', ?, 'look', 'queued', 'local')").run(look);
@@ -419,6 +430,10 @@ describe("what's made", () => {
       // switched off (a Stop held it): the row says so and opens its settings, where it read "1 file queued" for good
       preparing.ids = [{ versionId: v, waiting: true, why: "Face Blur is off for new files", href: "/settings/blur-faces" }];
       expect(await row("blur")).toMatchObject({ queued: before + 1, why: "Face Blur is off for new files", href: "/settings/blur-faces" });
+      // the switch is the owner's: anyone else reads why, with no button that would open their own
+      const theirs = (await libraryMade("lib_m", "anna")).find((m) => m.kind === "blur")!;
+      expect(theirs.why).toBe("Face Blur is off for new files");
+      expect(theirs.href).toBeUndefined();
     } finally {
       preparing.ids = [];
       d.prepare("UPDATE assets SET trashed_at = 1 WHERE id = 'ast-toblur'").run();

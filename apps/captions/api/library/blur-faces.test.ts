@@ -565,6 +565,13 @@ describe("each file's blur answer, set once when it comes in (owner, 2026-11-20)
     libraryDb().prepare("UPDATE libraries SET settings = json_set(settings, '$.finalsUpload', 'proxies') WHERE id = 'lib_kids'").run();
     expect(uploadFor({ id: "lib_kids", collectionId: finals, blur: "no" })).toBe("proxies");
     libraryDb().prepare("UPDATE libraries SET settings = json_remove(settings, '$.finalsUpload') WHERE id = 'lib_kids'").run();
+    // indexed on its Mac (the project's Finals folder there), such a final follows Upload at once: Face Blur's answer
+    // used to send it on, and with no such wait it stayed on that Mac for good
+    const final = await body(onMac("lib_kids", "Final reel.mov", { collectionId: finals }));
+    expect(blurOf(final.assetId)).toBe("no");
+    expect(d.prepare("SELECT state FROM jobs WHERE version_id = ? AND kind = 'send'").get(final.versionId)).toEqual({ state: "queued" });
+    // one kept as filmed on the person's word is left as it was: nothing is queued for it here
+    expect(d.prepare("SELECT 1 FROM jobs WHERE version_id = ? AND kind = 'send'").get((await body(onMac("lib_kids", "Kept reel.mov", { blur: false }))).versionId)).toBeUndefined();
     const kept = await body(onMac("lib_kids", "Kept as filmed.mov", { blur: false }));
     expect(blurOf(kept.assetId)).toBe("no");
   });

@@ -265,7 +265,9 @@ export function wantsWatch(db: DatabaseSync, versionId: string, actor: string | 
   if (!r || !(asked || r.pressed || r.auto) || !canWatch(db, r.library_id, actor)) return false;
   const t = rowOf(db, versionId);
   if (!t) return true;
-  if (t.error) return asked || (!t.error.startsWith(REFUSED) && (!!r.pressed || now - t.at >= RETRY_MS));
+  // one Gemini turned down is settled while the library watches on Gemini; on Antigravity it is a failed watch as any other
+  const settled = t.error?.startsWith(REFUSED) && libraryWatchModel(db, r.library_id) !== "antigravity";
+  if (t.error) return asked || (!settled && (!!r.pressed || now - t.at >= RETRY_MS));
   // a picture-only timeline is made again with its sound once the library watches on a Gemini key that has credit
   return (
     t.level !== libraryLookLevel(r.library_id) ||
@@ -562,11 +564,13 @@ const callPart = (key: string, model: GeminiModel, f: { uri: string; mimeType: s
   );
 
 /**
- * A watch Gemini turned down by its own rules (its error starts with this): the clip is settled. It is not watched again
- * by itself or by Make for the missing (each try uploads the video and is turned down the same), only when asked for by
- * name, and What's made counts it skipped, not missing.
+ * A watch Gemini turned down by its own rules (its error starts with this): the clip is settled while the library watches
+ * on Gemini (ON_GEMINI). It is not watched again by itself or by Make for the missing (each try uploads the video and is
+ * turned down the same), only when asked for by name, and What's made counts it skipped, not missing.
  */
 export const REFUSED = "Refused by Gemini";
+/** SQL on the library `l`: its timelines are watched on a Gemini key. A refusal settles a clip only then: switched to Antigravity, the clip is tried there. */
+export const ON_GEMINI = "IFNULL(json_extract(l.settings, '$.timelineModel'), '') != 'antigravity'";
 const REFUSAL = /SAFETY|PROHIBITED|BLOCKLIST|SPII|RECITATION/;
 
 /** A part's answer: its events inside a..b and what it cost. */
@@ -787,7 +791,7 @@ const WANTS = `FROM assets a JOIN asset_versions c ON c.id = a.current_version_i
   WHERE a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND v.created_by IS NOT NULL AND ((${AUTO} AND ${SINCE_STOP}) OR ${PRESSED})
     AND (t.version_id IS NULL OR (t.error IS NOT NULL AND (t.at <= ? OR ${PRESSED})) OR (t.error IS NULL AND IFNULL(t.level, '') != IFNULL(json_extract(l.settings, '$.lookLevel'), 'standard'))
          OR (t.error IS NULL AND t.model = 'antigravity' AND IFNULL(json_extract(l.settings, '$.timelineModel'), '') != 'antigravity'))
-    AND IFNULL(t.error, '') NOT LIKE '${REFUSED}%'`;
+    AND NOT (IFNULL(t.error, '') LIKE '${REFUSED}%' AND ${ON_GEMINI})`;
 /** A failed watch the sweep asks again as soon as there is room, not RETRY_MS later. */
 function askSoon(db: DatabaseSync, versionId: string): void {
   db.prepare("UPDATE timelines SET at = 0 WHERE version_id = ?").run(versionId);

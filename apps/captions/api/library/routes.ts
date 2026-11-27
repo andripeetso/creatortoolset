@@ -946,7 +946,11 @@ libraryApp.post("/:id/on-mac", async (c) => {
     if (!col) return c.json({ error: "Not found", code: "not_found" }, 404);
     if (col.kind !== "manual" && !rollFolder(db(), libraryId, x.collectionId)) return c.json({ error: "Clips cannot be moved into a saved search", code: "conflict" }, 409);
   }
-  return c.json(await indexOnMac(libraryId, user.username, x));
+  const made = await indexOnMac(libraryId, user.username, x);
+  // a final kept as filmed with nobody asked (blurAtIntake): until then it waited for Face Blur, whose answer sent it on.
+  // With no such wait it follows Upload now (derived.ts followUpload), or it stayed on that Mac and no phone or link played it
+  if (blursFaces(libraryId) && x.blur === "no" && raw?.blur == null && "versionId" in made) followUpload(made.versionId);
+  return c.json(made);
 });
 
 // GET /api/library/:id/no-picture?device=&after= → { versions: [{ versionId, path }] }: this library's photos with no thumbnail

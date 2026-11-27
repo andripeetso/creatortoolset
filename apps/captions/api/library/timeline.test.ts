@@ -720,6 +720,16 @@ describe("Antigravity", () => {
     expect(e).toEqual([{ a: 5, b: 8, what: "a jump", change: "a cut" }]);
   });
 
+  it("a clip Gemini turned down is tried on Antigravity once the library watches there: a refusal settles it only on Gemini", async () => {
+    const { v } = await seed("agy-refused");
+    saveMyKey("local", "GEMINI_API_KEY", "gk-test");
+    libraryDb().prepare("INSERT OR REPLACE INTO timelines (version_id, events, error, at) VALUES (?, '[]', 'Refused by Gemini: PROHIBITED_CONTENT', ?)").run(v, Date.now() - RETRY_MS - 1000);
+    // on Gemini: settled, however long ago it was turned down
+    expect(wantsWatch(libraryDb(), v, "local")).toBe(false);
+    withAntigravity();
+    expect(wantsWatch(libraryDb(), v, "local")).toBe(true);
+  });
+
   it("picked with no Antigravity: nothing runs, a Gemini key or not", async () => {
     const { v } = await seed("agy-none");
     saveMyKey("local", "GEMINI_API_KEY", "gk-test");

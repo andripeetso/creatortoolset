@@ -2,8 +2,15 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterAll, describe, expect, it } from "vitest";
-import { makeProxy } from "./proxy";
+import { afterAll, describe, expect, it, vi } from "vitest";
+
+// the real ffmpeg, behind a spy: one test makes its first run fail as a sound track with no decoder does
+vi.mock("./run", async (real) => {
+  const m = await real<typeof import("./run")>();
+  return { ...m, ffmpegTo: vi.fn(m.ffmpegTo) };
+});
+const { ffmpegTo } = await import("./run");
+const { makeProxy } = await import("./proxy");
 
 // Real ffmpeg on small generated clips: the size rule is what the tests measure (UNIFIED-PRD §4.1, the size matrix).
 const dir = mkdtempSync(path.join(tmpdir(), "proxy-test-"));
@@ -36,6 +43,19 @@ describe.skipIf(!ffmpegHere)("makeProxy: never bigger than its source, at every 
     const kept = await makeProxy(src, out, false, quality, 2);
     expect(existsSync(out)).toBe(kept); // no file left behind when it is not kept
     if (kept) expect(statSync(out).size).toBeLessThan(statSync(src).size);
+  }, 60_000);
+
+  it("a sound track ffmpeg has no decoder for (an iPhone's spatial one): the proxy is made with the first track alone", async () => {
+    const src = clip("spatial.mp4", "1920x1080", "libx264", 12000);
+    const out = path.join(dir, "spatial-proxy.mp4");
+    vi.mocked(ffmpegTo).mockClear();
+    vi.mocked(ffmpegTo).mockRejectedValueOnce(new Error("[aist#0:2/none @ 0x1] Decoding requested, but no decoder found for: none"));
+    expect(await makeProxy(src, out, false, "standard", 2)).toBe(true);
+    const maps = vi.mocked(ffmpegTo).mock.calls.map(([, args]) => args.filter((a, i) => args[i - 1] === "-map").join(" "));
+    expect(maps).toEqual(["0:v:0 0:a?", "0:v:0 0:a:0?"]);
+    // any other failure is the proxy's own: not tried again
+    vi.mocked(ffmpegTo).mockRejectedValueOnce(new Error("Invalid data found when processing input"));
+    await expect(makeProxy(src, out, false, "standard", 2)).rejects.toThrow("Invalid data");
   }, 60_000);
 
   it("a 1080p clip at standard quality: the proxy is kept and is smaller than the source", async () => {

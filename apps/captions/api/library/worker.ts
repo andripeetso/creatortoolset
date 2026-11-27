@@ -458,7 +458,7 @@ export async function backfillSprite(): Promise<boolean> {
   const db = libraryDb();
   const v = db
     .prepare(
-      `SELECT v.id, a.library_id FROM assets a JOIN asset_versions v ON v.id = a.current_version_id JOIN libraries l ON l.id = a.library_id
+      `SELECT v.id, a.library_id, v.created_by FROM assets a JOIN asset_versions v ON v.id = a.current_version_id JOIN libraries l ON l.id = a.library_id
        WHERE a.kind = 'video' AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND v.state = 'ready'
          AND (l.storage_kind = 'local' OR EXISTS (SELECT 1 FROM derivatives x WHERE x.version_id = v.id AND x.kind = 'proxy'))
          AND EXISTS (SELECT 1 FROM jobs f WHERE f.version_id = v.id AND f.kind = 'fingerprint')
@@ -466,16 +466,18 @@ export async function backfillSprite(): Promise<boolean> {
          AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.version_id = v.id AND j.kind = 'sprite')
        ORDER BY a.created_at DESC, a.id DESC LIMIT 1`,
     )
-    .get() as { id: string; library_id: string } | undefined;
+    .get() as { id: string; library_id: string; created_by: string | null } | undefined;
   if (!v) return backfillStrayStrip();
   const job: JobRow = { id: 0, library_id: v.library_id, version_id: v.id, kind: "sprite", state: "running", attempts: 1, run_after: 0, lease_until: null, actor: null, error: null };
   try {
     await run(job);
   } catch (e) {
-    db.prepare("INSERT OR IGNORE INTO jobs (library_id, version_id, kind, state, attempts, error) VALUES (?, ?, 'sprite', 'failed', 1, ?)").run(
+    // named for whoever added the file, as the card picture's is (backfillThumb)
+    db.prepare("INSERT OR IGNORE INTO jobs (library_id, version_id, kind, state, attempts, error, actor) VALUES (?, ?, 'sprite', 'failed', 1, ?, ?)").run(
       v.library_id,
       v.id,
       e instanceof Error ? e.message : String(e),
+      v.created_by,
     );
   }
   return true;

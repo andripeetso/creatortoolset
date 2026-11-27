@@ -686,8 +686,8 @@ export function classifyJob(ctx: Ctx, job: JobRow, seenInPass = new Map<number, 
   return out;
 }
 
-/** Jobs written to the log as ones no computer can do, once each: no screen names them, it only counts them ("10 files"). */
-const toldCannot = new Set<number>();
+/** Per library, the jobs last written to the log as ones no computer can do: one line when the list changes, since no screen names them (it only counts them, "10 files"). */
+const toldCannot = new Map<string, string>();
 
 const HELD_SQL = `(j.kind IN ('describe', 'look') AND j.state != 'needs_key' AND IFNULL(j.error, '') LIKE ?)`;
 
@@ -715,6 +715,7 @@ function classifyLibrary(ctx: Ctx, libraryId: string): WaitSnapshot {
   const queuedLookIds: number[] = [];
   const queuedLookVersions = new Set<string>();
   const seenInPass = new Map<number, WaitClass>();
+  const cannot: JobRow[] = [];
 
   for (const j of rows) {
     const isLook = j.kind === "look" && j.state === "needs_key" && j.error === MAC_WAITS;
@@ -723,12 +724,7 @@ function classifyLibrary(ctx: Ctx, libraryId: string): WaitSnapshot {
       const c = classifyJob(ctx, j, seenInPass);
       byJob.set(j.id, c);
       // one with no place has its own line (the identity gap, below)
-      if (c.wait === "cannot" && c.reason === notOnComputers && !toldCannot.has(j.id)) {
-        toldCannot.add(j.id);
-        const r = ctx.row(j.version_id);
-        const file = !r ? "its file is gone" : r.source_key.startsWith("mac:") ? `its file is on ${r.mac_device ?? "a computer"}` : `its file is on the server${r.from_device ? `, sent by ${r.from_device}` : ""}`;
-        console.warn(`[library] ${j.kind} job ${j.id} of ${j.version_id} can run nowhere: asked by ${j.actor ?? "nobody"}, ${file} (${c.reason ?? ""})`);
-      }
+      if (c.wait === "cannot" && c.reason === notOnComputers) cannot.push(j);
       if (c.wait === "queued") {
         if (isLook) {
           queuedLookIds.push(j.id);
@@ -741,6 +737,20 @@ function classifyLibrary(ctx: Ctx, libraryId: string): WaitSnapshot {
       }
     } catch {
       // A classify that throws for one job leaves that job unclassified so it falls back to today's rule.
+    }
+  }
+
+  const told = cannot.map((j) => j.id).join(",");
+  if (told !== (toldCannot.get(libraryId) ?? "")) {
+    if (!told) toldCannot.delete(libraryId);
+    else {
+      toldCannot.set(libraryId, told);
+      const one = (j: JobRow) => {
+        const r = ctx.row(j.version_id);
+        const file = !r ? "its file is gone" : r.source_key.startsWith("mac:") ? `its file is on ${r.mac_device ?? "a computer"}` : `its file is on the server${r.from_device ? `, sent by ${r.from_device}` : ""}`;
+        return `${j.kind} job ${j.id} of ${j.version_id}, asked by ${j.actor ?? "nobody"}, ${file}`;
+      };
+      console.warn(`[library] ${cannot.length} jobs of ${libraryId} can run nowhere (${notOnComputers}): ${cannot.slice(0, 5).map(one).join("; ")}${cannot.length > 5 ? "; …" : ""}`);
     }
   }
 
