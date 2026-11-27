@@ -240,6 +240,13 @@ const PRESSED_AT = "IFNULL(json_extract(l.settings, '$.timelineAsked'), -1)";
 const PRESSED = `(v.created_at <= ${PRESSED_AT} AND (t.version_id IS NULL OR (t.error IS NOT NULL AND t.at < ${PRESSED_AT})))`;
 /** SQL, the same: Timelines is on and `v` was added since it went on (db.ts SINCE). */
 const AUTO = `(IFNULL(json_extract(l.settings, '$.timeline'), 1) AND ${sinceSql("timeline")})`;
+/**
+ * SQL on the library `l` and the look job `j` (LEFT JOIN): the look started after the library's last Stop (made.ts
+ * stopQueued), or it was never stopped. What was waiting or running at a Stop is left to Make for the missing; a look that
+ * starts later (a clip's first, a new clip's) still brings its timeline, by itself (wantsWatch) or by the sweep. A mirrored
+ * look (blur-mirror.ts) has no start: its end counts.
+ */
+const SINCE_STOP = `COALESCE(j.started_at, j.done_at, 0) > IFNULL(json_extract(l.settings, '$.timelineStopped'), -1)`;
 
 /**
  * Whether `versionId` should be watched now as `actor`: asked for by name (askedWatch), covered by Make for the missing,
@@ -249,8 +256,9 @@ const AUTO = `(IFNULL(json_extract(l.settings, '$.timeline'), 1) AND ${sinceSql(
 export function wantsWatch(db: DatabaseSync, versionId: string, actor: string | null, now = Date.now()): boolean {
   const r = db
     .prepare(
-      `SELECT a.library_id, ${PRESSED} AS pressed, ${AUTO} AS auto FROM asset_versions v JOIN assets a ON a.id = v.asset_id
-         JOIN libraries l ON l.id = a.library_id LEFT JOIN timelines t ON t.version_id = v.id WHERE v.id = ?`,
+      `SELECT a.library_id, ${PRESSED} AS pressed, (${AUTO} AND ${SINCE_STOP}) AS auto FROM asset_versions v JOIN assets a ON a.id = v.asset_id
+         JOIN libraries l ON l.id = a.library_id LEFT JOIN timelines t ON t.version_id = v.id
+         LEFT JOIN jobs j ON j.version_id = v.id AND j.kind = 'look' WHERE v.id = ?`,
     )
     .get(versionId) as { library_id: string; pressed: number; auto: number } | undefined;
   const asked = askedWatch.has(versionId);
@@ -752,12 +760,6 @@ const setAside = (r: Wanting, now: number): boolean => {
  * watched: a blurred copy's original (blur-mirror.ts), where its look, its timeline and a failed watch are kept. Read off
  * the copy, a failed watch never left this list, and the sweep never got past the newest 50.
  */
-/**
- * SQL on the library `l` and the look job `j`: the look ended after the library's last Stop (made.ts stopQueued), or it
- * was never stopped. The sweep leaves what was waiting at a Stop to Make for the missing; a look that ends later (a clip's
- * first, a new clip's) still brings its timeline, by itself (wantsWatch) or by the sweep.
- */
-const SINCE_STOP = `IFNULL(j.done_at, 0) > IFNULL(json_extract(l.settings, '$.timelineStopped'), -1)`;
 const WANTS = `FROM assets a JOIN asset_versions c ON c.id = a.current_version_id
     JOIN asset_versions v ON v.id = ${analysedVersion("c")}
     JOIN jobs j ON j.version_id = v.id AND j.kind = 'look' AND j.state = 'done'

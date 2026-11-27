@@ -247,17 +247,17 @@ describe("a run of timelines", () => {
   it("counts every clip that wants one from the start, paces the time left by the timelines made, and Stop ends it: the waiting looks go back to done, nothing is queued again, and a look that ends later still brings its timeline", async () => {
     const { saveMyKey } = await import("../my-keys");
     const { stopQueued } = await import("./made");
-    const { sweepWatch } = await import("./timeline");
+    const { sweepWatch, wantsWatch } = await import("./timeline");
     const { MAC_WAITS } = await import("./shots");
     const { leaveToComputers } = await import("./worker");
     d.prepare("DELETE FROM jobs WHERE state != 'done'").run();
     saveMyKey("local", "GEMINI_API_KEY", "gk-test");
     // a B-roll clip with its shot descriptions and no timeline yet, its look ended at `at`
-    const clip = (id: string, at: number) => {
+    const clip = (id: string, at: number, started: number | null = null) => {
       d.prepare("INSERT INTO assets (id, library_id, kind, title, current_version_id, created_by, created_at, roll) VALUES (?, 'lib_e', 'video', ?, ?, 'local', 1, 'b')").run(`ast-${id}`, id, `ver-${id}`);
       d.prepare("INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, probe, state, created_by, created_at) VALUES (?, ?, 1, 'k', 1, ?, '{\"duration\":30}', 'ready', 'local', 1)").run(`ver-${id}`, `ast-${id}`, `sha-${id}`);
       d.prepare("INSERT INTO stretches (version_id, seg, a, b, motion, text, created_at) VALUES (?, 0, 0, 4, 0.5, 'A jump.', 1)").run(`ver-${id}`);
-      d.prepare("INSERT INTO jobs (library_id, version_id, kind, state, actor, done_at) VALUES ('lib_e', ?, 'look', 'done', 'local', ?)").run(`ver-${id}`, at);
+      d.prepare("INSERT INTO jobs (library_id, version_id, kind, state, actor, started_at, done_at) VALUES ('lib_e', ?, 'look', 'done', 'local', ?, ?)").run(`ver-${id}`, started, at);
     };
     const look = (id: string) => d.prepare("SELECT id, state FROM jobs WHERE version_id = ? AND kind = 'look'").get(`ver-${id}`) as { id: number; state: string };
     const status = leaveToComputers.status;
@@ -298,13 +298,17 @@ describe("a run of timelines", () => {
       expect(sweepWatch(d, () => true)).toBe(false);
       // a clip whose look ends after the Stop (its first, or a new clip's) is the sweep's again: Timelines is still on
       clip("t4", stopped + 1);
+      // a look already running at the Stop ends after it, and brings no timeline: not by itself, not by the sweep
+      clip("t5", stopped + 2, stopped - 1);
+      expect(wantsWatch(d, "ver-t5", "local")).toBe(false);
+      expect(wantsWatch(d, "ver-t4", "local")).toBe(true);
       const taken: string[] = [];
       expect(sweepWatch(d, (id) => !!taken.push(id))).toBe(true);
       expect(taken).toEqual(["ver-t4"]);
     } finally {
       leaveToComputers.status = status;
       saveMyKey("local", "GEMINI_API_KEY", null);
-      d.prepare("UPDATE assets SET trashed_at = 1 WHERE id IN ('ast-t1', 'ast-t2', 'ast-t3', 'ast-t4', 'ast-p1', 'ast-p2', 'ast-p3')").run();
+      d.prepare("UPDATE assets SET trashed_at = 1 WHERE id IN ('ast-t1', 'ast-t2', 'ast-t3', 'ast-t4', 'ast-t5', 'ast-p1', 'ast-p2', 'ast-p3')").run();
       d.prepare("UPDATE libraries SET settings = json_remove(settings, '$.timelineStopped') WHERE id = 'lib_e'").run();
     }
   });

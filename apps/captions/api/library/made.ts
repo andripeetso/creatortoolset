@@ -270,8 +270,8 @@ export function stopQueued(libraryId: string, kind: MadeKind, username: string, 
     const n = (db.prepare(`SELECT COUNT(*) AS n ${LIVE} AND ${SPEC[kind].of} AND NOT ${specOf(kind, username).have} AND ${pressed(kind)}`).get(libraryId) as { n: number }).n;
     db.prepare(`UPDATE libraries SET settings = json_remove(settings, '$.${kind}Asked') WHERE id = ?`).run(libraryId);
     if (kind === "timeline") {
-      // what waits now is left to Make for the missing: the sweep takes only a look that ends after this (timeline.ts
-      // SINCE_STOP), or it would queue them all again the moment this stopped them. A clip's first look still brings its timeline
+      // what waits now is left to Make for the missing: the sweep and a finished look take only a look that starts after
+      // this (timeline.ts SINCE_STOP), or it would queue them all again the moment this stopped them. A clip's first look still brings its timeline
       db.prepare(`UPDATE libraries SET settings = json_set(settings, '$.timelineStopped', ?) WHERE id = ?`).run(now, libraryId);
       // a timeline's job is its look's: one that waits to run again only for the timeline goes back to done, its lines are
       // there (one a Mac is reading finishes, and is asked for no watch). A clip's first look is shot descriptions' own
