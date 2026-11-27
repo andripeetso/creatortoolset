@@ -754,6 +754,16 @@ collectionApp.delete("/:id/pieces/:pid", async (c) => {
   return c.json({ ok: true });
 });
 
+/** A version live in this library that the account may change, for a piece's item; false when not. */
+async function liveVersion(username: string, libraryId: string, versionId: string): Promise<boolean> {
+  const live = versionId
+    ? (db()
+        .prepare("SELECT a.id AS asset_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ? AND a.library_id = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL")
+        .get(versionId, libraryId) as { asset_id: string } | undefined)
+    : undefined;
+  return !!live && (await mayWrite(username, libraryId, live.asset_id, versionId));
+}
+
 // POST /api/library/:id/pieces/:pid/items { versionId, label? } → 201 Piece. Added last; the version must be live here.
 collectionApp.post("/:id/pieces/:pid/items", async (c) => {
   const libraryId = c.req.param("id");
@@ -761,12 +771,7 @@ collectionApp.post("/:id/pieces/:pid/items", async (c) => {
   if (!piece) return notFound(c);
   const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
   const versionId = typeof body?.versionId === "string" ? body.versionId : "";
-  const live = versionId
-    ? (db()
-        .prepare("SELECT a.id AS asset_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ? AND a.library_id = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL")
-        .get(versionId, libraryId) as { asset_id: string } | undefined)
-    : undefined;
-  if (!live || !(await mayWrite(c.get("user").username, libraryId, live.asset_id, versionId))) return notFound(c);
+  if (!(await liveVersion(c.get("user").username, libraryId, versionId))) return notFound(c);
   if (db().prepare("SELECT 1 FROM piece_items WHERE piece_id = ? AND version_id = ?").get(piece.id, versionId)) {
     return c.json({ error: "That version is already in this piece", code: "conflict" }, 409);
   }
@@ -778,8 +783,9 @@ collectionApp.post("/:id/pieces/:pid/items", async (c) => {
   return c.json(pieceOf(piece), 201);
 });
 
-// PATCH /api/library/:id/pieces/:pid/items/:iid { label?, position?, winner?, postDescription? } → the piece.
-// Setting winner clears the winner the piece had: one winner at most.
+// PATCH /api/library/:id/pieces/:pid/items/:iid { label?, position?, winner?, postDescription?, versionId? } → the piece.
+// Setting winner clears the winner the piece had: one winner at most. A new versionId replaces the item's file and keeps
+// its place, name, post description and postings; the old version stays in the library.
 collectionApp.patch("/:id/pieces/:pid/items/:iid", async (c) => {
   const libraryId = c.req.param("id");
   const piece = await writablePiece(c.get("user").username, libraryId, c.req.param("pid"));
@@ -795,12 +801,24 @@ collectionApp.patch("/:id/pieces/:pid/items/:iid", async (c) => {
       : typeof body.postDescription === "string" && body.postDescription.trim()
         ? body.postDescription.slice(0, POST_LIMIT)
         : null;
+  const versionId = typeof body?.versionId === "string" && body.versionId !== item.version_id ? body.versionId : null;
+  if (versionId) {
+    if (!(await liveVersion(c.get("user").username, libraryId, versionId))) return notFound(c);
+    if (db().prepare("SELECT 1 FROM piece_items WHERE piece_id = ? AND version_id = ?").get(piece.id, versionId)) {
+      return c.json({ error: "That version is already in this piece", code: "conflict" }, 409);
+    }
+  }
   inTx(() => {
     if (winner) db().prepare("UPDATE piece_items SET winner = 0 WHERE piece_id = ? AND winner = 1").run(piece.id);
     db()
       .prepare("UPDATE piece_items SET label = ?, position = ?, winner = ?, post_description = ? WHERE id = ?")
       .run(label, position, winner ? 1 : 0, post, item.id);
+    if (versionId) db().prepare("UPDATE piece_items SET version_id = ?, external_ref = NULL WHERE id = ?").run(versionId, item.id);
   });
+  if (versionId) {
+    if (isFinal(versionId)) void pushFinalCopy(versionId).catch(() => {});
+    if (item.version_id) void sweepPlayCopies([`library/${item.version_id}/`]).catch(() => {});
+  }
   return c.json(pieceOf(piece));
 });
 

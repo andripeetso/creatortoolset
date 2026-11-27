@@ -336,6 +336,20 @@ describe("pieces", () => {
     ]);
   });
 
+  it("replaces an item's file and keeps its name, post description and postings", async () => {
+    const p = await data(call("owner-a", "POST", "/api/library/lib_a/pieces", { label: "Swap" }));
+    let piece = await data(call("owner-a", "POST", `/api/library/lib_a/pieces/${p.id}/items`, { versionId: "e1-v1", label: "Slide 1" }));
+    piece = await data(call("owner-a", "POST", `/api/library/lib_a/pieces/${p.id}/items`, { versionId: "e2-v1" }));
+    const [one, two] = piece.items;
+    await data(call("owner-a", "PATCH", `/api/library/lib_a/pieces/${p.id}/items/${one.id}`, { postDescription: "Kept" }));
+    await data(call("owner-a", "POST", `/api/library/lib_a/pieces/${p.id}/items/${one.id}/postings`, { platform: "instagram" }));
+    piece = await data(call("owner-a", "PATCH", `/api/library/lib_a/pieces/${p.id}/items/${one.id}`, { versionId: "e3-v1" }));
+    expect(piece.items[0]).toMatchObject({ id: one.id, versionId: "e3-v1", label: "Slide 1", postDescription: "Kept", postings: [expect.objectContaining({ platform: "instagram" })] });
+    // a version the piece holds already, or one not in this library, is refused
+    expect((await call("owner-a", "PATCH", `/api/library/lib_a/pieces/${p.id}/items/${one.id}`, { versionId: two.versionId })).status).toBe(409);
+    expect((await call("owner-a", "PATCH", `/api/library/lib_a/pieces/${p.id}/items/${one.id}`, { versionId: "nope" })).status).toBe(404);
+  });
+
   it("the database keeps one winner per piece, and a version is in a piece once", async () => {
     const p = await data(call("owner-a", "POST", "/api/library/lib_a/pieces", { label: "Solo" }));
     await data(call("owner-a", "POST", `/api/library/lib_a/pieces/${p.id}/items`, { versionId: "e1-v1" }));

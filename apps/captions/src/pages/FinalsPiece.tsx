@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router";
 import { canUse, useMe } from "@/lib/auth";
-import { ArrowDown, ArrowUp, Download, GripVertical, ImageOff, ImagePlus, Link2, Merge, MoreHorizontal, NotebookPen, Palette, Plus, Scissors, Send, Share2, Star, Trash2, Upload, X, type LucideIcon } from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, CircleCheck, Download, GripVertical, ImageOff, ImagePlus, Link2, Merge, MoreHorizontal, NotebookPen, Palette, Plus, Scissors, Send, Share2, Star, Trash2, Replace, Upload, X, type LucideIcon } from "lucide-react";
 import { ClipShare } from "./library/ClipShare";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import {
@@ -126,14 +126,17 @@ export function platformOfLink(url: string): string | undefined {
  */
 export async function uploadVersions(libraryId: string, piece: Piece, files: File[], onProgress: (file: File, sent: number) => void): Promise<Piece | undefined> {
   let next: Piece | undefined;
-  for (const f of files) {
-    onProgress(f, 0);
-    const up = await uploadFile(libraryId, f, (sent) => onProgress(f, sent), piece.collectionId ?? undefined);
-    const assetId = up.assetId ?? up.duplicateOf;
-    if (!assetId) throw new Error(`Could not upload ${f.name}`);
-    next = await addPieceItem(libraryId, piece.id, (await getAsset(libraryId, assetId)).versionId);
-  }
+  for (const f of files) next = await addPieceItem(libraryId, piece.id, await uploadVersion(libraryId, piece, f, onProgress));
   return next;
+}
+
+/** One file into the library (the piece's collection, Finals); the id of its clip's version. */
+async function uploadVersion(libraryId: string, piece: Piece, f: File, onProgress: (file: File, sent: number) => void): Promise<string> {
+  onProgress(f, 0);
+  const up = await uploadFile(libraryId, f, (sent) => onProgress(f, sent), piece.collectionId ?? undefined);
+  const assetId = up.assetId ?? up.duplicateOf;
+  if (!assetId) throw new Error(`Could not upload ${f.name}`);
+  return (await getAsset(libraryId, assetId)).versionId;
 }
 
 /** One row of the post panel: icon, title, its state, its actions; what it opens goes under it. Posts and the
@@ -246,6 +249,9 @@ export function PieceEditor({
   const [upload, setUpload] = useState<{ name: string; pct: number } | null>(null);
   const [sharing, setSharing] = useState<{ kind: "piece" | "version"; id: string; title: string } | null>(null);
   const files = useRef<HTMLInputElement>(null);
+  // Replace file: the input, and the item whose file it replaces
+  const swapFile = useRef<HTMLInputElement>(null);
+  const [swapFor, setSwapFor] = useState<PieceItem | null>(null);
   const player = useRef<HTMLVideoElement>(null);
   const locked = busy || readOnly;
   const byVersion = new Map(cards.filter((c) => c.versionId).map((c) => [c.versionId, c]));
@@ -256,7 +262,7 @@ export function PieceEditor({
   const pickVersion = pick?.versionId ?? null;
   const pickIsVideo = pickVersion ? byVersion.get(pickVersion)?.kind !== "image" : false;
   // a video this computer has plays from it (lib/play-here.ts): its original or cached proxy, as the library's player
-  const play = usePlayFrom(`/api/library/media/${pickVersion}/play`, pickVersion && pickIsVideo ? () => localOf(libraryId, pickVersion) : undefined);
+  const play = usePlayFrom(`/api/library/media/${pickVersion}/play`, pickVersion ? () => localOf(libraryId, pickVersion) : undefined);
 
   // Runs the calls one after another; only the last answer (the piece as the server holds it) is kept.
   /** A cover design from the frame the player is on: tall for an upright video, a wide thumbnail for a wide one. */
@@ -365,9 +371,31 @@ export function PieceEditor({
     }
   };
 
+  // A new file for one item: uploaded, then the item points to it (its place, name, post and links stay); Undo points back
+  const replaceFile = async (item: PieceItem, f: File) => {
+    if (locked) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const versionId = await uploadVersion(libraryId, piece, f, (file, sent) =>
+        setUpload({ name: file.name, pct: file.size ? Math.min(100, Math.round((sent / file.size) * 100)) : 0 }),
+      );
+      onPiece(await patchPieceItem(libraryId, piece.id, item.id, { versionId }));
+      setPickId(item.id);
+      const old = item.versionId;
+      if (old) undoable("file replaced", () => patchPieceItem(libraryId, piece.id, item.id, { versionId: old }).then(onPiece, (e: unknown) => setError(message(e))));
+    } catch (e) {
+      setError(message(e));
+    } finally {
+      setUpload(null);
+      setBusy(false);
+    }
+  };
+
   const versionName = (item: PieceItem, n: number) => item.label ?? (item.versionId && byVersion.get(item.versionId)?.title) ?? `Version ${n + 1}`;
   const posted = piece.items.some((i) => i.postings.length > 0);
   const many = piece.items.length > 1;
+  const noun = kind === "carousel" ? "slide" : "version";
   const selIndex = pick ? piece.items.indexOf(pick) : -1;
 
   return (
@@ -391,7 +419,7 @@ export function PieceEditor({
           />
           <p className="mt-0.5 flex items-center gap-1.5 text-xs text-zinc-500">
             <span className={cn("rounded px-1.5 py-0.5 text-[11px] font-medium", KIND_BADGE[kind])}>{KIND_LABEL[kind]}</span>
-            {piece.items.length} {piece.items.length === 1 ? "version" : "versions"} · {posted ? "Posted" : "Not posted"}
+            {piece.items.length} {piece.items.length === 1 ? noun : `${noun}s`} · {posted ? "Posted" : "Not posted"}
           </p>
         </div>
         {piece.items.length > 0 && (
@@ -438,7 +466,9 @@ export function PieceEditor({
 
       <div className="grid min-h-0 flex-1 overflow-y-auto md:grid-cols-[minmax(0,300px)_1fr]">
         <section aria-label="Cover" className="flex flex-col gap-3 border-b border-zinc-500/25 p-4 sm:p-5 md:border-b-0 md:border-r">
-          {pickVersion ? (
+          {kind === "carousel" ? (
+            <Carousel libraryId={libraryId} items={piece.items} at={Math.max(0, selIndex)} onAt={(i) => setPickId(piece.items[i]?.id ?? null)} />
+          ) : pickVersion ? (
             pickIsVideo ? (
               <video
                 key={pickVersion}
@@ -451,7 +481,7 @@ export function PieceEditor({
                 className="mx-auto aspect-[9/16] max-h-[55dvh] w-full rounded-lg bg-black object-contain"
               />
             ) : (
-              <img key={pickVersion} src={`/api/library/media/${pickVersion}/play`} alt="" className="mx-auto aspect-[9/16] max-h-[55dvh] w-full rounded-lg bg-black object-contain" />
+              <img key={pickVersion} src={play.src} onError={play.onError} alt="" className="mx-auto aspect-[9/16] max-h-[55dvh] w-full rounded-lg bg-black object-contain" />
             )
           ) : (
             <div className="flex aspect-[9/16] max-h-[55dvh] w-full items-center justify-center rounded-lg bg-black">
@@ -506,8 +536,21 @@ export function PieceEditor({
 
           <div className="flex items-center gap-2">
             <span className="min-w-0 flex-1 truncate text-xs text-zinc-500">
-              {upload ? `Uploading ${upload.name} · ${upload.pct}%` : piece.items.length === 0 ? "No versions" : many ? "Versions" : ""}
+              {upload ? `Uploading ${upload.name} · ${upload.pct}%` : piece.items.length === 0 ? `No ${noun}s` : many ? (kind === "carousel" ? "Slides" : "Versions") : ""}
             </span>
+            <input
+              ref={swapFile}
+              type="file"
+              accept="video/*,image/*"
+              hidden
+              disabled={locked}
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f && swapFor) void replaceFile(swapFor, f);
+                setSwapFor(null);
+                e.target.value = "";
+              }}
+            />
             <input
               ref={files}
               type="file"
@@ -521,7 +564,7 @@ export function PieceEditor({
               }}
             />
             <Button size="sm" variant="ghost" disabled={locked} onClick={() => files.current?.click()}>
-              <Upload className="h-4 w-4" /> Add version
+              <Upload className="h-4 w-4" /> Add {noun}
             </Button>
           </div>
           {many && (
@@ -604,6 +647,14 @@ export function PieceEditor({
                         <DropdownMenuItem disabled={i === piece.items.length - 1} onSelect={() => moveTo(i, i + 1)}>
                           <ArrowDown className="h-4 w-4" /> Move down
                         </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onSelect={() => {
+                            setSwapFor(item);
+                            swapFile.current?.click();
+                          }}
+                        >
+                          <Replace className="h-4 w-4" /> Replace file
+                        </DropdownMenuItem>
                         {item.versionId && (
                           <DropdownMenuItem onSelect={() => setSharing({ kind: "version", id: item.versionId!, title: name })}>
                             <Share2 className="h-4 w-4" /> Share version
@@ -654,9 +705,16 @@ export function PieceEditor({
                 status={pick.postings.length ? `Posted on ${[...new Set(pick.postings.map((p) => platformLabel(p.platform)))].join(", ")}` : "Not posted"}
                 actions={
                   !posting && (
-                    <Button size="sm" variant="outline" disabled={locked} onClick={() => setPosting(true)}>
-                      <Link2 className="h-4 w-4" /> Add link
-                    </Button>
+                    <>
+                      {!posted && (
+                        <Button size="sm" variant="outline" disabled={locked} onClick={() => void run([() => addPosting(libraryId, piece.id, pick.id, { platform: PLATFORMS[0].id })])}>
+                          <CircleCheck className="h-4 w-4" /> Mark as posted
+                        </Button>
+                      )}
+                      <Button size="sm" variant="outline" disabled={locked} onClick={() => setPosting(true)}>
+                        <Link2 className="h-4 w-4" /> Add link
+                      </Button>
+                    </>
                   )
                 }
               >
@@ -719,6 +777,101 @@ export function PieceEditor({
 }
 
 /** Link this piece to a Workshop session (its versions then get a post description each there), or start a session from it. */
+/** One slide of a carousel, from this computer when the Mac app has its file here, else from the server. */
+function Slide({ libraryId, item, label }: { libraryId: string; item: PieceItem; label: string }) {
+  const v = item.versionId;
+  const play = usePlayFrom(`/api/library/media/${v}/play`, v ? () => localOf(libraryId, v) : undefined);
+  return (
+    <div aria-label={label} className="flex h-full w-full shrink-0 snap-center items-center justify-center">
+      {v && play.src ? (
+        <img src={play.src} onError={play.onError} alt="" draggable={false} loading="lazy" className="h-full w-full object-contain" />
+      ) : (
+        <ImageOff className="h-8 w-8 text-zinc-800" />
+      )}
+    </div>
+  );
+}
+
+/**
+ * A carousel as it is posted: one slide at a time, swiped or stepped with the arrows, its place in the count and the
+ * dots. `at` is the slide picked in the list; scrolling the strip picks the slide it stops on.
+ */
+export function Carousel({ libraryId, items, at, onAt }: { libraryId: string; items: PieceItem[]; at: number; onAt: (i: number) => void }) {
+  const strip = useRef<HTMLDivElement>(null);
+  // the slide a step or a pick scrolls to: the slides passed on the way there are not picks
+  const going = useRef<number | null>(null);
+  useEffect(() => {
+    const el = strip.current;
+    if (!el || !el.clientWidth || Math.round(el.scrollLeft / el.clientWidth) === at) return;
+    going.current = at;
+    el.scrollTo({ left: at * el.clientWidth, behavior: "smooth" });
+  }, [at]);
+  const go = (i: number) => onAt(Math.max(0, Math.min(items.length - 1, i)));
+  const arrow = "absolute top-1/2 -translate-y-1/2 rounded-full bg-black/60 p-1.5 text-white hover:bg-black/80";
+  return (
+    <div className="relative">
+      <div
+        ref={strip}
+        tabIndex={0}
+        aria-label="Slides"
+        // a swipe or a wheel by hand takes over from a step still on its way
+        onPointerDown={() => (going.current = null)}
+        onWheel={() => (going.current = null)}
+        onScroll={(e) => {
+          const el = e.currentTarget;
+          const i = Math.round(el.scrollLeft / el.clientWidth);
+          if (going.current !== null) {
+            if (i === going.current && Math.abs(el.scrollLeft - i * el.clientWidth) < 2) going.current = null;
+            return;
+          }
+          if (i !== at) onAt(i);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+            e.preventDefault();
+            go(at + (e.key === "ArrowLeft" ? -1 : 1));
+          }
+        }}
+        className="flex aspect-[4/5] w-full snap-x snap-mandatory overflow-x-auto rounded-lg bg-black outline-none [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+      >
+        {items.map((item, i) => (
+          <Slide key={item.id} libraryId={libraryId} item={item} label={`Slide ${i + 1}`} />
+        ))}
+      </div>
+      {items.length > 1 && (
+        <>
+          <span className="absolute right-2 top-2 rounded-full bg-black/60 px-2 py-0.5 text-xs tabular-nums text-white">
+            {at + 1} / {items.length}
+          </span>
+          {at > 0 && (
+            <button type="button" data-pick="" aria-label="Previous slide" onClick={() => go(at - 1)} className={cn(arrow, "left-2")}>
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+          )}
+          {at < items.length - 1 && (
+            <button type="button" data-pick="" aria-label="Next slide" onClick={() => go(at + 1)} className={cn(arrow, "right-2")}>
+              <ChevronRight className="h-4 w-4" />
+            </button>
+          )}
+          <div className="mt-2 flex justify-center gap-1.5">
+            {items.map((item, i) => (
+              <button
+                key={item.id}
+                type="button"
+                aria-label={`Slide ${i + 1}`}
+                data-pick=""
+                aria-current={i === at || undefined}
+                onClick={() => go(i)}
+                className={cn("h-1.5 w-1.5 rounded-full", i === at ? "bg-violet-500" : "bg-zinc-600 hover:bg-zinc-400")}
+              />
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function WorkshopLink({
   piece,
   disabled,

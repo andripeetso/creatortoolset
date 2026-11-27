@@ -121,6 +121,25 @@ describe("FinalsPiece editor", () => {
     expect(html).toContain("Posted on Instagram");
   });
 
+  it("shows a carousel one slide at a time, with its count and dots, and calls its parts slides", () => {
+    const slides = [card("s-1", "Tiny slide 1", { kind: "image" }), card("s-2", "Tiny slide 2", { kind: "image" }), card("s-3", "Tiny slide 3", { kind: "image" })];
+    const carousel: Piece = { ...piece, items: slides.map((c, i) => item(`pci_s${i}`, c.versionId!, { position: i + 1, winner: i === 0 })) };
+    const html = renderToStaticMarkup(<PieceEditor libraryId="lib_tiny" piece={carousel} cards={slides} onPiece={() => {}} onGone={() => {}} />);
+    expect(html).toContain('aria-label="Slides"');
+    expect(html).toContain("1 / 3");
+    expect(html).toContain("3 slides");
+    expect(html).toContain("Add slide");
+    expect(html).toContain('aria-label="Next slide"');
+    expect(html).not.toContain('aria-label="Previous slide"');
+    for (const c of slides) expect(html).toContain(`src="/api/library/media/${c.versionId}/play"`);
+  });
+
+  it("marks a piece as posted from its window until it is posted", () => {
+    const fresh = { ...piece, items: piece.items.map((i) => ({ ...i, postings: [] })) };
+    expect(render(fresh)).toContain("Mark as posted");
+    expect(render(piece)).not.toContain("Mark as posted");
+  });
+
   it("offers no raw footage to add: a piece's versions come from Review, exports and the Content Workshop", () => {
     expect(render(piece)).not.toContain("Tiny take C");
   });

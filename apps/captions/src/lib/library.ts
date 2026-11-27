@@ -561,7 +561,8 @@ export const patchPieceItem = (
   libraryId: string,
   pieceId: string,
   itemId: string,
-  patch: { label?: string | null; position?: number; winner?: boolean; postDescription?: string },
+  /** `versionId`: a new file for the item; its place, name, post description and postings stay */
+  patch: { label?: string | null; position?: number; winner?: boolean; postDescription?: string; versionId?: string },
 ) => send<Piece>(itemUrl(libraryId, pieceId, itemId), "PATCH", patch);
 
 /** The piece's trashed Finals pieces of one collection (the trash view). */
