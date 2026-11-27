@@ -13,7 +13,7 @@ const { Hono } = await import("hono");
 const API = { only: ["anthropic" as const] };
 const { packsApp } = await import("./packs");
 const { checkPack, instructionProblems } = await import("../contracts/packs");
-const { packInstructions, installPack, listInstalled, removePack } = await import("./lib/packs");
+const { packInstructions, installPack, listInstalled, removePack, runsWithoutTools } = await import("./lib/packs");
 const { mountPlugins } = await import("./lib/plugin");
 
 let me: Record<string, unknown> = { username: "tinyacrobatics", role: "user", cloud: true, off: [] };
@@ -406,5 +406,18 @@ describe("design systems in a pack", () => {
     expect(await removePack("crew", "design-pack")).toEqual({ removed: true, kept: 0 });
     expect(installs).toEqual(["remove tiny-cards"]);
     mountPlugins(new Hono(), []);
+  });
+});
+
+describe("a run with files or tools", () => {
+  // a Mac program that gets no tools for a job with no folder: its pack text is every pack's
+  const MAC_CLAUDE = { mac: { provider: { driver: "claude" } } } as never;
+
+  it("a run that attaches files (tools: true) gets only the shipped pack text", async () => {
+    await call("POST", "/api/packs/install", { pack: pack("1.0.0", { id: "custom-hooks", name: "Custom Hooks", frameworks: [], captionStyles: [], instructions: { "workshop.write": "Lead with a question." } }) });
+    expect(runsWithoutTools(MAC_CLAUDE)).toBe(true);
+    expect(await packInstructions("tinyacrobatics", "workshop.write", null, { ai: MAC_CLAUDE })).toContain("Lead with a question.");
+    expect(await packInstructions("tinyacrobatics", "workshop.write", null, { ai: MAC_CLAUDE, tools: true })).not.toContain("Lead with a question.");
+    await call("DELETE", "/api/packs/custom-hooks");
   });
 });

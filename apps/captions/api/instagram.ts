@@ -1550,7 +1550,8 @@ async function visionSlide(
         images.push({ jpegBase64: buf.toString("base64") });
       }
     }
-    const packText = await packInstructions(user.username, "analyzer.ideas", meta.projectId ?? null, { ai: aiFor(user, "analyzer", "Analyzer vision") });
+    // the pictures go to the Mac as files the run reads: a run with tools, so only shipped pack text
+    const packText = await packInstructions(user.username, "analyzer.ideas", meta.projectId ?? null, { ai: aiFor(user, "analyzer", "Analyzer vision"), tools: true });
     const { value, provider } = await completeVisionWithFallback(
       packText ? `${VISION_SYSTEM}\n\n${packText}` : VISION_SYSTEM,
       visionUserText({

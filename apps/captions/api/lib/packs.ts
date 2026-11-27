@@ -373,7 +373,8 @@ export const runsWithoutTools = (ai: ProviderOpts): boolean => !ai.mac?.provider
  * `renderPackInstructions` for a person, read from disk, and after it the slot's skills switched on (lib/skills.ts
  * slotSkills), cut so the two hold no more than INSTRUCTIONS_MAX; the pack text itself is never cut. Every caller names
  * the job's AI (`ai`), or says the run has tools (`tools`: the Workshop's turn on the Mac reads its folder and may search
- * the web). A run with tools gets only the app's own shipped packs and of the skills only the person's own: text other
+ * the web; a run that attaches files, such as the Analyzer's pictures, reads them with tools too, so its caller passes
+ * `tools: true`). A run with tools gets only the app's own shipped packs and of the skills only the person's own: text other
  * people wrote never reaches an AI that can act on the person's computer. The Workshop's writing turn gets its skills
  * as files (api/workshop.ts) and the script step only the one a style names (skillText).
  */
