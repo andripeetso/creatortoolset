@@ -512,11 +512,14 @@ export function planPrompt(i: PlanInput): { system: string; user: string } {
   return { system: i.packText ? `${SYSTEM}\n\n${i.packText}` : SYSTEM, user: parts.join("\n\n") };
 }
 
+/** An answer with no shots: asked again (the AI call's tries), and when every try says it, planStep cuts the footage in turn. */
+export const NO_SHOTS = "The AI's answer has no shots";
+
 /** The answer's plans, as objects for repairPlan to check: one plan given bare counts too. */
 export function parsePlans(text: string): Record<string, unknown>[] {
   const o = parseJsonObject(text);
   const plans = (Array.isArray(o.plans) ? o.plans : [o]).filter(obj).filter((p) => Array.isArray(p.shots) && p.shots.length);
-  if (!plans.length) throw new Error("The AI's answer has no shots");
+  if (!plans.length) throw new Error(NO_SHOTS);
   return plans;
 }
 
@@ -1249,16 +1252,21 @@ export async function planStep({ edit, job, signal }: StepContext, sentences: Se
   const revise = reviseOf(edit);
   const { system, user } = planPrompt({ ...input, ...(revise ? { revise } : {}) });
   let raws: Record<string, unknown>[];
+  let none = false;
   try {
     raws = await completeWithFallback(system, user, signal, parsePlans, route);
   } catch (e) {
     const away = macAway(e);
     if (away) throw new NeedsKey(away.message);
-    throw e;
+    // no shots on every try: a first plan is cut from the footage in turn, as one with no usable shot is (repairPlan,
+    // whose note says so). A revise still fails: the same cut there would throw the person's last version away
+    if (revise || !(e instanceof Error) || !e.message.includes(NO_SHOTS)) throw e;
+    none = true;
+    raws = [{}];
   }
   if (signal.aborted) return;
   const notes = [song ? `Cut to “${song.title}” (${song.from})` : "No song: the footage's own sound leads"];
-  if (raws.length < edit.versions) notes.push(`The AI planned ${raws.length} of the ${edit.versions} versions asked for`);
+  if (!none && raws.length < edit.versions) notes.push(`The AI planned ${raws.length} of the ${edit.versions} versions asked for`);
   const shots: Record<string, PlannedVersion> = {};
   const plans: Array<{ name: string; title: string; lines: [] }> = [];
   for (const [k, raw] of raws.slice(0, edit.versions).entries()) {

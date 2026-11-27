@@ -29,7 +29,7 @@ const { saveTranscript } = await import("../library/transcribe");
 const { enqueueJob } = await import("../library/jobs");
 const { readMeta } = await import("../review");
 const { NO_SPEECH } = await import("./analyze");
-const { APART_S, briefMaxS, byAction, isPlanned, lengthOf, MIN_SHOT_S, openerOf, parsePlans, planPrompt, planTimeline, repairPlan, shotPool, snapCuts, sourceSpan, speechShare, UNDER_DB } = await import("./plan");
+const { APART_S, briefMaxS, byAction, isPlanned, lengthOf, MIN_SHOT_S, openerOf, parsePlans, planPrompt, planStep, planTimeline, repairPlan, shotPool, snapCuts, sourceSpan, speechShare, UNDER_DB } = await import("./plan");
 const { toOtio } = await import("./otio");
 const { toFcpxml } = await import("./fcpxml");
 const { qaOf } = await import("./qa");
@@ -512,6 +512,23 @@ describe("footage where nobody speaks reaches Review", () => {
     expect(v.status).toBe("ready");
     expect(Math.abs(v.duration - end / 30)).toBeLessThanOrEqual(0.1);
   }, 240_000);
+
+  it("an answer with no shots is not refused: a first plan is cut from the footage in turn, and says so", async () => {
+    vi.mocked(aiFor).mockReturnValue({ only: ["mac"] });
+    // the look at the footage answers; the plan comes back with no shots
+    vi.mocked(completeWithFallback).mockImplementation(async (_s, _user, _sig, parse) => parse(parse === parsePlans ? '{"plans":[{"shots":[]}]}' : '{"story":"A test pattern moves."}'));
+    const e = (await createEdit("mem-a", { sources: ["ver_game"], brief: "A quick cut", targetS: 3, versions: 2 }))!;
+    await planStep({ edit: readEdit(e.id)!, job: { id: 0, actor: "mem-a" } as never, variant: "", signal: new AbortController().signal }, []);
+    const made = readStep(e.id, "shots")!;
+    expect(Object.keys(made)).toEqual(["v1"]);
+    expect(made.v1!.plan.shots.length).toBeGreaterThan(0);
+    expect(made.v1!.notes).toContain("The AI's plan had no shot that can be used: the footage is cut in turn instead");
+    // nothing was planned by the AI: no line saying it planned one of the two
+    expect(readStep(e.id, "plan")!.notes.join(" ")).not.toContain("versions asked for");
+    // any other failure of the AI still ends the step
+    vi.mocked(completeWithFallback).mockRejectedValue(new Error("AI is not configured"));
+    await expect(planStep({ edit: readEdit(e.id)!, job: { id: 0, actor: "mem-a" } as never, variant: "", signal: new AbortController().signal }, [])).rejects.toThrow("AI is not configured");
+  }, 120_000);
 });
 
 describe("badly taken shots", () => {
