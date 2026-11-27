@@ -502,10 +502,18 @@ function AddAccountDialog({ platform, signIn, needsKey, busy, onClose, onSignIn,
   // what the dialog opens on: its main action. By itself it would open on the first thing that takes focus, the info
   // mark, whose bubble then covered the dialog before anything was pressed
   const first = useRef<HTMLElement | null>(null);
+  const [keyRow, setKeyRow] = useState(false);
   useEffect(() => {
     setHandle("");
     setError(null);
+    setKeyRow(false);
   }, [platform]);
+  // the key row stays once shown, until the dialog closes: taken away as its key was saved, it took along the budget
+  // question that save asks. A key that works clears the "Needs an Apify key" an Add before it left; a refused one doesn't
+  useEffect(() => {
+    if (platform && needsKey) setKeyRow(true);
+    if (!needsKey) setError(null);
+  }, [platform, needsKey]);
   const label = PLATFORMS.find((p) => p.id === platform)?.label ?? "";
   const gives = platform ? LOGINS.find((l) => l.id === loginOf(platform))?.gives : undefined;
   const add = async () => {
@@ -576,14 +584,9 @@ function AddAccountDialog({ platform, signIn, needsKey, busy, onClose, onSignIn,
           {error && <p role="alert" className="text-xs text-red-600 dark:text-red-400">{error}</p>}
         </form>
         {/* outside the form: the key's own dialog submits through React's bubbling, which would also add the handle */}
-        {needsKey && (
+        {keyRow && (
           <div className="-mt-2 rounded-md border">
-            <ApifyKeyRow
-              onChanged={() => {
-                setError(null); // "Needs an Apify key" from an Add before the key was there
-                onKey();
-              }}
-            />
+            <ApifyKeyRow onChanged={onKey} />
           </div>
         )}
       </SettingsDialogContent>

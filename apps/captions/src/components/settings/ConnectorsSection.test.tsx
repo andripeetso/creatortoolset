@@ -171,17 +171,28 @@ describe("an account's workspace", () => {
     { id: "p2", owner: "sam", name: "Tiny Acrobatics shop", createdAt: 2 },
   ] as ReturnType<typeof useWorkspace.getState>["projects"];
 
+  /** What the server holds: a test changes its Apify key as the server would on a save. */
+  let saved: ReturnType<typeof view> & { extras: { sessions: [] } };
+  const NEEDS_KEY = "Needs an Apify key: add it in Settings → API keys";
+
   async function open(o: Parameters<typeof view>[0], projects = two) {
-    const saved = { ...view(o), extras: { sessions: [] } };
+    saved = { ...view(o), extras: { sessions: [] } };
     sent = [];
     useAuth.setState({ required: true, me: { username: "sam", role: "admin", cloud: false, off: [] } });
     useWorkspace.setState({ loaded: true, currentProjectId: "p1", projects, load: async () => {} });
     putCached("sam", "/api/connectors", saved);
     vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
       if (init?.method) sent.push([`${init.method} ${url}`, JSON.parse(String(init.body ?? "null"))]);
-      // the Apify key row reads its usage: no use yet
-      const answers: Record<string, unknown> = { "/api/connectors": saved, "/api/usage/services": { lines: [], limits: [], budgets: [] } };
-      return new Response(JSON.stringify(answers[String(url).split("?")[0]!] ?? {}), { status: 200 });
+      const at = String(url).split("?")[0]!;
+      // a handle is read with the Apify key: refused while there is none
+      if (at === "/api/connectors/handles" && !saved.apify.configured) return new Response(JSON.stringify({ error: NEEDS_KEY }), { status: 409 });
+      const answers: Record<string, unknown> = {
+        "/api/connectors": saved,
+        // the Apify key row reads the key as the server has it, and its usage: no use yet
+        "/api/instagram/apify": { ...saved.apify, source: saved.apify.configured ? "file" : "none", ...(saved.apify.configured ? { last4: "1234" } : {}) },
+        "/api/usage/services": { lines: [], limits: [], budgets: [] },
+      };
+      return new Response(JSON.stringify(answers[at] ?? {}), { status: 200 });
     });
     root = createRoot(document.body.appendChild(document.createElement("div")));
     await act(async () => {
@@ -241,10 +252,62 @@ describe("an account's workspace", () => {
   });
 
   // a refused key is stored (configured, not valid): hiding the row then left no way to change it from setup
-  it.each([{ configured: false, valid: null }, { configured: true, valid: false }])("the Add dialog holds the Apify key row while no key works: %o", async (apify) => {
+  it.each([
+    [{ configured: false, valid: null }, "Add key"],
+    [{ configured: true, valid: false }, "Key not accepted"],
+  ])("the Add dialog holds the Apify key row while no key works: %o reads %s", async (apify, reads) => {
     await open({ apify });
     await press(document.body.querySelector('button[aria-label="Add TikTok"]') as HTMLElement);
-    expect(document.body.querySelector('[role="dialog"]')!.textContent).toContain("Apify");
+    expect(document.body.querySelector('[role="dialog"]')!.textContent).toContain(reads);
+  });
+
+  it("a key saved in the Add dialog adds no account, keeps its row for the budget question and clears the line that asked for the key", async () => {
+    const type = (input: Element, text: string) =>
+      act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, text);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    await open({ apify: { configured: false, valid: null } });
+    await press(document.body.querySelector('button[aria-label="Add TikTok"]') as HTMLElement);
+    const dialog = document.body.querySelector('[role="dialog"]')!;
+    await type(dialog.querySelector("#add-account-handle")!, "@tinyx");
+    await press(dialog.querySelector('button[type="submit"]') as HTMLElement);
+    expect(dialog.querySelector('[role="alert"]')?.textContent).toBe(NEEDS_KEY);
+    await press([...dialog.querySelectorAll("button")].find((b) => b.textContent === "Add key")!);
+    const keyDialog = [...document.body.querySelectorAll('[role="dialog"]')].at(-1)!;
+    expect(keyDialog.textContent).toContain("Add Apify key");
+    await type(keyDialog.querySelector("input")!, "not-real-key-5678");
+    saved.apify = { configured: true, valid: true }; // the server takes it
+    await press(keyDialog.querySelector('button[type="submit"]') as HTMLElement);
+    // the key's own Save is not the handle's Add: one try at the handle, before the key
+    expect(sent.map(([what]) => what)).toEqual(["POST /api/connectors/handles", "PUT /api/instagram/apify"]);
+    expect(dialog.querySelector('[role="alert"]')).toBeNull();
+    // the row is still there, and with it the question its save asks
+    expect(dialog.textContent).toContain("Apify");
+    expect(document.body.textContent).toContain("Set a monthly budget for Apify?");
+  });
+
+  it("a key Apify refuses leaves the line that asked for a key", async () => {
+    await open({ apify: { configured: false, valid: null } });
+    await press(document.body.querySelector('button[aria-label="Add TikTok"]') as HTMLElement);
+    const dialog = document.body.querySelector('[role="dialog"]')!;
+    const input = dialog.querySelector("#add-account-handle")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "@tinyx");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await press(dialog.querySelector('button[type="submit"]') as HTMLElement);
+    saved.apify = { configured: true, valid: false }; // stored, and refused by Apify
+    await press([...dialog.querySelectorAll("button")].find((b) => b.textContent === "Add key")!);
+    const keyDialog = [...document.body.querySelectorAll('[role="dialog"]')].at(-1)!;
+    const key = keyDialog.querySelector("input")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(key, "not-real-key-0000");
+      key.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await press(keyDialog.querySelector('button[type="submit"]') as HTMLElement);
+    expect(dialog.querySelector('[role="alert"]')?.textContent).toBe(NEEDS_KEY);
+    expect(dialog.textContent).toContain("Key not accepted");
   });
 
   it("the row menu moves an account to another workspace: an account is one workspace's or none's", async () => {
