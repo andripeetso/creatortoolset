@@ -1,5 +1,6 @@
 import { hostsOriginals, hostsProxies, uploadSent } from "@contracts/library";
 import type { PieceKind } from "@contracts/library";
+import { undoable } from "./undo";
 import type {
   LibraryMade,
   MadeKind,
@@ -604,6 +605,23 @@ export const addPosting = (libraryId: string, pieceId: string, itemId: string, i
 
 export const removePosting = (libraryId: string, pieceId: string, itemId: string, postingId: number) =>
   send<Piece>(`${itemUrl(libraryId, pieceId, itemId)}/postings/${postingId}`, "DELETE");
+
+/** addPosting with Undo: the notice `what` takes the new posting out again and hands `back` the piece, or `failed` the error. */
+export async function addPostingUndoable(
+  libraryId: string,
+  pieceId: string,
+  itemId: string,
+  input: { platform: string; url?: string },
+  what: string,
+  back: (piece: Piece) => void,
+  failed: (e: unknown) => void,
+): Promise<Piece> {
+  const next = await addPosting(libraryId, pieceId, itemId, input);
+  // the new posting is the item's highest id
+  const added = Math.max(0, ...(next.items.find((i) => i.id === itemId)?.postings.map((x) => x.id) ?? []));
+  if (added) undoable(what, () => removePosting(libraryId, pieceId, itemId, added).then(back, failed));
+  return next;
+}
 
 /**
  * The position changes for a drag from index `from` to index `to` in a piece's items (already in display order).

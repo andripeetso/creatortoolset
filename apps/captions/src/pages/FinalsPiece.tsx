@@ -25,6 +25,7 @@ import { Button } from "@/components/ui/button";
 import {
   addPieceItem,
   addPosting,
+  addPostingUndoable,
   getAsset,
   uploadFile,
   clearPieceCover,
@@ -456,6 +457,7 @@ export function PieceEditor({
                   value={piece.kind ?? "auto"}
                   onValueChange={(v) => {
                     const was = piece.kind ?? null;
+                    if (typeOf(v) === was) return; // the type it has already: nothing to save
                     void run([() => setPieceKind(libraryId, piece.id, typeOf(v))]).then((ok) =>
                       ok && undoable("type changed", () => setPieceKind(libraryId, piece.id, was).then(onPiece, (e: unknown) => setError(message(e)))),
                     );
@@ -744,7 +746,7 @@ export function PieceEditor({
                   !posting && (
                     <>
                       {!posted && (
-                        <Button size="sm" variant="outline" disabled={locked} onClick={() => void run([() => addPosting(libraryId, piece.id, pick.id, { platform: PLATFORMS[0].id })])}>
+                        <Button size="sm" variant="outline" disabled={locked} onClick={() => void run([() => addPostingUndoable(libraryId, piece.id, pick.id, { platform: PLATFORMS[0].id }, "marked as posted", onPiece, (e) => setError(message(e)))])}>
                           <CircleCheck className="h-4 w-4" /> Mark as posted
                         </Button>
                       )}

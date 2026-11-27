@@ -23,7 +23,7 @@ import { LibraryFacetBar } from "@/components/LibraryFacetBar";
 import { AppBar } from "@/components/AppBar";
 import { Button } from "@/components/ui/button";
 import {
-  addPosting,
+  addPostingUndoable,
   setPieceKind,
   cardsOfVersions,
   getWorkshopFinals,
@@ -35,7 +35,6 @@ import {
   mergePiece,
   pieceVersions,
   pieceZipUrl,
-  removePosting,
   restorePiece,
   trashPiece,
   type WorkshopFinal,
@@ -289,7 +288,7 @@ function PieceMenu({ piece, others, actions, children }: { piece: Piece; others:
             <Shapes /> Type
           </ContextMenuSubTrigger>
           <ContextMenuSubContent>
-            <ContextMenuRadioGroup value={piece.kind ?? "auto"} onValueChange={(v) => actions.onKind(piece, typeOf(v))}>
+            <ContextMenuRadioGroup value={piece.kind ?? "auto"} onValueChange={(v) => typeOf(v) !== (piece.kind ?? null) && actions.onKind(piece, typeOf(v))}>
               {TYPE_CHOICES.map((c) => (
                 <ContextMenuRadioItem key={c.value} value={c.value}>
                   {c.label}
@@ -423,12 +422,8 @@ export default function FinalsPage() {
   // a posting on the piece's winner (else its first version); Undo takes it out again
   const post = (lib: string, piece: Piece, input: { platform: string; url?: string }, what: string) => {
     const item = piece.items.find((i) => i.winner) ?? piece.items[0];
-    void addPosting(lib, piece.id, item.id, input).then((next) => {
-      void shown.refresh();
-      // the new posting is the item's highest id
-      const added = Math.max(...(next.items.find((i) => i.id === item.id)?.postings.map((x) => x.id) ?? []));
-      if (added > 0) undoable(what, () => removePosting(lib, next.id, item.id, added).then(() => shown.refresh(), (e: unknown) => setError(message(e))));
-    }, (e: unknown) => setError(message(e)));
+    const failed = (e: unknown) => setError(message(e));
+    void addPostingUndoable(lib, piece.id, item.id, input, what, () => void shown.refresh(), failed).then(() => void shown.refresh(), failed);
   };
   const collections = useCachedLoad<Collection[]>(libId ? `/api/library/${libId}/collections` : null, () => listCollections(libId!));
   // undefined: not read yet; null: the library has no Finals collection (nothing is created on read)

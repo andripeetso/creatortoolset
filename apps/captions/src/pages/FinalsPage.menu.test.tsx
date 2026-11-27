@@ -77,6 +77,10 @@ describe("a Finals piece's right-click menu", () => {
     const actions = actionsWith(vi.fn());
     await rightClick(piece("a", true, 1), actions, [], "Carousel", "Type");
     expect(actions.onKind).toHaveBeenCalledWith(expect.objectContaining({ id: "a" }), "carousel");
+    // the type it has already (Automatic): nothing to save
+    const same = actionsWith(vi.fn());
+    await rightClick(piece("b", true, 1), same, [], "Automatic", "Type");
+    expect(same.onKind).not.toHaveBeenCalled();
   });
 
   it("offers nothing in a library the account only looks at", async () => {

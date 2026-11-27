@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { LibrarySummary } from "@contracts/library";
-import { addRefused, cardsOfVersions, changeFolderItems, clearPieceCover, getPiece, libraryNews, listAllAssets, macIndexOnly, patchPieceItem, reorderedPositions, setPieceCover, uploadFile, uploadFinal } from "./library";
+import { undoable } from "./undo";
+import { addPostingUndoable, addRefused, cardsOfVersions, changeFolderItems, clearPieceCover, getPiece, libraryNews, listAllAssets, macIndexOnly, patchPieceItem, reorderedPositions, setPieceCover, uploadFile, uploadFinal } from "./library";
 
 describe("reorderedPositions", () => {
   const items = [
@@ -35,6 +36,27 @@ describe("reorderedPositions", () => {
       { id: "b", position: 1 },
       { id: "a", position: 2 },
     ]);
+  });
+});
+
+vi.mock("./undo", () => ({ undoable: vi.fn() }));
+
+describe("addPostingUndoable", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("offers Undo that takes out the posting it just made (the item's newest), and nothing else", async () => {
+    const piece = { id: "pce_1", label: "Tiny reel", items: [{ id: "pci_1", postings: [{ id: 3 }, { id: 9 }] }] };
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify(piece), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const back = vi.fn();
+    await addPostingUndoable("lib_1", "pce_1", "pci_1", { platform: "instagram" }, "marked as posted", back, vi.fn());
+    const [what, undo] = vi.mocked(undoable).mock.calls[0] as unknown as [string, () => Promise<void>];
+    expect(what).toBe("marked as posted");
+    await undo();
+    const [url, init] = fetchMock.mock.calls[1] as unknown as [string, RequestInit];
+    expect(url).toContain("/pieces/pce_1/items/pci_1/postings/9");
+    expect(init.method).toBe("DELETE");
+    expect(back).toHaveBeenCalled();
   });
 });
 
