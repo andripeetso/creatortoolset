@@ -5,7 +5,7 @@ import { PICTURE_MODEL } from "../lib/device-picture";
 import { deviceOf, isOnline, listDevices } from "../lib/devices";
 import { libraryWorkspace, serverWorks } from "../work/server-work";
 import { jobVersions } from "./blur-mirror";
-import { BLUR_SQL, keepsOnlyOriginals, libraryDb, librarySetting, libraryUploadStored } from "./db";
+import { BLUR_SQL, keepsOnlyOriginals, libraryDb, librarySetting, libraryUploadStored, SINCE } from "./db";
 import { FINISHED } from "./query";
 import { DESCRIBE_LABEL, whoFor } from "./describe";
 import { makeCost, makeMinutes } from "./estimate";
@@ -14,7 +14,7 @@ import { enqueueJob } from "./jobs";
 import { wantsProxy } from "./media/proxy";
 import type { ProbeSummary } from "./media/probe";
 import { wakePictures } from "./pictures";
-import { LOOK_LABEL, LOOK_MIN_S, queueLook } from "./shots";
+import { FIRST_LOOK, LOOK_LABEL, LOOK_MIN_S, MAC_WAITS, queueLook, RELOOK_WAITS } from "./shots";
 import { libraryWatchModel } from "./timeline";
 import { transcribeRoute } from "./transcribe";
 import { mayLeave } from "./upload-gate";
@@ -263,19 +263,29 @@ export function engineOf(libraryId: string, kind: MadeKind, username: string): P
  * the missing timelines or pictures is taken back. Never a kind a file needs to be ready (it would stay processing).
  * Returns how many files.
  */
-export function stopQueued(libraryId: string, kind: MadeKind, username: string): number {
+export function stopQueued(libraryId: string, kind: MadeKind, username: string, now = Date.now()): number {
   if (MADE_KINDS.find((k) => k.kind === kind)?.ready) return 0;
   const db = libraryDb();
   if (kind === "pictures" || kind === "timeline") {
     const n = (db.prepare(`SELECT COUNT(*) AS n ${LIVE} AND ${SPEC[kind].of} AND NOT ${specOf(kind, username).have} AND ${pressed(kind)}`).get(libraryId) as { n: number }).n;
-    // a timeline's job is its look's: those stay, shot descriptions of their own
     db.prepare(`UPDATE libraries SET settings = json_remove(settings, '$.${kind}Asked') WHERE id = ?`).run(libraryId);
+    if (kind === "timeline") {
+      // the files here now are left to Make for the missing: the catch-up fills only what comes in from now on (db.ts
+      // SINCE), or it would queue them all again the moment this stopped them
+      db.prepare(`UPDATE libraries SET settings = json_set(settings, '$.${SINCE.timeline}', ?) WHERE id = ?`).run(now, libraryId);
+      // a timeline's job is its look's: one that waits to run again only for the timeline goes back to done, its lines are
+      // there (one a Mac is reading finishes, and is asked for no watch). A clip's first look is shot descriptions' own
+      db.prepare(`UPDATE jobs SET state = 'done', error = NULL, lease_until = NULL WHERE library_id = ? AND ${RELOOK_WAITS}`).run(libraryId, MAC_WAITS);
+    }
     return n;
   }
   const job = SPEC[kind].job;
   if (!job) return 0;
-  // kept as stopped, not deleted: a file with no job row is new to the sweeps (shots.ts sweepLook) and queued again
-  return Number(db.prepare(`UPDATE jobs SET state = 'stopped', error = NULL WHERE library_id = ? AND kind = ? AND state = 'queued'`).run(libraryId, job).changes);
+  // kept as stopped, not deleted: a file with no job row is new to the sweeps (shots.ts sweepLook) and queued again.
+  // A look that runs again for its timeline is the timelines' to cancel: stopped, the sweep would never take it again
+  return Number(
+    db.prepare(`UPDATE jobs SET state = 'stopped', error = NULL WHERE library_id = ? AND kind = ? AND state = 'queued'${job === "look" ? ` AND ${FIRST_LOOK}` : ""}`).run(libraryId, job).changes,
+  );
 }
 
 /**

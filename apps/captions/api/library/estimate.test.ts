@@ -243,6 +243,42 @@ describe("one set of numbers while clips come in", () => {
   });
 });
 
+describe("a run of timelines", () => {
+  it("counts every clip that wants one from the start, not as each is queued, and Stop ends it: the waiting looks go back to done and nothing is queued again", async () => {
+    const { saveMyKey } = await import("../my-keys");
+    const { stopQueued } = await import("./made");
+    const { sweepWatch } = await import("./timeline");
+    d.prepare("DELETE FROM jobs WHERE state != 'done'").run();
+    saveMyKey("local", "GEMINI_API_KEY", "gk-test");
+    // three B-roll clips with their shot descriptions, no timeline yet
+    for (const id of ["t1", "t2", "t3"]) {
+      d.prepare("INSERT INTO assets (id, library_id, kind, title, current_version_id, created_by, created_at, roll) VALUES (?, 'lib_e', 'video', ?, ?, 'local', 1, 'b')").run(`ast-${id}`, id, `ver-${id}`);
+      d.prepare("INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, probe, state, created_by, created_at) VALUES (?, ?, 1, 'k', 1, ?, '{\"duration\":30}', 'ready', 'local', 1)").run(`ver-${id}`, `ast-${id}`, `sha-${id}`);
+      d.prepare("INSERT INTO stretches (version_id, seg, a, b, motion, text, created_at) VALUES (?, 0, 0, 4, 0.5, 'A jump.', 1)").run(`ver-${id}`);
+      d.prepare("INSERT INTO jobs (library_id, version_id, kind, state, actor, done_at) VALUES ('lib_e', ?, 'look', 'done', 'local', 1)").run(`ver-${id}`);
+    }
+    try {
+      expect(await progress("lib_e", "local")).toMatchObject({ left: 3, clips: 3, canStop: true });
+      // the sweep queues the first one's look again: still three, one of them on its way
+      d.prepare("UPDATE jobs SET state = 'queued' WHERE version_id = 'ver-t1' AND kind = 'look'").run();
+      const p = await progress("lib_e", "local");
+      expect(p).toMatchObject({ left: 3, canStop: true });
+      expect(p.stages?.find((x) => x.kind === "look")).toMatchObject({ of: 3 });
+      // Cancel on shot descriptions leaves a look that runs again for its timeline; Cancel on the timelines ends the run
+      stopQueued("lib_e", "look", "local");
+      expect((d.prepare("SELECT state FROM jobs WHERE version_id = 'ver-t1' AND kind = 'look'").get() as { state: string }).state).toBe("queued");
+      stopQueued("lib_e", "timeline", "local", Date.now() + 1000);
+      expect((d.prepare("SELECT state FROM jobs WHERE version_id = 'ver-t1' AND kind = 'look'").get() as { state: string }).state).toBe("done");
+      expect(await progress("lib_e", "local")).toMatchObject({ left: 0, clips: 0 });
+      expect(sweepWatch(d, () => true)).toBe(false);
+    } finally {
+      saveMyKey("local", "GEMINI_API_KEY", null);
+      d.prepare("UPDATE assets SET trashed_at = 1 WHERE id IN ('ast-t1', 'ast-t2', 'ast-t3')").run();
+      d.prepare("UPDATE libraries SET settings = json_remove(settings, '$.timelineSince') WHERE id = 'lib_e'").run();
+    }
+  });
+});
+
 describe("clips being blurred", () => {
   it("counts each clip once, and a clip still being blurred from the start", async () => {
     d.prepare("DELETE FROM jobs WHERE state != 'done'").run();

@@ -4,8 +4,8 @@ import { aiFor, onApiKey } from "../ai-complete";
 import { BACKGROUND_SLOTS, macUsageSince } from "../lib/mac-claude";
 import { libraryDb, libraryLookLevel, librarySetting } from "./db";
 import { DESCRIBE_LABEL, whoFor } from "./describe";
-import { antigravityRoute, canWatch, watchStopped, libraryWatchModel, watchKey, watching, watchUsdPerHour } from "./timeline";
-import { LOOK_KEY_CALLS, LOOK_LABEL, LOOK_MIN_S, MAC_WAITS, SHEETS_PER_CALL } from "./shots";
+import { antigravityRoute, canWatch, watchStopped, libraryWatchModel, watchKey, watching, watchesToCome, watchUsdPerHour } from "./timeline";
+import { LOOK_KEY_CALLS, LOOK_LABEL, LOOK_MIN_S, MAC_WAITS, RELOOK_WAITS, SHEETS_PER_CALL } from "./shots";
 import { SHEET_STRETCHES } from "./look";
 import { embedRoute } from "./embed";
 import { NeedsKey, transcribeRoute } from "./transcribe";
@@ -459,7 +459,10 @@ export async function progress(libraryId: string, username: string): Promise<Lib
     .all({ ...away, ...look }, LIMIT_LIKE, libraryId) as { kind: string; state: string; held: number; away: number; cw: number; ql: number; mac: number; n: number; error: string | null }[];
   const pending = rows.filter((r) => (r.state !== "needs_key" || r.ql) && !r.held && !r.away);
   // the files a watch folder has found and not handed over yet: each is a clip still to prepare, from the moment it is seen
-  const toCome = stillToCome(db, libraryId);
+  // the clips whose timeline is still to queue (timeline.ts sweepWatch takes one while there is room to watch it): part
+  // of the run from its start, as a watch folder's files are, so its total and what is left never wait for the sweep
+  const watches = watchesToCome(db, libraryId);
+  const toCome = stillToCome(db, libraryId) + watches;
   // the files a computer is still making ready (Face Blur's blurred copies): their clips count from the start too, not
   // one by one as each copy comes in
   const made = pluginDeviceJobs().flatMap((j) => j.preparing?.(libraryId) ?? []);
@@ -471,7 +474,12 @@ export async function progress(libraryId: string, username: string): Promise<Lib
   const coming = comingRows.map((r) => r.id);
   const left = pending.reduce((n, r) => n + r.n, 0) + toCome + coming.length;
   // what the library's Stop reaches (made.ts stopQueued): a queued job of a kind with a Cancel, a file still on its way
-  const canStop = toCome > 0 || coming.length > 0 || pending.some((r) => r.state === "queued" && STOPPED.has(r.kind));
+  // and a look waiting for its Mac to run again for its timeline: Stop puts it back as done
+  const canStop =
+    toCome > 0 ||
+    coming.length > 0 ||
+    pending.some((r) => r.state === "queued" && STOPPED.has(r.kind)) ||
+    !!db.prepare(`SELECT 1 FROM jobs WHERE library_id = ? AND ${RELOOK_WAITS} LIMIT 1`).get(libraryId, MAC_WAITS);
   const waiting: LibraryProgress["waiting"] = rows
     .filter((r) => r.state === "needs_key" && !r.ql && !r.cw)
     .map((r) => ({
@@ -593,9 +601,10 @@ export async function progress(libraryId: string, username: string): Promise<Lib
     // a step with nothing to run it on says so in `waiting`, not as a line that never moves
     if (routes[STEP_OF[kind]!].route === "none") continue;
     const c = counts.find((r) => r.kind === kind);
-    const of = c ? c.done + c.failed + c.open : 0;
+    // a look runs again for each timeline still to queue
+    const of = (c ? c.done + c.failed + c.open : 0) + (kind === "look" ? watches : 0);
     const now = working.find((w) => w.kind === kind)?.title;
-    if (of) stages.push({ kind, done: c!.done, of, failed: c!.failed, ...(now ? { now } : {}) });
+    if (of) stages.push({ kind, done: c?.done ?? 0, of, failed: c?.failed ?? 0, ...(now ? { now } : {}) });
     // Timelines are no job of their own: Gemini watches each clip after its shot descriptions (timeline.ts watchAfter)
     if (kind === "look" && of && librarySetting(libraryId, "timeline") && canWatch(db, libraryId, username)) {
       const t = db
@@ -612,7 +621,7 @@ export async function progress(libraryId: string, username: string): Promise<Lib
   const parts: { step: LibraryStep; route: LibraryStepRoute; seconds: number }[] = [];
   for (const step of STEPS) {
     const mine = pending.filter((r) => STEP_OF[r.kind] === step);
-    const n = mine.reduce((t, r) => t + r.n, 0);
+    const n = mine.reduce((t, r) => t + r.n, 0) + (step === "look" ? watches : 0);
     let { route } = routes[step];
     // switched off, yet asked for (Describe with AI on one clip): at the pace it would have on
     if (route === "off") route = step === "describe" || step === "look" ? "provider" : "openai";
@@ -626,6 +635,6 @@ export async function progress(libraryId: string, username: string): Promise<Lib
     const p = await perClip(db, step, route, secondsPerClip, proxyShare);
     parts.push({ step, route, seconds: (p.seconds * n) / p.at });
   }
-  // ponytail: a clip still to come adds no time until it is in; the time grows by its steps then
+  // ponytail: a clip a folder has still to hand over adds no time until it is in; the time grows by its steps then
   return { done, left, clips: clips + toCome, share, seconds: total(parts), canStop, waiting, stages };
 }

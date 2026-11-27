@@ -30,7 +30,7 @@ export type JobState = "queued" | "running" | "done" | "failed" | "needs_key" | 
 
 /** The moves between job states, for both tables. Each UPDATE names the state it expects in its WHERE, and a JS-chosen state is checked here. */
 export const JOB_MOVES: Moves<JobState> = {
-  queued: ["running", "failed", "stopped"], // claimed; failed (stopEdit, failUnseen); the library's Stop (made.ts stopQueued)
+  queued: ["running", "failed", "stopped", "done"], // claimed; failed (stopEdit, failUnseen); the library's Stop (made.ts stopQueued), done for a look that waited to run again for its timeline
   running: ["done", "queued", "failed", "needs_key"], // finished, tried again, lease ran out, parked, failed for good
   done: ["queued"], // queued again (enqueueJob's `again`)
   failed: ["queued", "done"], // Retry; done when the output is there already (enqueueJob)

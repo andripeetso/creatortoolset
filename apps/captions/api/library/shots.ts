@@ -49,6 +49,15 @@ export const SHEETS_PER_CALL = 6;
 export const SHEET_FORMAT = `${STRETCH_FRAMES}x${SHEET_STRETCHES}`;
 /** Why a look of a file kept on a Mac waits (estimate.ts progress tells these apart by it). */
 export const MAC_WAITS = "Waits for the Mac this file is on to read its picture";
+const HAS_LINES = "EXISTS (SELECT 1 FROM stretches s WHERE s.version_id = jobs.version_id AND s.text != '')";
+/**
+ * SQL on `jobs` (one `?`: MAC_WAITS): a look that runs again only for its clip's timeline (its lines are there) and has
+ * not started: queued, or waiting for its Mac. Cancel on the timelines puts it back as done (made.ts stopQueued), Cancel
+ * on shot descriptions leaves it, and a run holding one can be stopped (estimate.ts canStop).
+ */
+export const RELOOK_WAITS = `kind = 'look' AND (state = 'queued' OR (state = 'needs_key' AND error = ?)) AND ${HAS_LINES}`;
+/** SQL on `jobs`: a look of a clip with no lines yet, its first. */
+export const FIRST_LOOK = `kind = 'look' AND NOT ${HAS_LINES}`;
 /** Why a look parks when the account it runs as may no longer see the clip (lookAllowed): the sweep queues it again once they may. */
 export const NO_ACCESS = "The person this runs as no longer sees this clip";
 

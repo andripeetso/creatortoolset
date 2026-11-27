@@ -741,6 +741,24 @@ const swept = new Map<string, number>();
 /** The clips one sweep reads, and where in the list (newest first) the next one starts: past the pages that had nothing to queue. */
 const SWEEP_PAGE = 50;
 let sweepFrom = 0;
+type Wanting = { id: string; actor: string; lib: string; pressed: number };
+/** Queued by the sweep a moment ago: a failed watch waits RETRY_MS, unless Make for the missing was pressed since (What's made counts it queued then). */
+const setAside = (r: Wanting, now: number): boolean => {
+  const at = swept.get(r.id);
+  return at !== undefined && at + RETRY_MS > now && r.pressed <= at;
+};
+/**
+ * SQL, FROM on (one `?`: now - RETRY_MS): the clips that want a timeline and whose look is done. `v` is the version
+ * watched: a blurred copy's original (blur-mirror.ts), where its look, its timeline and a failed watch are kept. Read off
+ * the copy, a failed watch never left this list, and the sweep never got past the newest 50.
+ */
+const WANTS = `FROM assets a JOIN asset_versions c ON c.id = a.current_version_id
+    JOIN asset_versions v ON v.id = ${analysedVersion("c")}
+    JOIN jobs j ON j.version_id = v.id AND j.kind = 'look' AND j.state = 'done'
+    JOIN libraries l ON l.id = a.library_id LEFT JOIN timelines t ON t.version_id = v.id
+  WHERE a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND v.created_by IS NOT NULL AND (${AUTO} OR ${PRESSED})
+    AND (t.version_id IS NULL OR (t.error IS NOT NULL AND (t.at <= ? OR ${PRESSED})) OR (t.error IS NULL AND IFNULL(t.level, '') != IFNULL(json_extract(l.settings, '$.lookLevel'), 'standard'))
+         OR (t.error IS NULL AND t.model = 'antigravity' AND IFNULL(json_extract(l.settings, '$.timelineModel'), '') != 'antigravity'))`;
 /** A failed watch the sweep asks again as soon as there is room, not RETRY_MS later. */
 function askSoon(db: DatabaseSync, versionId: string): void {
   db.prepare("UPDATE timelines SET at = 0 WHERE version_id = ?").run(versionId);
@@ -756,25 +774,11 @@ function askSoon(db: DatabaseSync, versionId: string): void {
  */
 export function sweepWatch(db: DatabaseSync, queueLook: (versionId: string, actor: string) => boolean, now = Date.now()): boolean {
   if (watchesFull(false) && watchesFull(true)) return false;
-  const page = db
-    .prepare(
-      // `v` is the version watched: a blurred copy's original (blur-mirror.ts), where its look, its timeline and a failed
-      // watch are kept. Read off the copy, a failed watch never left this list, and the sweep never got past the newest 50
-      `SELECT v.id, v.created_by AS actor, a.library_id AS lib, ${PRESSED_AT} AS pressed FROM assets a JOIN asset_versions c ON c.id = a.current_version_id
-         JOIN asset_versions v ON v.id = ${analysedVersion("c")}
-         JOIN jobs j ON j.version_id = v.id AND j.kind = 'look' AND j.state = 'done'
-         JOIN libraries l ON l.id = a.library_id LEFT JOIN timelines t ON t.version_id = v.id
-       WHERE a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND v.created_by IS NOT NULL AND (${AUTO} OR ${PRESSED})
-         AND (t.version_id IS NULL OR (t.error IS NOT NULL AND (t.at <= ? OR ${PRESSED})) OR (t.error IS NULL AND IFNULL(t.level, '') != IFNULL(json_extract(l.settings, '$.lookLevel'), 'standard'))
-              OR (t.error IS NULL AND t.model = 'antigravity' AND IFNULL(json_extract(l.settings, '$.timelineModel'), '') != 'antigravity'))
-       ORDER BY v.created_at DESC LIMIT ${SWEEP_PAGE} OFFSET ?`,
-    );
+  const page = db.prepare(`SELECT v.id, v.created_by AS actor, a.library_id AS lib, ${PRESSED_AT} AS pressed ${WANTS} ORDER BY v.created_at DESC LIMIT ${SWEEP_PAGE} OFFSET ?`);
   for (;;) {
-    const rows = page.all(now - RETRY_MS, sweepFrom) as { id: string; actor: string; lib: string; pressed: number }[];
+    const rows = page.all(now - RETRY_MS, sweepFrom) as Wanting[];
     for (const r of rows) {
-      const at = swept.get(r.id);
-      // a failed watch waits RETRY_MS, unless Make for the missing was pressed since (What's made counts it queued then)
-      if ((at !== undefined && at + RETRY_MS > now && r.pressed <= at) || watching.has(r.id)) continue;
+      if (setAside(r, now) || watching.has(r.id)) continue;
       // no key or Antigravity for its uploader yet: passed over, not set aside, so a key saved later starts it on the next sweep
       if (!canWatch(db, r.lib, r.actor) || watchesFull(agyHere(db, r.lib, r.actor))) continue;
       swept.set(r.id, now);
@@ -789,4 +793,16 @@ export function sweepWatch(db: DatabaseSync, queueLook: (versionId: string, acto
     if (!sweepFrom) return false;
     sweepFrom = 0; // the end of the list: from the newest again
   }
+}
+
+/**
+ * The clips of `libraryId` the sweep has still to queue: the look done, a timeline wanted, a key for its uploader. A
+ * run's progress counts them as still to come (estimate.ts), so its total is known from the start and not only as the
+ * sweep gets to each (it queues one while there is room to watch it).
+ */
+export function watchesToCome(db: DatabaseSync, libraryId: string, now = Date.now()): number {
+  const rows = db.prepare(`SELECT v.id, v.created_by AS actor, a.library_id AS lib, ${PRESSED_AT} AS pressed ${WANTS} AND a.library_id = ?`).all(now - RETRY_MS, libraryId) as Wanting[];
+  const can = new Map<string, boolean>();
+  const mayWatch = (actor: string) => can.get(actor) ?? (can.set(actor, canWatch(db, libraryId, actor)), can.get(actor)!);
+  return rows.filter((r) => !setAside(r, now) && !watching.has(r.id) && mayWatch(r.actor)).length;
 }
