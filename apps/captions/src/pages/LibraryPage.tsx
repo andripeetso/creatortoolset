@@ -211,7 +211,7 @@ export default function LibraryPage() {
   // around it; after that ?setup=1 opens it again as a sheet
   // an account that only reads here (Read, or a plain browser) is never asked to set the library up
   const needsSetup = !!watch && !!library && !library.settings.setupAt && !readOnly;
-  const setupOpen = !!watch && linked.get("setup") === "1" && !needsSetup;
+  const setupOpen = !!watch && linked.get("setup") === "1" && !needsSetup && !readOnly;
   const closeSetup = () => navigate("/library", { replace: true });
 
   // ?clip= is the clip open (?asset= in older links), ?library= the library when not the first: Back closes the clip,

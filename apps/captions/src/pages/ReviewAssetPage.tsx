@@ -265,7 +265,8 @@ function Review({
   const guest = !view.user;
   const me = useMe();
   // a signed-in account set to Read: looks and reads only (a share link's reviewer with no account keeps commenting)
-  const locked = !!view.user && !canChange(me, "review");
+  // Read locks the page. A plain browser is not locked: a cut is commented on and approved there, and nothing else
+  const locked = !!view.user && !canChange(me && { ...me, viewOnly: undefined }, "review");
   // the AI Editor's version this is: its edit and draft (an older plug-in filed `edit` instead), for Use this voice
   const made = version.draft ?? (version.edit ? { edit: version.edit.project, name: version.edit.draft } : undefined);
   const slots = useMemo(() => reviewSlotsFor(me, webPlugins), [me]);
@@ -1066,7 +1067,7 @@ function Review({
               url={(f) => api.stem(version, f)}
               muted={muted || editSound.live}
               onLive={setVoiceLive}
-              save={made && !locked ? (mix, voice) => saveVoiceMix(made.edit, made.name, mix, voice).then(
+              save={made && !locked && !me?.viewOnly ? (mix, voice) => saveVoiceMix(made.edit, made.name, mix, voice).then(
                 () => "Making the next version with this voice") : undefined}
             />
           )}

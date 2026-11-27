@@ -312,6 +312,13 @@ export function readOnlyFor(user: SessionUser, method: string, p: string): Tool 
   return gate && !mayChange(user, gate[1]) ? gate[1] : null;
 }
 
+/**
+ * What a view-only sign-in (a plain browser, users.ts viewOnlyIn) still changes: its own sign-in and account (signing
+ * out, a password, joining a team by invite), and what a reviewer does on a cut, as a share link's guest does: comments
+ * with their references, the approval, and its notifications read. Every other write is refused.
+ */
+export const VIEW_ONLY_WRITES = /^\/api\/(?:(?:auth|account)(?:\/|$)|review\/(?:assets\/[^/]+\/(?:comments(?:\/[^/]+)?|approval|v\/\d+\/refs)|notifications\/read)$)/;
+
 let environmentId = "";
 /** This data folder's id (DATA_DIR/environment.json), made once: the Mac app tells its own server from another program. */
 export function environmentOf(): string {
@@ -484,11 +491,12 @@ app.use("/api/*", async (c, next) => {
   }
   const write = c.req.method !== "GET" && c.req.method !== "HEAD";
   const writeGate = !write ? undefined : WRITE_GATES.find(([p]) => c.req.path === p || c.req.path.startsWith(p + "/"));
-  // a plain browser is for viewing (users.ts viewOnlyIn): no tool takes a change from it, and the assistant no message
-  if (user.viewOnly && (writeGate || (write && (c.req.path === "/api/assistant" || c.req.path.startsWith("/api/assistant/"))))) {
+  // a plain browser is for viewing (users.ts viewOnlyIn): its sign-in changes nothing here but what VIEW_ONLY_WRITES names
+  if (user.viewOnly && write && !VIEW_ONLY_WRITES.test(c.req.path)) {
     return c.json({ error: "A browser is for viewing: changes are made in the Mac app", code: "READ_ONLY" }, 403);
   }
-  if (writeGate && !mayChange(user, writeGate[1])) {
+  // what a view-only sign-in may still do passed above: here the account's own Read decides, as in the apps
+  if (writeGate && !mayChange({ ...user, viewOnly: undefined }, writeGate[1])) {
     return c.json({ error: `${TOOL_NAMES[writeGate[1]]} is read-only for your account`, code: "READ_ONLY" }, 403);
   }
   if (!viewed) touchActive(user.username);

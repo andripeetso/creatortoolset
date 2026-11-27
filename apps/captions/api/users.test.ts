@@ -11,7 +11,7 @@ process.env.DATA_DIR = dir;
 process.env.APP_SECRET = "view-only-test-secret";
 
 const { createUser, mayChange, plainBrowser } = await import("./users");
-const app = (await import("./boot")).default;
+const { default: app, VIEW_ONLY_WRITES } = await import("./boot");
 
 const CHROME = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36";
 const SAFARI = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15";
@@ -61,6 +61,25 @@ it("reads in a plain browser and refuses every tool's change and a message to th
     expect([url, res.status]).toEqual([url, 403]);
     expect(await res.json()).toMatchObject({ code: "READ_ONLY" });
   }
+});
+
+it("refuses what is not a tool's either: scheduled tasks, keys, packs, a workspace", async () => {
+  for (const url of ["/api/automations", "/api/my-keys", "/api/packs/x", "/api/workspace/x", "/api/memory"]) {
+    const res = await call(CHROME, "POST", url);
+    expect([url, res.status]).toEqual([url, 403]);
+    expect(await res.json()).toMatchObject({ code: "READ_ONLY" });
+  }
+});
+
+it("lets a plain browser do what a reviewer does on a cut, and nothing else in Review", async () => {
+  for (const path of ["/api/auth/logout", "/api/account/login/google", "/api/review/assets/a1/comments", "/api/review/assets/a1/comments/c1", "/api/review/assets/a1/approval", "/api/review/assets/a1/v/2/refs", "/api/review/notifications/read"])
+    expect([path, VIEW_ONLY_WRITES.test(path)]).toEqual([path, true]);
+  for (const path of ["/api/review/assets/a1", "/api/review/assets/a1/stack", "/api/review/assets/a1/comments/c1/x", "/api/review/uploads", "/api/authx", "/api/accounts", "/api/library/x"])
+    expect([path, VIEW_ONLY_WRITES.test(path)]).toEqual([path, false]);
+  // the gate itself: a comment gets to its route (which has no such cut), a rename does not
+  const comment = await call(CHROME, "POST", "/api/review/assets/a1/comments");
+  expect(comment.status === 403 ? await comment.json() : {}).not.toMatchObject({ code: "READ_ONLY" });
+  expect(await (await call(CHROME, "PATCH", "/api/review/assets/a1")).json()).toMatchObject({ code: "READ_ONLY" });
 });
 
 it("takes the same changes from the Mac app's window", async () => {

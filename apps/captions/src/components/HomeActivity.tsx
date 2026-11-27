@@ -287,8 +287,9 @@ function ActivityButton({ me }: { me: Me }) {
         <p className="border-b px-3 py-2 text-sm font-medium">Activity</p>
         <div className="max-h-96 overflow-y-scroll pb-1">
           {!running.length && !waiting.length && <p className="px-3 py-8 text-center text-xs text-muted-foreground">No activity</p>}
-          <Part label="Running" lines={running} onChoice={(c) => void choose(c).then(() => server.refresh())} />
-          <Part label="Waiting on you" lines={waiting} onClear={(ids) => void clear(ids)} onChoice={(c) => void choose(c).then(() => server.refresh())} />
+          {/* a plain browser is for viewing: the rows are there, their buttons are not */}
+          <Part label="Running" lines={running} onChoice={me.viewOnly ? undefined : (c) => void choose(c).then(() => server.refresh())} />
+          <Part label="Waiting on you" lines={waiting} onClear={me.viewOnly ? undefined : (ids) => void clear(ids)} onChoice={me.viewOnly ? undefined : (c) => void choose(c).then(() => server.refresh())} />
         </div>
       </PopoverContent>
     </Popover>

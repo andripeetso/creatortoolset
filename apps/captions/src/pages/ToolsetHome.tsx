@@ -90,15 +90,16 @@ export default function ToolsetHome() {
   const running = useRunning(me);
   // which tools are ready: the saved setup, live (lib/setup.ts useSetupSync). Read again on coming Home and when Settings
   // closes, since this window's own changes (a key added in a tool or in Settings) send it no notice
-  // a plain browser is for viewing: nothing is set up there
-  const view = useSetup((s) => (me?.viewOnly ? null : s.view));
+  const setup = useSetup((s) => s.view);
+  // a plain browser is for viewing: nothing is set up there (the tiles the person hid stay hidden: `setup`)
+  const view = me?.viewOnly ? null : setup;
   const load = useSetup((s) => s.load);
   // Home's tiles are all but the ones switched off under Settings → Tools (contracts onHome). Tiles wait for the
   // setup to load (or to fail: a guest has none, and then nothing is hidden), so a hidden tile is never drawn and dropped.
   // Every tile waits, Finals and a plug-in's too: drawn alone on a first visit, they jumped to their place when the rest came.
   const [loaded, setLoaded] = useState(false);
-  const known = loaded || view !== null;
-  const shownOnHome = (t: HomeTile) => known && onHome(view?.hidden, t);
+  const known = loaded || setup !== null;
+  const shownOnHome = (t: HomeTile) => known && onHome(setup?.hidden, t);
   useEffect(() => {
     if (!me) return;
     void load().finally(() => setLoaded(true));

@@ -1021,7 +1021,8 @@ async function viewerOf(c: Context<{ Variables: AuthVars }>): Promise<Viewer | n
   }
   const meta = await readMeta(c.req.param("id") ?? "");
   if (!meta) return null;
-  if (meta.owner === user.username || user.role === "admin") return { meta, manage: true, download: true, user: user.username, guestKey };
+  // in a plain browser (view-only) nobody manages a cut: its owner reviews it there, as anyone else does
+  if (meta.owner === user.username || user.role === "admin") return { meta, manage: !user.viewOnly, download: true, user: user.username, guestKey };
   // the preview of an AI Editor edit shared with this person (a teammate's, api/editor/store.ts editRole): to watch on the edit page
   const edit = meta.versions.find((v) => v.draft)?.draft?.edit;
   if (edit && realUser(user)) {
