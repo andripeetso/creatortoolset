@@ -15,6 +15,7 @@ import { findUser } from "../users";
 import { workspaceContext } from "../lib/workshop/context";
 import { parseJsonObject } from "../lib/instagram/vision";
 import { libraryChanged, libraryRole } from "./access";
+import { analysedVersion } from "./blur-mirror";
 import { libraryLookLevel, librarySetting, sinceSql } from "./db";
 import { WORKSPACE_MAX, workspaceIdOf } from "./describe";
 import { canEmbed } from "./embed";
@@ -754,7 +755,10 @@ export function sweepWatch(db: DatabaseSync, queueLook: (versionId: string, acto
   if (watchesFull(false) && watchesFull(true)) return false;
   const rows = db
     .prepare(
-      `SELECT v.id, v.created_by AS actor, a.library_id AS lib, ${PRESSED_AT} AS pressed FROM assets a JOIN asset_versions v ON v.id = a.current_version_id
+      // `v` is the version watched: a blurred copy's original (blur-mirror.ts), where its look, its timeline and a failed
+      // watch are kept. Read off the copy, a failed watch never left this list, and the sweep never got past the newest 50
+      `SELECT v.id, v.created_by AS actor, a.library_id AS lib, ${PRESSED_AT} AS pressed FROM assets a JOIN asset_versions c ON c.id = a.current_version_id
+         JOIN asset_versions v ON v.id = ${analysedVersion("c")}
          JOIN jobs j ON j.version_id = v.id AND j.kind = 'look' AND j.state = 'done'
          JOIN libraries l ON l.id = a.library_id LEFT JOIN timelines t ON t.version_id = v.id
        WHERE a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND v.created_by IS NOT NULL AND (${AUTO} OR ${PRESSED})

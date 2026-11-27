@@ -28,6 +28,7 @@ import { assetRef, canSee, facetClauses } from "./sources";
 import { segmentsOf } from "./transcribe";
 import { ratedLine } from "./look";
 import { lookable } from "./shots";
+import { originalOf } from "./blur-mirror";
 import { askedWatch, canWatch, timelineOf } from "./timeline";
 import { MAX_SIGNAL_FRAMES, parseSignal, setUserLine, storeLines, stretchesOf, takeSignal, type StretchLine } from "./stretches";
 
@@ -288,7 +289,7 @@ searchApp.post("/:id/assets/:assetId/jobs", async (c) => {
   if (kinds.includes("timeline")) {
     if (!canWatch(db(), libraryId, user.username)) return c.json({ error: "Needs a Gemini API key", code: "needs_key" }, 409);
     if (!lookable(db(), a.current_version_id)) return c.json({ error: "Only a B-roll video with shot descriptions gets a timeline", code: "invalid" }, 400);
-    askedWatch.add(a.current_version_id);
+    askedWatch.add(originalOf(db(), a.current_version_id) ?? a.current_version_id); // a blurred copy's watch runs on its original (blur-mirror.ts)
   }
   // asked for by name: a done job runs again too (a fresh description, new vectors)
   for (const k of new Set(kinds.map((k) => (k === "timeline" ? "look" : k)))) enqueueJob(db(), libraryId, a.current_version_id, k, user.username, true);

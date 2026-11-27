@@ -27,7 +27,7 @@ const { blobs, libraryDb } = await import("./db");
 const { tick } = await import("./worker");
 const { searchLibrary, assetDetail } = await import("./search");
 const { queueLook, WATCH_LABEL } = await import("./shots");
-const { askedWatch, watchStopped, holesOf, parked, parseTimeline, PART_S, RETRY_MS, secondsOf, sweepWatch, timelineOf, wantsWatch, watchAfter, watching, watchTiming, watchUsdPerHour, watchVersion, WATCH_LEVELS } = await import("./timeline");
+const { askedWatch, watchStopped, holesOf, parked, parseTimeline, PART_S, RETRY_MS, secondsOf, storeTimeline, sweepWatch, timelineOf, wantsWatch, watchAfter, watching, watchTiming, watchUsdPerHour, watchVersion, WATCH_LEVELS } = await import("./timeline");
 const { clock } = await import("./look");
 watchTiming.backoffMs = 0;
 // the long call goes through the stubbed fetch, so each test sees and answers it
@@ -418,6 +418,28 @@ describe("in the look job", () => {
     } finally {
       libraryDb().prepare(`UPDATE libraries SET settings = json_remove(settings, '$.timelineAsked') WHERE id = 'lib_t'`).run();
     }
+  });
+
+  it("a blurred copy's watch is its original's: one that failed there leaves the sweep, which goes on to the next clip", async () => {
+    // each clip as Face Blur leaves it: the original, and its blurred render as the current version with the look mirrored done
+    const pair = async (id: string) => {
+      const { v } = await seed(id);
+      const d = libraryDb();
+      d.prepare("INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, blurred_of, state, created_by, created_at) VALUES (?, ?, 2, ?, 1, ?, ?, 'ready', 'local', 2)").run(`${v}-b`, id, `libraries/lib_t/v/${v}-b/source`, `shab-${id}`, `sha-${id}`);
+      d.prepare("UPDATE assets SET current_version_id = ? WHERE id = ?").run(`${v}-b`, id);
+      for (const x of [v, `${v}-b`]) d.prepare("INSERT OR REPLACE INTO jobs (library_id, version_id, kind, state, actor) VALUES ('lib_t', ?, 'look', 'done', 'local')").run(x);
+      return v;
+    };
+    const failed = await pair("pair-failed");
+    const fresh = await pair("pair-fresh");
+    saveMyKey("local", "GEMINI_API_KEY", "gk-test");
+    storeTimeline(libraryDb(), failed, { error: "Gemini said no" });
+    const mine = new Set([failed, `${failed}-b`, fresh, `${fresh}-b`]);
+    const taken: string[] = [];
+    while (sweepWatch(libraryDb(), (id) => mine.has(id) && !!taken.push(id)));
+    // the watch runs on the original, so that is the look queued; the failed one waits RETRY_MS as any failed watch does
+    expect(taken).toEqual([fresh]);
+    expect(wantsWatch(libraryDb(), fresh, "local")).toBe(true);
   });
 
   it("the sweep watches on the uploader's own key, never another account's", async () => {

@@ -21,6 +21,9 @@ export function jobVersions(kind: string, v = "v"): string {
   return ON_ORIGINAL.has(kind) ? `(${v}.id, (SELECT o.id FROM asset_versions o WHERE ${pairOn(v, "o")} LIMIT 1))` : `(${v}.id)`;
 }
 
+/** SQL: the version the analysis of version `v` runs on, where its results and failures are kept: a blurred copy's original, else `v`. */
+export const analysedVersion = (v = "v"): string => `IFNULL((SELECT o.id FROM asset_versions o WHERE ${pairOn(v, "o")} LIMIT 1), ${v}.id)`;
+
 /** The original a blurred copy was made from, else undefined. */
 export function originalOf(db: DatabaseSync, versionId: string): string | undefined {
   return (db.prepare(`SELECT original FROM (${PAIRS}) WHERE copy = ? LIMIT 1`).get(versionId) as { original: string } | undefined)?.original;

@@ -42,7 +42,7 @@ function seed(id: string, { roll = "b", duration = 12 } = {}) {
 beforeAll(() => {
   libraryDb().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_mt', 'local', 'T', 'local', 0)").run();
 });
-afterEach(() => ["ver-nokey", "ver-aroll", "ver-short", "ver-broll"].forEach((v) => askedWatch.delete(v)));
+afterEach(() => ["ver-nokey", "ver-aroll", "ver-short", "ver-broll", "ver-blurred"].forEach((v) => askedWatch.delete(v)));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
 describe("Make timeline on one clip", () => {
@@ -73,5 +73,19 @@ describe("Make timeline on one clip", () => {
     expect(looks(v)).toBe(1);
     expect(jobsOf(v)).toBe(1);
     expect(askedWatch.has(v)).toBe(true);
+  });
+
+  it("a blurred copy: the look and the ask are its original's, where the watch runs", async () => {
+    saveMyKey("local", "GEMINI_API_KEY", "gk-test");
+    const v = seed("blurred");
+    const d = libraryDb();
+    d.prepare(
+      "INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, probe, blurred_of, state, created_by, created_at) SELECT id || '-b', asset_id, 2, source_key || '-b', 1, 'shab', probe, sha256, 'ready', 'local', 2 FROM asset_versions WHERE id = ?",
+    ).run(v);
+    d.prepare("UPDATE assets SET current_version_id = ? WHERE id = 'blurred'").run(`${v}-b`);
+    expect((await ask("blurred", ["timeline"])).status).toBe(200);
+    expect(looks(v)).toBe(1);
+    expect(askedWatch.has(v)).toBe(true);
+    expect(askedWatch.has(`${v}-b`)).toBe(false);
   });
 });
