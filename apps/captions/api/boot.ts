@@ -101,7 +101,7 @@ import { signInCallbackApp, signInStartApp } from "./sign-in";
 import { mcpChallenge, oauthApp } from "./oauth";
 import { cardApp } from "./mcp-cards";
 import { activityApp } from "./activity";
-import { VISITOR, mayChange, mayUse, touchActive, type Tool } from "./users";
+import { VISITOR, mayChange, mayUse, touchActive, type SessionUser, type Tool } from "./users";
 import { env, hasTeam, isCloud, serverKind } from "./lib/env";
 import { disableRequestTimeouts } from "./lib/incoming";
 import { startStallWatch } from "./lib/stalls";
@@ -174,6 +174,15 @@ app.use(async (c, next) => {
   }
   return next();
 });
+// COOKIE_DOMAIN shares the sign-in with every sibling subdomain, so a write sent by the cookie from another site is refused
+// on every route, not only the Mac's own. A bearer key or a device's token is no browser's, so crossOriginWrite lets it by.
+export const cookieSiteWrites: MiddlewareHandler = async (c, next) => {
+  if (env.cookieDomain && crossOriginWrite(c.req.method, c.req.url, c.req.header("origin"), c.req.header("authorization"))) {
+    return c.json({ error: "Sent from another site" }, 403);
+  }
+  return next();
+};
+app.use("/api/*", cookieSiteWrites);
 
 // 50 MB body cap, except video uploads and transcription audio
 const MAX_BODY = 50 * 1024 * 1024;
@@ -293,7 +302,15 @@ export const WRITE_GATES: [string, Tool][] = [
   ["/api/designs", "design"],
   ["/api/clips", "notes"],
   ["/api/documents", "guides"],
+  ["/api/exports", "captions"],
 ];
+
+/** The app a write would change, when the account may only read it (WRITE_GATES); null for a read or an allowed write. */
+export function readOnlyFor(user: SessionUser, method: string, p: string): Tool | null {
+  if (method === "GET" || method === "HEAD") return null;
+  const gate = WRITE_GATES.find(([g]) => p === g || p.startsWith(g + "/"));
+  return gate && !mayChange(user, gate[1]) ? gate[1] : null;
+}
 
 let environmentId = "";
 /** This data folder's id (DATA_DIR/environment.json), made once: the Mac app tells its own server from another program. */
@@ -450,6 +467,9 @@ app.use("/api/*", async (c, next) => {
     if (ruleFor(keyUser.username)?.missing) {
       return c.json({ error: "Your team signs in with Google or Apple: link one in Settings → Account", code: "LINK_SIGNIN" }, 403);
     }
+    // and the same Read rule: a key uploads to Review only where Review may be changed
+    const keyRead = readOnlyFor(keyUser, c.req.method, c.req.path);
+    if (keyRead) return c.json({ error: `${TOOL_NAMES[keyRead]} is read-only for your account`, code: "READ_ONLY" }, 403);
     return next();
   }
   // set before the refusals below: a refused request is the account's (noteFailures)

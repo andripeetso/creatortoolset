@@ -1,6 +1,6 @@
 import { Hono, type Context } from "hono";
 import { spawn, type ChildProcess } from "node:child_process";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { createWriteStream, existsSync } from "node:fs";
 import { copyFile, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -1016,7 +1016,7 @@ async function viewerOf(c: Context<{ Variables: AuthVars }>): Promise<Viewer | n
       return { meta, ...reviewer, download: project.share!.download };
     }
     const meta = await readMeta(await linkTarget(token));
-    if (!meta?.share?.enabled || meta.share.token !== token) return null;
+    if (!meta?.share?.enabled || !sameToken(meta.share.token, token)) return null;
     return { meta, ...reviewer, download: meta.share.download };
   }
   const meta = await readMeta(c.req.param("id") ?? "");
@@ -1033,6 +1033,12 @@ async function viewerOf(c: Context<{ Variables: AuthVars }>): Promise<Viewer | n
   return null;
 }
 
+/** A share token compared in constant time (as library/shares.ts): a guess is never checked a character at a time. */
+const sameToken = (want: string, got: string): boolean => {
+  const a = Buffer.from(want), b = Buffer.from(got);
+  return a.length === b.length && timingSafeEqual(a, b);
+};
+
 const linkTarget = async (token: string) =>
   UUID.test(token) ? (await readFile(linkPath(token), "utf-8").catch(() => "")).trim() : "";
 
@@ -1041,7 +1047,7 @@ async function sharedProject(token: string): Promise<Project | null> {
   const target = await linkTarget(token);
   if (!target.startsWith(PROJECT_LINK)) return null;
   const p = (await readProjects()).find((x) => x.id === target.slice(PROJECT_LINK.length));
-  return p?.share?.enabled && p.share.token === token ? p : null;
+  return p?.share?.enabled && sameToken(p.share.token, token) ? p : null;
 }
 
 /** Turn a share on/off, allow downloads, or reset its token (the old one stops working). */

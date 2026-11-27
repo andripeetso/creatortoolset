@@ -22,7 +22,7 @@ import { ensureProjectOriginal, projectOriginalExists, readProjectClip } from ".
 import { saveToLibrary } from "./library/routes";
 import { addToFinals, belowHd, type FinalsOutcome } from "./library/finals";
 import { ensureLibrary } from "./library/access";
-import { type SessionUser, bumpUsage, canSee } from "./users";
+import { type SessionUser, bumpUsage, canSee, mayChange } from "./users";
 import type { ExportStatus } from "../contracts/exports";
 import { type Moves, canMove, move } from "./lib/transition";
 import { announceSoon } from "./lib/announce-soon";
@@ -767,6 +767,7 @@ exportsApp.post("/:id/library", async (c) => {
   if (!job || !canSee(job, user)) return c.json({ error: "Not found" }, 404);
   if (job.status !== "done") return c.json({ error: "Not ready" }, 409);
   if (user.role !== "admin" && user.off.includes("media")) return c.json({ error: "Not found" }, 404); // as boot.ts TOOL_GATES
+  if (!mayChange(user, "media")) return c.json({ error: "Media Library is read-only for your account", code: "READ_ONLY" }, 403);
   if (job.ext === "zip") return c.json({ error: "A PNG sequence cannot be sent to the Media Library" }, 400);
   const p = outPath(job);
   if (!existsSync(p)) return c.json({ error: "File expired" }, 410);
