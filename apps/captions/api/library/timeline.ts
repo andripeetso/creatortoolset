@@ -738,6 +738,9 @@ export function watchAfter(db: DatabaseSync, versionId: string, src: () => Promi
 
 /** When the sweep last queued a version (ms): it looks again RETRY_MS later, or at once after a press of Make for the missing. */
 const swept = new Map<string, number>();
+/** The clips one sweep reads, and where in the list (newest first) the next one starts: past the pages that had nothing to queue. */
+const SWEEP_PAGE = 50;
+let sweepFrom = 0;
 /** A failed watch the sweep asks again as soon as there is room, not RETRY_MS later. */
 function askSoon(db: DatabaseSync, versionId: string): void {
   db.prepare("UPDATE timelines SET at = 0 WHERE version_id = ?").run(versionId);
@@ -753,7 +756,7 @@ function askSoon(db: DatabaseSync, versionId: string): void {
  */
 export function sweepWatch(db: DatabaseSync, queueLook: (versionId: string, actor: string) => boolean, now = Date.now()): boolean {
   if (watchesFull(false) && watchesFull(true)) return false;
-  const rows = db
+  const page = db
     .prepare(
       // `v` is the version watched: a blurred copy's original (blur-mirror.ts), where its look, its timeline and a failed
       // watch are kept. Read off the copy, a failed watch never left this list, and the sweep never got past the newest 50
@@ -764,17 +767,26 @@ export function sweepWatch(db: DatabaseSync, queueLook: (versionId: string, acto
        WHERE a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND v.created_by IS NOT NULL AND (${AUTO} OR ${PRESSED})
          AND (t.version_id IS NULL OR (t.error IS NOT NULL AND (t.at <= ? OR ${PRESSED})) OR (t.error IS NULL AND IFNULL(t.level, '') != IFNULL(json_extract(l.settings, '$.lookLevel'), 'standard'))
               OR (t.error IS NULL AND t.model = 'antigravity' AND IFNULL(json_extract(l.settings, '$.timelineModel'), '') != 'antigravity'))
-       ORDER BY v.created_at DESC LIMIT 50`,
-    )
-    .all(now - RETRY_MS) as { id: string; actor: string; lib: string; pressed: number }[];
-  for (const r of rows) {
-    const at = swept.get(r.id);
-    // a failed watch waits RETRY_MS, unless Make for the missing was pressed since (What's made counts it queued then)
-    if ((at !== undefined && at + RETRY_MS > now && r.pressed <= at) || watching.has(r.id)) continue;
-    // no key or Antigravity for its uploader yet: passed over, not set aside, so a key saved later starts it on the next sweep
-    if (!canWatch(db, r.lib, r.actor) || watchesFull(agyHere(db, r.lib, r.actor))) continue;
-    swept.set(r.id, now);
-    if (queueLook(r.id, r.actor)) return true;
+       ORDER BY v.created_at DESC LIMIT ${SWEEP_PAGE} OFFSET ?`,
+    );
+  for (;;) {
+    const rows = page.all(now - RETRY_MS, sweepFrom) as { id: string; actor: string; lib: string; pressed: number }[];
+    for (const r of rows) {
+      const at = swept.get(r.id);
+      // a failed watch waits RETRY_MS, unless Make for the missing was pressed since (What's made counts it queued then)
+      if ((at !== undefined && at + RETRY_MS > now && r.pressed <= at) || watching.has(r.id)) continue;
+      // no key or Antigravity for its uploader yet: passed over, not set aside, so a key saved later starts it on the next sweep
+      if (!canWatch(db, r.lib, r.actor) || watchesFull(agyHere(db, r.lib, r.actor))) continue;
+      swept.set(r.id, now);
+      if (queueLook(r.id, r.actor)) return true;
+    }
+    // a whole page passed over (no key for their uploader, a watch waiting): the next sweep reads on below it, so the
+    // clips it holds never keep the older ones from their turn
+    if (rows.length === SWEEP_PAGE) {
+      sweepFrom += SWEEP_PAGE;
+      return false;
+    }
+    if (!sweepFrom) return false;
+    sweepFrom = 0; // the end of the list: from the newest again
   }
-  return false;
 }

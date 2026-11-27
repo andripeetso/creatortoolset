@@ -442,6 +442,26 @@ describe("in the look job", () => {
     expect(wantsWatch(libraryDb(), fresh, "local")).toBe(true);
   });
 
+  it("more clips passed over than one sweep reads never keep an older clip from its turn", async () => {
+    const d = libraryDb();
+    const { v } = await seed("behind");
+    d.prepare("INSERT OR REPLACE INTO jobs (library_id, version_id, kind, state, actor) VALUES ('lib_t', ?, 'look', 'done', 'local')").run(v);
+    saveMyKey("local", "GEMINI_API_KEY", "gk-test");
+    // 60 newer clips of someone with no key: passed over on every sweep, never set aside
+    for (let i = 0; i < 60; i++) {
+      d.prepare("INSERT INTO assets (id, library_id, kind, title, current_version_id, created_by, created_at, roll) VALUES (?, 'lib_t', 'video', 'nokey', ?, 'carol', 9, 'b')").run(`nokey-${i}`, `ver-nokey-${i}`);
+      d.prepare("INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, probe, state, created_by, created_at) VALUES (?, ?, 1, 'k', 1, ?, '{\"duration\":12}', 'ready', 'carol', 9)").run(`ver-nokey-${i}`, `nokey-${i}`, `sha-nokey-${i}`);
+      d.prepare("INSERT INTO jobs (library_id, version_id, kind, state, actor) VALUES ('lib_t', ?, 'look', 'done', 'carol')").run(`ver-nokey-${i}`);
+    }
+    try {
+      let took = false;
+      for (let i = 0; i < 4 && !took; i++) took = sweepWatch(libraryDb(), (id) => id === v);
+      expect(took).toBe(true);
+    } finally {
+      d.prepare("UPDATE assets SET trashed_at = 1 WHERE id LIKE 'nokey-%'").run();
+    }
+  });
+
   it("the sweep watches on the uploader's own key, never another account's", async () => {
     const { v } = await seed("bobs");
     libraryDb().prepare("UPDATE asset_versions SET created_by = 'bob' WHERE id = ?").run(v);

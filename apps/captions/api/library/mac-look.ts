@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { mkdir, rename, rm, stat } from "node:fs/promises";
+import { mkdir, readdir, rename, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import { LIBRARY_LOOK_KIND, type DeviceJob } from "../../contracts/devices";
 import type { Device } from "../../contracts/providers";
@@ -77,6 +77,25 @@ export function takeWatchCopy(versionId: string): string | null {
   return f;
 }
 const dropCopy = (f?: string) => void (f && rm(f, { force: true }).catch(() => {}));
+/** Where a Mac's copies for the timeline wait (watch-<version>-<job>.mp4). */
+const copiesDir = () => path.join(env.dataDir, "library", "scratch");
+
+/**
+ * The copies a process before this one left: a restart in the middle of a watch ends the watch that would have deleted
+ * its copy, and nothing else does. Every copy written before this process started (`born`) goes. Returns how many.
+ */
+export async function dropLeftCopies(born = Date.now() - process.uptime() * 1000, dir = copiesDir()): Promise<number> {
+  let n = 0;
+  for (const f of await readdir(dir).catch(() => [] as string[])) {
+    if (!/^watch-.+\.mp4$/.test(f)) continue;
+    const file = path.join(dir, f);
+    const at = (await stat(file).catch(() => null))?.mtimeMs;
+    if (at === undefined || at >= born) continue;
+    await rm(file, { force: true });
+    n++;
+  }
+  return n;
+}
 
 /** Whether a Mac sent the sheets of `versionId` and the look lane has not taken them yet. */
 export const macSheetsWaiting = (versionId: string): boolean => sent.has(versionId);
@@ -226,7 +245,7 @@ export const macLookJob: DeviceJobSlot = {
     const level = libraryLookLevel(r.library_id);
     if (stretchLevelOf(db, r.version_id) !== level) storeStretches(db, r.version_id, [], level);
     // the timeline is watched from the original, as the shot descriptions are, Blur faces or not (blur-mirror.ts): the copy is
-    // watched once and deleted, never kept or shown
+    // watched once and deleted (one a restart leaves: dropLeftCopies)
     const watch = wantsWatch(db, r.version_id, r.actor);
     lastTaken.set(d.id, { id: r.id, at: Date.now() });
     held.set(r.id, { device: d.id, versionId: r.version_id, libraryId: r.library_id, duration, level, sheets: [], bytes: 0, watch });
@@ -304,7 +323,7 @@ export const macLookJob: DeviceJobSlot = {
     if (!h.watch) return { error: "Send the sheets as JSON.", status: 400 };
     if ((await stat(file)).size > WATCH_COPY_MAX) return { error: "The copy for the timeline is too big.", status: 413 };
     extendLease(libraryDb(), id, LEASE_S);
-    const dir = path.join(env.dataDir, "library", "scratch");
+    const dir = copiesDir();
     const dest = path.join(dir, `watch-${h.versionId}-${id}.mp4`);
     await mkdir(dir, { recursive: true });
     await rename(file, dest);

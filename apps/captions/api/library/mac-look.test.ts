@@ -1,7 +1,7 @@
 // Shot descriptions of a file kept on a Mac (mac-look.ts) on the device routes: only the Mac the file is on takes its
 // look, with its own token; the picture it sends gives the stretches; the sheets it sends are looked at once by the look
 // lane and never kept; a usage limit gives the look back to that Mac, which sends its kept sheets again.
-import { mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -28,7 +28,7 @@ const { enqueueJob } = await import("./jobs");
 const { tick } = await import("./worker");
 const { stretchesOf } = await import("./stretches");
 const { MAC_WAITS, queueLook } = await import("./shots");
-const { LOOK_BYTES_MAX, macLookJob, takeMacSheets, TOO_BIG } = await import("./mac-look");
+const { dropLeftCopies, LOOK_BYTES_MAX, macLookJob, takeMacSheets, TOO_BIG } = await import("./mac-look");
 const { deviceOf } = await import("../lib/devices");
 const { emptyKept, keptView } = await import("../kept");
 const { aiFor } = await import("../ai-complete");
@@ -258,6 +258,22 @@ describe("a look of a file kept on a Mac", () => {
     const v = await seed("ast-m-30");
     expect(job(v)).toMatchObject({ state: "needs_key", error: "Connect an AI" });
     expect(await claim()).toBeNull();
+  });
+});
+
+describe("a copy for the timeline a restart left", () => {
+  it("goes when the next process cleans up; one this process wrote, and any other file, stays", async () => {
+    const scratchDir = path.join(dir, "library", "scratch");
+    mkdirSync(scratchDir, { recursive: true });
+    const born = Date.now() - 60_000;
+    for (const [name, at] of [["watch-ver-old-1.mp4", born - 5000], ["watch-ver-new-2.mp4", born + 5000], ["look-old.jpg", born - 5000]] as const) {
+      writeFileSync(path.join(scratchDir, name), "x");
+      utimesSync(path.join(scratchDir, name), at / 1000, at / 1000);
+    }
+    expect(await dropLeftCopies(born)).toBe(1);
+    expect(readdirSync(scratchDir).filter((f) => ["watch-ver-old-1.mp4", "watch-ver-new-2.mp4", "look-old.jpg"].includes(f)).sort()).toEqual(["look-old.jpg", "watch-ver-new-2.mp4"]);
+    rmSync(path.join(scratchDir, "watch-ver-new-2.mp4"));
+    rmSync(path.join(scratchDir, "look-old.jpg"));
   });
 });
 

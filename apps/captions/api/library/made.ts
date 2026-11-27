@@ -47,7 +47,11 @@ const failedJob = (job?: string) => (job ? `EXISTS (SELECT 1 FROM jobs j WHERE j
 /** SQL: the version's `job` was stopped (Retry queues it again): neither failed nor missing. */
 const stoppedJob = (job?: string) => (job ? `EXISTS (SELECT 1 FROM jobs j WHERE j.version_id IN ${jobVersions(job)} AND j.kind = '${job}' AND j.state = 'stopped')` : "0");
 /** A file in the library when Make for the missing was pressed for `kind` (search by picture, timelines: their catch-ups make them). */
-const pressed = (kind: "pictures" | "timeline") => `v.created_at <= IFNULL(json_extract(l.settings, '$.${kind}Asked'), -1)`;
+// a timeline's press is judged by the version watched, a blurred copy's original (timeline.ts PRESSED): a clip blurred after the press is covered
+const pressed = (kind: "pictures" | "timeline") =>
+  `${kind === "timeline" ? `(SELECT MIN(w.created_at) FROM asset_versions w WHERE w.id IN ${jobVersions("look")})` : "v.created_at"} <= IFNULL(json_extract(l.settings, '$.${kind}Asked'), -1)`;
+/** SQL: version `v` has a timeline row (`more` narrows it), its own or, a blurred copy, its original's: the watch runs there and lands there first (blur-mirror.ts). */
+const watched = (more: string) => `EXISTS (SELECT 1 FROM timelines x WHERE x.version_id IN ${jobVersions("look")}${more})`;
 
 /**
  * Per kind: the job that makes it (none: a catch-up does), the files that can have it, what having it is, which of the
@@ -87,12 +91,12 @@ const SPEC: Record<MadeKind, { job?: string; of: string; have: string; can?: str
   // a look that ran and wrote no line counts as made: pressed again it would only spend again
   look: { job: "look", of: LOOKABLE, have: `(${LINES} OR EXISTS (SELECT 1 FROM jobs x WHERE x.version_id IN ${jobVersions("look")} AND x.kind = 'look' AND x.state = 'done'))` },
   // on its way: its look running, or pressed for with no watch since (one that failed after the press is missing again).
-  // A blurred copy's watch is its original's (blur-mirror.ts): a failure stays there, so both are read
+  // One whose look failed is failed, not on its way: the sweep takes only a look that is done (timeline.ts sweepWatch)
   timeline: {
     job: "look",
     of: `${LOOKABLE} AND ${LINES}`,
-    have: has("timelines", " AND x.error IS NULL"),
-    open: `(${open("look")} OR (${pressed("timeline")} AND NOT EXISTS (SELECT 1 FROM timelines x WHERE x.version_id IN ${jobVersions("look")} AND x.at >= json_extract(l.settings, '$.timelineAsked'))))`,
+    have: watched(" AND x.error IS NULL"),
+    open: `(${open("look")} OR (${pressed("timeline")} AND NOT ${watched(" AND x.at >= json_extract(l.settings, '$.timelineAsked')")} AND NOT ${failedJob("look")}))`,
   },
   // sorted by itself (sound-kind.ts): a tag the person (or Gemini, hearing talk) turned down is never given again, so settled
   sound: {
@@ -113,8 +117,9 @@ const LIVE = `FROM assets a JOIN asset_versions v ON v.id = a.current_version_id
 function specOf(kind: MadeKind, username: string) {
   const s = SPEC[kind];
   const model = kind === "embed" ? modelFor(username) : null;
-  // a timeline's job is its look's: a failed look is that kind's to retry, not this one's
-  const failed = kind === "timeline" ? "0" : failedJob(s.job);
+  // a timeline's job is its look's. A look that failed on a clip with its lines (it ran again for the timeline) shows
+  // nowhere else, Shot descriptions reads made: failed here, and Retry queues the look (routes.ts). Stopped is the look's own
+  const failed = failedJob(s.job);
   const stopped = kind === "timeline" ? "0" : stoppedJob(s.job);
   return { ...s, have: model ? has("embeddings", ` AND x.model = '${model.replace(/'/g, "''")}'`) : s.have, open: s.open ?? open(s.job), failed, stopped };
 }

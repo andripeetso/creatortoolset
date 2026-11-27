@@ -230,6 +230,35 @@ describe("what's made", () => {
     expect((await row("timeline")).missing).toBe(1);
   });
 
+  it("timelines of a blurred copy are read off its original: covered by a press from before it was blurred, made once the watch lands there, failed when its look failed", async () => {
+    const pressedAt = Date.now();
+    makeMissing("lib_m", "timeline", "local", pressedAt);
+    const before = await row("timeline");
+    // the original with its look done, then its blurred copy (made after the press) as the current version, the look mirrored
+    const orig = clip("ast-tlblur", { at: 5 });
+    d.prepare(
+      `INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, blurred_of, probe, state, created_by, created_at)
+       SELECT id || '-b', asset_id, 2, 'kb', bytes, 'sha-tlblur-b', sha256, probe, 'ready', created_by, ? FROM asset_versions WHERE id = ?`,
+    ).run(pressedAt + 60_000, orig);
+    d.prepare("UPDATE assets SET current_version_id = ? WHERE id = 'ast-tlblur'").run(`${orig}-b`);
+    for (const v of [orig, `${orig}-b`]) {
+      d.prepare("INSERT INTO stretches (version_id, seg, a, b, motion, text, created_at) VALUES (?, 0, 0, 4, 0.5, 'A jump.', 1)").run(v);
+      d.prepare("INSERT INTO jobs (library_id, version_id, kind, state, actor) VALUES ('lib_m', ?, 'look', 'done', 'local')").run(v);
+    }
+    expect(await row("timeline")).toMatchObject({ queued: before.queued + 1, missing: before.missing });
+    // the watch lands on the original; the copy takes it a moment later (blur-mirror.ts): made already, never missing in between
+    d.prepare("INSERT INTO timelines (version_id, events, error, at) VALUES (?, '[]', NULL, ?)").run(orig, pressedAt + 1);
+    expect(await row("timeline")).toMatchObject({ have: before.have + 1, queued: before.queued, missing: before.missing });
+    // its look ran again for the timeline and failed: failed here (Shot descriptions reads made), and Retry queues the look
+    d.prepare("DELETE FROM timelines WHERE version_id = ?").run(orig);
+    d.prepare("UPDATE jobs SET state = 'failed' WHERE version_id = ? AND kind = 'look'").run(orig);
+    expect(await row("timeline")).toMatchObject({ failed: (before.failed ?? 0) + 1, queued: before.queued });
+    expect((await app.request("/api/library/lib_m/retry/timeline", { method: "POST" })).status).toBe(200);
+    expect(job(orig, "look")?.state).toBe("queued");
+    d.prepare("DELETE FROM jobs WHERE version_id = ? AND kind = 'look'").run(orig);
+    d.prepare("UPDATE assets SET trashed_at = 1 WHERE id = 'ast-tlblur'").run();
+  });
+
   it("transcripts for B-roll off: Make for the missing leaves B-roll out and says it skips it", async () => {
     const v = clip("ast-broll-off");
     const before = await row("transcribe");

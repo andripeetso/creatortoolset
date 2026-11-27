@@ -25,7 +25,7 @@ import { makeWave } from "./media/wave";
 import { keySound, NeedsKey, transcribeVersion, versionRoute } from "./transcribe";
 import { sortAfter, sortRoll, sortUnsorted } from "./roll";
 import { lookAllowed, lookFromSheets, lookVersion, MAC_WAITS, needLookRoute, NO_ACCESS, queueLook, sweepLook } from "./shots";
-import { onTheirMac, takeMacSheets, takeWatchCopy } from "./mac-look";
+import { dropLeftCopies, onTheirMac, takeMacSheets, takeWatchCopy } from "./mac-look";
 import { askedWatch, storeTimeline, sweepWatch, wantsWatch, watchAfter } from "./timeline";
 import { picturesHere, sheetPictures, startPictureCatchUp, wakePictures } from "./pictures";
 import { organizeOnProbe, refileAllShoots, rereadUploadedDates } from "./organize";
@@ -411,6 +411,8 @@ export function startLibraryWorker(): () => void {
   graceHeld(libraryDb(), LEASE_S); // before the first tick's requeueExpired: a restart costs a computer's job no try
   const stopCatchUp = startEmbedCatchUp();
   const stopPictures = startPictureCatchUp();
+  // a minute in, when the process before this one is gone (a deploy's reload overlaps the two): the timeline copies it left
+  setTimeout(() => void dropLeftCopies().catch((e: unknown) => console.error("[library] left copies:", e)), 60_000).unref();
   void sortUnsorted(); // clips from before A-roll and B-roll, from what they already have
   // clips from before the country was kept, from their location tag; then Smart folders by shoot (once: organize.ts refileShoots)
   // the dates first: a video whose date changed is filed by it
