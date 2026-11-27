@@ -462,6 +462,7 @@ interface PieceRow {
   trashed_at?: number | null;
   /** merged into another piece: JSON { into, items } for Undo (unmerge) */
   merged?: string | null;
+  kind?: string | null;
 }
 interface ItemRow {
   id: string;
@@ -556,6 +557,7 @@ function pieceOf(p: PieceRow): Piece {
     label: p.label,
     collectionId: p.collection_id,
     createdBy: p.created_by,
+    kind: p.kind === "carousel" ? "carousel" : null,
     coverUrl: p.cover_at ? `/api/library/${p.library_id}/pieces/${p.id}/cover?v=${p.cover_at}` : null,
     items: items.map(
       (i): PieceItem => ({

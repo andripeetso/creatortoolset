@@ -3468,7 +3468,7 @@ export interface SessionFinals {
   folder?: string;
   /** the server reads that folder itself (it is on its own disk): a file put there comes in with nothing more to do */
   reads?: boolean;
-  /** the project's main piece is a carousel: its final is the slides (images), not a video */
+  /** the project's main piece is a carousel: its final is the slides (images, videos or both) */
   carousel: boolean;
 }
 
@@ -3483,6 +3483,8 @@ export async function sessionFinals(meta: SessionMeta, device?: string): Promise
   const main = await mainPiece(meta.id);
   const mainId = main?.id;
   const carousel = main?.kind === "carousel";
+  // a carousel's pieces linked before pieces had a kind are marked now, so Finals stops showing them as reels
+  if (carousel) libraryDb().prepare("UPDATE pieces SET kind = 'carousel' WHERE workshop_session = ? AND kind IS NULL").run(meta.id);
   const own = libraryDb().prepare("SELECT 1 FROM pieces WHERE workshop_session = ? AND trashed_at IS NULL LIMIT 1").get(meta.id);
   let linked = !!own || (mainId ? (await pluginFinalsVersions(meta.id, mainId, mainId)).length > 0 : false);
   const lib = await ensureLibrary(meta.owner, meta.projectId ?? "");
@@ -3499,7 +3501,7 @@ export async function sessionFinals(meta: SessionMeta, device?: string): Promise
   const local = root.origin.host === THIS_COMPUTER || isThisMachine(root.origin.host);
   const sub = local && watchAllowed(meta.owner) ? await watchFinals(meta.owner, libraryId!, root.origin.path, dir, meta.id, finalsId!) : null;
   if (sub) {
-    linked ||= (await readdir(sub, { recursive: true }).catch(() => [] as string[])).some((f) => kindOf(f) === (carousel ? "image" : "video") && !f.split(path.sep).some((s) => s.startsWith(".")));
+    linked ||= (await readdir(sub, { recursive: true }).catch(() => [] as string[])).some((f) => (kindOf(f) === "video" || (carousel && kindOf(f) === "image")) && !f.split(path.sep).some((s) => s.startsWith(".")));
     const taken = libraryDb()
       .prepare(
         `SELECT s.version_id AS v FROM watch_seen s WHERE s.library_id = ? AND substr(s.path, 1, ?) = ? AND s.version_id IS NOT NULL
@@ -3511,6 +3513,9 @@ export async function sessionFinals(meta: SessionMeta, device?: string): Promise
   const at = device ? (pathOn(root, device) ?? (local && isThisMachine(device) ? root.origin.path : undefined)) : undefined;
   return { ...out, linked, ...(at ? { folder: `${at.replace(/\/+$/, "")}/${dir}`, reads: !!sub } : {}) };
 }
+
+/** Whether the session's piece (`docId`, else its main one) is a carousel: its Finals piece is marked one. */
+const isCarousel = async (sessionId: string, docId?: string) => ((docId ? await readDoc(sessionId, docId) : await mainPiece(sessionId))?.kind ?? null) === "carousel";
 
 /**
  * A library video (an asset's current version, or one version) into Finals as this session's final: the piece named as
@@ -3533,7 +3538,7 @@ async function finalFromVersion(meta: SessionMeta, who: string, video: string, d
     { versionId: row.version },
   );
   if (!out.ok) return { code: out.code === "no_access" || out.code === "not_found" ? 404 : 409, body: { error: out.error } };
-  await linkFinalsPiece(out.pieceId, meta.id, docId, who);
+  await linkFinalsPiece(out.pieceId, meta.id, docId, who, await isCarousel(meta.id, docId));
   return { code: 200, body: { linked: true, pieceId: out.pieceId } };
 }
 
@@ -3570,7 +3575,7 @@ workshopApp.post("/sessions/:id/finals", async (c) => {
     return c.json(r.body, r.code);
   }
   if (typeof body?.pieceId !== "string" || !body.pieceId) return c.json({ error: "Send the Finals piece's id" }, 400);
-  return (await linkFinalsPiece(body.pieceId, meta.id, docId, user.username)) ? c.json({ linked: true }) : c.json({ error: "No such Finals piece of yours" }, 404);
+  return (await linkFinalsPiece(body.pieceId, meta.id, docId, user.username, await isCarousel(meta.id, docId))) ? c.json({ linked: true }) : c.json({ error: "No such Finals piece of yours" }, 404);
 });
 
 workshopApp.post("/sessions/:id/docs/:docId/layouts", async (c) => {
@@ -5079,7 +5084,7 @@ async function finalsOfShare(token: string): Promise<void> {
       pieceId = out.pieceId;
       sent.push(d.id);
     }
-    if (pieceId) await linkFinalsPiece(pieceId, meta.id, undefined, share.owner);
+    if (pieceId) await linkFinalsPiece(pieceId, meta.id, undefined, share.owner, await isCarousel(meta.id));
   } catch (e) {
     error = errorMessage(e);
   }

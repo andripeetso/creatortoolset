@@ -198,13 +198,13 @@ export async function addToFinals(input: FinalsAdd, source: FinalsSource): Promi
 /** Links a Finals piece to a session of the same account: its versions get post descriptions there (the piece `docId`,
  *  else the session's main one). False unless the piece is in the account's own library, or is one it made in its team
  *  owner's library while it may add there (addRole). */
-export async function linkFinalsPiece(pieceId: string, sessionId: string, docId: string | undefined, owner: string): Promise<boolean> {
+export async function linkFinalsPiece(pieceId: string, sessionId: string, docId: string | undefined, owner: string, carousel = false): Promise<boolean> {
   const d = libraryDb();
   const row = d.prepare("SELECT library_id, created_by FROM pieces WHERE id = ?").get(pieceId) as { library_id: string; created_by: string | null } | undefined;
   const as = row ? await addRole(owner, row.library_id) : null;
   // a member links only a piece they made: the owner's pieces stay linked where the owner put them
   if (as !== "owner" && !(as === "member" && row?.created_by === owner)) return false;
-  d.prepare("UPDATE pieces SET workshop_session = ?, workshop_doc = ? WHERE id = ?").run(sessionId, docId ?? null, pieceId);
+  d.prepare("UPDATE pieces SET workshop_session = ?, workshop_doc = ?, kind = CASE WHEN ? THEN 'carousel' ELSE kind END WHERE id = ?").run(sessionId, docId ?? null, Number(carousel), pieceId);
   emitEvent("library.changed", {});
   announce(owner, "library");
   return true;

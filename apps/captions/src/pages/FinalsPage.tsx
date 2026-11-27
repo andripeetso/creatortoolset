@@ -88,7 +88,7 @@ const clock = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60))
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /**
- * The tiles for the pieces. A piece's kind: a carousel is two or more images; a reel has a video winner; anything else
+ * The tiles for the pieces. A piece's kind: a carousel is one its Workshop project marked so, or two or more images; a reel has a video winner; anything else
  * is other (an "ad" needs a stored kind, which pieces do not have yet). With `faceted` (a plug-in facet is picked) a
  * piece is kept only when one of its versions is among `cards`, the facet's result.
  */
@@ -101,7 +101,7 @@ export function finalsTiles(pieces: Piece[], cards: AssetCard[], faceted: boolea
     const win = piece.items.find((i) => i.winner) ?? piece.items[0];
     const card = win?.versionId ? byVersion.get(win.versionId) : undefined;
     const kind: FinalsKind =
-      piece.items.length > 1 && inCards.every((c) => c?.kind === "image") ? "carousel" : card?.kind === "video" ? "reel" : "other";
+      piece.kind === "carousel" || (piece.items.length > 1 && inCards.every((c) => c?.kind === "image")) ? "carousel" : card?.kind === "video" ? "reel" : "other";
     out.push({
       piece,
       kind,

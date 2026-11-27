@@ -51,12 +51,12 @@ describe("several finals dropped at once (sendEach)", () => {
     expect(failed).toEqual(["thumb.jpg: Not a video", "B.mp4: Could not upload"]);
   });
 
-  it("a carousel takes images in slide order (2 before 10) and leaves out a video", async () => {
+  it("a carousel takes images and videos in slide order (2 before 10) and leaves out anything else", async () => {
     const sent: string[] = [];
     const img = (name: string) => new File(["x"], name, { type: "image/png" });
-    const failed = await sendEach([img("10.png"), video("reel.mp4"), img("2.png"), img("1.png")], async (f) => void sent.push(f.name), new AbortController().signal, true);
-    expect(sent).toEqual(["1.png", "2.png", "10.png"]);
-    expect(failed).toEqual(["reel.mp4: Not an image"]);
+    const failed = await sendEach([img("10.png"), video("5.mp4"), img("2.png"), new File(["x"], "notes.txt", { type: "text/plain" })], async (f) => void sent.push(f.name), new AbortController().signal, true);
+    expect(sent).toEqual(["2.png", "5.mp4", "10.png"]);
+    expect(failed).toEqual(["notes.txt: Not an image or video"]);
   });
 
   it("Cancel while one is being added: the rest never start", async () => {

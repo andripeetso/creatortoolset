@@ -769,6 +769,8 @@ export interface Piece {
   collectionId: string | null;
   createdBy: string;
   items: PieceItem[];
+  /** Set from the Workshop project it is linked to: a carousel whatever its slides are (images, videos or both). */
+  kind?: "carousel" | null;
   /** The owner's picked frame (`?v=` stamped); absent or null = the automatic cover (the winner's thumbnail). */
   coverUrl?: string | null;
   /** A picked frame that waits for one of the owner's computers to make it: the line it waits with. */

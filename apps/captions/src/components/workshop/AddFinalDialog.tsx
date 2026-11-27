@@ -24,7 +24,7 @@ const onMac = (f: SessionFinals) => !!f.folder && macImports();
 async function finalsNow(id: string): Promise<SessionFinals> {
   const f = await getSessionFinals(id, thisMacBridge() ? await deviceHere() : undefined);
   if (f.linked || f.reads || !f.libraryId || !onMac(f)) return f;
-  const files = (await importScan(f.folder!).catch(() => [])).filter((x) => (f.carousel ? IMAGE : VIDEO).test(x.path));
+  const files = (await importScan(f.folder!).catch(() => [])).filter((x) => VIDEO.test(x.path) || (!!f.carousel && IMAGE.test(x.path)));
   if (!files.length) return f;
   const prints = await importPrint(files.map((x) => x.path)).catch(() => ({}) as Record<string, string>);
   for (const x of files) {
@@ -127,15 +127,15 @@ const byName = new Intl.Collator(undefined, { numeric: true }).compare;
 
 /**
  * Several finals (versions A, B, C) one after another: one that fails doesn't stop the rest, a file of the wrong kind
- * is left out, and Cancel stops the ones not started. A carousel's slides are images, sent in name order (2.png before
- * 10.png) so Finals keeps the slide order. The lines for what didn't go in; null once cancelled.
+ * is left out, and Cancel stops the ones not started. A carousel's slides are images or videos, sent in name order
+ * (2.png before 10.mp4) so Finals keeps the slide order. The lines for what didn't go in; null once cancelled.
  */
 export async function sendEach(files: File[], one: (f: File, i: number, n: number) => Promise<void>, signal: AbortSignal, carousel = false): Promise<string[] | null> {
   const line = (f: File, why: string) => (files.length > 1 ? `${f.name}: ${why}` : why);
-  const fits = carousel ? isImage : isVideo;
+  const fits = carousel ? (f: File) => isImage(f) || isVideo(f) : isVideo;
   const videos = files.filter(fits);
   if (carousel) videos.sort((a, b) => byName(a.name, b.name));
-  const failed = files.filter((f) => !fits(f)).map((f) => line(f, carousel ? "Not an image" : "Not a video"));
+  const failed = files.filter((f) => !fits(f)).map((f) => line(f, carousel ? "Not an image or video" : "Not a video"));
   for (const [i, f] of videos.entries()) {
     if (signal.aborted) return null;
     try {
@@ -216,7 +216,7 @@ function AddFinalDialog({ ask, onClose }: { ask: Ask; onClose: () => void }) {
         <DialogTitle>{carousel ? "Add the final slides" : "Add the final video"}</DialogTitle>
         <DialogDescription className="text-zinc-500">
           {carousel
-            ? `${ask.title || "This project"} has no final slides in Finals yet. The finished images go there in name order, linked to this project.`
+            ? `${ask.title || "This project"} has no final slides in Finals yet. Its images and videos go there in name order, linked to this project.`
             : `${ask.title || "This project"} has no final video in Finals yet. The finished file goes there, linked to this project.`}
         </DialogDescription>
         {ask.finals.folder && <p className="break-all font-mono text-xs text-zinc-500">{ask.finals.folder}</p>}
@@ -256,7 +256,7 @@ function AddFinalDialog({ ask, onClose }: { ask: Ask; onClose: () => void }) {
         <input
           ref={input}
           type="file"
-          accept={carousel ? "image/*,.heic" : "video/*,.mov,.mxf,.mkv"}
+          accept={carousel ? "image/*,.heic,video/*,.mov,.mxf,.mkv" : "video/*,.mov,.mxf,.mkv"}
           multiple
           hidden
           onChange={(e) => {

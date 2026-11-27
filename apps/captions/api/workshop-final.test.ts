@@ -82,5 +82,10 @@ describe.skipIf(rootReplaced)("Workshop: the final video of a project", () => {
     const b = (await (await call("maker", "POST", url, { assetId: "ast_s2" })).json()) as { pieceId: string };
     expect(b.pieceId).toBe(a.pieceId);
     expect(libraryDb().prepare("SELECT COUNT(*) AS n FROM piece_items WHERE piece_id = ?").get(a.pieceId)).toEqual({ n: 2 });
+    expect(libraryDb().prepare("SELECT kind FROM pieces WHERE id = ?").get(a.pieceId)).toEqual({ kind: "carousel" });
+    // one linked before pieces had a kind is marked when the project asks again
+    libraryDb().prepare("UPDATE pieces SET kind = NULL WHERE id = ?").run(a.pieceId);
+    await call("maker", "GET", url);
+    expect(libraryDb().prepare("SELECT kind FROM pieces WHERE id = ?").get(a.pieceId)).toEqual({ kind: "carousel" });
   });
 });

@@ -787,4 +787,6 @@ export const MIGRATIONS: string[] = [
   // the library's monthly budget is gone (budgets are per key now, my-keys.ts): what it held runs again, and its setting goes
   `UPDATE jobs SET error = NULL, run_after = 0 WHERE state = 'queued' AND error = 'monthly budget reached';
   UPDATE libraries SET settings = json_remove(settings, '$.lookBudget') WHERE json_type(settings, '$.lookBudget') IS NOT NULL;`,
+  // a piece's kind from the Workshop project it is linked to ('carousel'); NULL: Finals tells it by its files
+  `ALTER TABLE pieces ADD COLUMN kind TEXT;`,
 ];

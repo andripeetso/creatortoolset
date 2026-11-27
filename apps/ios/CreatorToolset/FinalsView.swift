@@ -23,6 +23,8 @@ struct Piece: Decodable, Identifiable, Hashable {
     let label: String
     let items: [Item]
     let coverUrl: String?
+    /// "carousel" when its Workshop project is one; nil: told by its files
+    let kind: String?
 
     /// The winner, else the first version the library holds.
     var main: Item? { items.first { $0.winner && $0.versionId != nil } ?? items.first { $0.versionId != nil } }
@@ -137,7 +139,7 @@ extension FinalsData {
     init(core pieces: [ToolsetFinalsPiece]) {
         folders = []
         stacks = pieces.map { piece in
-            Piece(id: piece.id, title: piece.label, kind: nil, folderId: nil,
+            Piece(id: piece.id, title: piece.label, kind: piece.kind, folderId: nil,
                   winnerClipId: piece.main?.versionId.map(FlexID.init(wrappedValue:)), hasCover: nil,
                   coverUrl: piece.coverUrl, createdAt: nil, updatedAt: nil,
                   versions: piece.items.compactMap { item in

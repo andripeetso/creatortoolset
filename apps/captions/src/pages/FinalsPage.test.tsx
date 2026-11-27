@@ -64,6 +64,11 @@ describe("Finals pieces", () => {
     ]);
   });
 
+  it("a piece its Workshop project marked a carousel is one, a single video slide too", () => {
+    const slides = { ...piece("slides", [item("v-a", { winner: true })]), kind: "carousel" as const };
+    expect(finalsTiles([slides], cards, false)[0]!.kind).toBe("carousel");
+  });
+
   it("keeps a piece with no matching card when no facet is picked", () => {
     const orphan = piece("orphan", [item("v-gone")]);
     expect(finalsTiles([orphan], cards, false).map((t) => t.piece.id)).toEqual(["orphan"]);
