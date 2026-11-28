@@ -239,3 +239,14 @@ export function languageName(code: string): string {
     return code;
   }
 }
+
+const BY_NAME = new Map<string, string>(SPOKEN_LANGUAGES.map((c) => [languageName(c).toLowerCase(), c]));
+
+/** Normalizes a provider's language string ("finnish", "en-US", "fi") to a 2-letter code (or trimmed lowercase when unknown), or null when empty. */
+export function languageCode(raw: string | null | undefined): string | null {
+  const s = raw?.trim().toLowerCase();
+  if (!s) return null;
+  const base = s.split(/[-_]/)[0]!;
+  if (isLanguage(base)) return base;
+  return BY_NAME.get(s) ?? s;
+}

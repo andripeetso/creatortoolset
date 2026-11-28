@@ -254,4 +254,53 @@ describe("AI Editor analyze", () => {
       d.prepare("DELETE FROM edit_jobs").run();
     }
   });
+
+  it("matches OpenAI language names and BCP-47 tags without re-transcribing, and re-transcribes a clip marked B-roll in the wrong language", async () => {
+    const d = libraryDb();
+    saveTranscript(d, "ver_late", "openai", "finnish", [{ start: 0, end: 1, text: "hei" }], [word("hei", 0, 0.5)]);
+    d.prepare("UPDATE jobs SET state = 'done' WHERE version_id = 'ver_late' AND kind = 'transcribe'").run();
+    expect((await analyze(["ver_late"], Date.now(), { languages: ["fi"] })).job()).toMatchObject({ state: "done" });
+    expect(transcribeJob("ver_late")?.state).toBe("done");
+    d.prepare("DELETE FROM edit_jobs").run();
+
+    saveTranscript(d, "ver_late", "deepgram", "en-US", [{ start: 0, end: 1, text: "hello" }], [word("hello", 0, 0.5)]);
+    expect((await analyze(["ver_late"], Date.now(), { languages: ["en"] })).job()).toMatchObject({ state: "done" });
+    expect(transcribeJob("ver_late")?.state).toBe("done");
+    d.prepare("DELETE FROM edit_jobs").run();
+
+    // clip sorted B-roll after an empty English transcript still re-transcribes once the edit asks for Finnish
+    saveTranscript(d, "ver_early", "deepgram", "en", [], []);
+    d.prepare("UPDATE assets SET roll = 'b' WHERE id = (SELECT asset_id FROM asset_versions WHERE id = 'ver_early')").run();
+    d.prepare("UPDATE jobs SET state = 'done' WHERE version_id = 'ver_early' AND kind = 'transcribe'").run();
+    try {
+      const { job } = await analyze(["ver_early"], Date.now(), { languages: ["sv"] });
+      expect(transcribeJob("ver_early")).toEqual({ state: "queued", actor: "mem-a" });
+      expect(job()).toMatchObject({ state: "queued" });
+    } finally {
+      d.prepare("UPDATE assets SET roll = NULL WHERE id = (SELECT asset_id FROM asset_versions WHERE id = 'ver_early')").run();
+      d.prepare("DELETE FROM edit_jobs").run();
+    }
+  });
+
+  it("parks analyze as needs_key instead of looping when the user only has an English-only computer model for a non-English edit", async () => {
+    const { pairDevice, revokeDevice, setDeviceKinds, setDeviceStt, touchDevice } = await import("../lib/devices");
+    const { writeVoicePrefs } = await import("../lib/speech");
+    const d = libraryDb();
+    const { device } = pairDevice("mem-a", "Mac");
+    setDeviceKinds(device.id, ["transcribe"]);
+    setDeviceStt(device.id, { want: [], held: ["parakeet-tdt-0.6b-v3"], getting: [] });
+    touchDevice(device.id);
+    writeVoicePrefs("mem-a", { languages: ["en"] });
+    d.prepare("DELETE FROM transcripts WHERE version_id = 'ver_early'").run();
+    d.prepare("INSERT OR REPLACE INTO jobs (library_id, version_id, kind, state, actor, error) VALUES ('lib_a', 'ver_early', 'transcribe', 'needs_key', 'mem-a', 'Needs a speech model')").run();
+    try {
+      const { job } = await analyze(["ver_early"], Date.now(), { languages: ["fi"] });
+      expect(job()).toMatchObject({ state: "needs_key" });
+      expect(transcribeJob("ver_early")?.state).toBe("needs_key");
+    } finally {
+      await revokeDevice(device.id);
+      writeVoicePrefs("mem-a", { languages: [] });
+      d.prepare("DELETE FROM edit_jobs").run();
+    }
+  });
 });

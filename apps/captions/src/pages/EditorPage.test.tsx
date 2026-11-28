@@ -378,4 +378,18 @@ describe("New edit: short videos from a long recording", () => {
     await flush();
     expect(posted.at(-1)).toEqual({ sources: ["ver_1"], brief: "", script: "", versions: 1, targetS: 0 });
   });
+
+  it("changes Empty timeline to Open on timeline when clips are picked and sends them to /api/editor/empty", async () => {
+    await open(null);
+    expect([...document.querySelectorAll("button")].some((b) => b.textContent === "Empty timeline")).toBe(true);
+    const clip = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("Take one"))!;
+    act(() => clip.click());
+    await flush();
+    const btn = [...document.querySelectorAll("button")].find((b) => b.textContent === "Open on timeline")!;
+    expect(btn).toBeTruthy();
+    act(() => btn.click());
+    await flush();
+    await flush();
+    expect(calls.find((c) => c.url === "/api/editor/empty")?.body).toEqual({ sources: ["ver_1"] });
+  });
 });

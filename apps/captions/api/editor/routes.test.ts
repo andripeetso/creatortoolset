@@ -98,6 +98,10 @@ describe.skipIf(rootReplaced)("AI Editor: edits and who sees them", () => {
     libraryDb().prepare("UPDATE edit_jobs SET state = 'done' WHERE edit_id = ? AND kind = 'analyze'").run(id);
     const same = await json<Edit>(call("maker", "PATCH", `/api/editor/${id}`, { languages: ["fi"] }));
     expect(same.jobs).toMatchObject([{ kind: "analyze", state: "done" }]);
+    // changing language while analyze is already running stops it and queues it again
+    libraryDb().prepare("UPDATE edit_jobs SET state = 'running' WHERE edit_id = ? AND kind = 'analyze'").run(id);
+    const mid = await json<Edit>(call("maker", "PATCH", `/api/editor/${id}`, { languages: ["sv"] }));
+    expect(mid.jobs).toMatchObject([{ kind: "analyze", state: "queued" }]);
   });
 
   it("the creator runs, stops and deletes an edit; nobody else reaches it", async () => {
@@ -512,5 +516,8 @@ describe.skipIf(rootReplaced)("Editor: projects, versions and the timeline page"
     expect(tl.tracks.A1.items).toEqual([{ src: "ver_a1", in: 0, len: 90, rec: 0, link: "c1" }]);
     // another account's clip is refused
     expect((await call("maker", "POST", "/api/editor/empty", { sources: ["ver_b"] })).status).toBe(404);
+    // clips still waiting for probe return 409 instead of opening an empty timeline
+    libraryDb().prepare("UPDATE asset_versions SET probe = NULL WHERE id = 'ver_a2'").run();
+    expect((await call("maker", "POST", "/api/editor/empty", { sources: ["ver_a2"] })).status).toBe(409);
   });
 });

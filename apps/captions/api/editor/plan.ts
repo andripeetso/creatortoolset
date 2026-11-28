@@ -6,6 +6,7 @@ import type { Coverage, EditPlan, Focus, FootageIndex, GenSpec, IndexShot, Index
 import type { EditFeedback, Item, Sentence, Timeline, TimelineSource } from "../../contracts/editor";
 import { SOUNDS } from "../../contracts/library";
 import { READING, readS } from "../../contracts/reading";
+import { languageCode } from "../../contracts/voice";
 import { aiFor, completeWithFallback } from "../ai-complete";
 import { parseJsonObject } from "../lib/instagram/vision";
 import { packInstructions } from "../lib/packs";
@@ -93,16 +94,29 @@ export function isMusic(versionId: string): boolean {
  * A B the library gave a clip with sound for want of anything to read (no transcript, no described B, not filed) does
  * not count: a folder of talking takes with no transcription key was sorted all B and skipped transcription.
  */
-export function allBroll(edit: Pick<EditMeta, "sources" | "song">): boolean {
+export function allBroll(edit: Pick<EditMeta, "sources" | "song" | "languages">): boolean {
+  const langs = edit.languages?.length ? edit.languages : null;
   const q = libraryDb().prepare(
-    `SELECT 1 FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ? AND a.roll = 'b' AND (
-       a.filed_roll = 'b' OR (v.probe IS NOT NULL AND IFNULL(json_extract(v.probe, '$.acodec'), '') = '')
-       OR EXISTS (SELECT 1 FROM transcripts t WHERE t.version_id = v.id)
-       OR (EXISTS (SELECT 1 FROM descriptions d WHERE d.version_id = v.id AND d.source = 'ai' AND d.roll = 'b')
-           AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.version_id = v.id AND j.kind = 'transcribe' AND j.state IN ('queued', 'running', 'needs_key'))))`,
+    `SELECT
+       a.filed_roll = 'b' OR (v.probe IS NOT NULL AND IFNULL(json_extract(v.probe, '$.acodec'), '') = '') AS fixed,
+       (SELECT t.language FROM transcripts t WHERE t.version_id = v.id) AS lang,
+       EXISTS (SELECT 1 FROM transcripts t WHERE t.version_id = v.id) AS heard,
+       EXISTS (SELECT 1 FROM descriptions d WHERE d.version_id = v.id AND d.source = 'ai' AND d.roll = 'b')
+         AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.version_id = v.id AND j.kind = 'transcribe' AND j.state IN ('queued', 'running', 'needs_key')) AS described
+     FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ? AND a.roll = 'b'`,
   );
   const picture = edit.sources.filter((id) => id !== edit.song && !isMusic(id));
-  return picture.length > 0 && picture.every((id) => !!q.get(id));
+  return (
+    picture.length > 0 &&
+    picture.every((id) => {
+      const r = q.get(id) as { fixed: number; lang: string | null; heard: number; described: number } | undefined;
+      if (!r) return false;
+      if (r.fixed) return true;
+      // when the edit names a spoken language, a clip with sound is confirmed B-roll only after it was heard in that language
+      if (langs) return !!r.heard && langs.includes(languageCode(r.lang) ?? "");
+      return !!r.heard || !!r.described;
+    })
+  );
 }
 
 /** The share of the sources' sound (songs aside) that is in sentences; with its length unknown, any sentence is all of it. */

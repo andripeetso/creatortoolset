@@ -462,6 +462,9 @@ describe("footage where nobody speaks reaches Review", () => {
     d.prepare("UPDATE asset_versions SET probe = ? WHERE id = 'ver_take'").run(p(30));
     saveTranscript(d, "ver_take", "deepgram", "en", [], []);
     expect(allBroll(edit({ sources: ["ver_take"] }))).toBe(true);
+    expect(allBroll(edit({ sources: ["ver_take"], languages: ["fi"] }))).toBe(false);
+    saveTranscript(d, "ver_take", "openai", "finnish", [], []);
+    expect(allBroll(edit({ sources: ["ver_take"], languages: ["fi"] }))).toBe(true);
     d.exec("DELETE FROM transcripts WHERE version_id = 'ver_take'; DELETE FROM descriptions WHERE version_id = 'ver_long'");
     // everything B-roll as the library sorted it on what it read: planned, whatever words it has
     d.exec("UPDATE assets SET filed_roll = 'b' WHERE id = 'ast_take'");

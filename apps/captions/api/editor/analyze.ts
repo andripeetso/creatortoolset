@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { Sentence } from "../../contracts/editor";
+import { languageCode } from "../../contracts/voice";
 import { LoudnessMeter } from "../../src/lib/nle/loudness";
 import { ffmpegCommand } from "../ffmpeg-runtime";
 import { deviceStatus } from "../lib/device-transcribe";
@@ -251,6 +252,25 @@ export async function analyzeGate({ edit, job }: Pick<StepContext, "edit" | "job
   const ready: { row: SourceRow; probe: ProbeSummary; words: TimedWord[] }[] = [];
   let wait = false;
   let waitingOn: string | undefined;
+  const transcribeState = db.prepare("SELECT state, error, actor FROM jobs WHERE version_id = ? AND kind = 'transcribe'");
+  const waitTranscribe = (row: SourceRow, alwaysQueue: boolean): boolean => {
+    const t = transcribeState.get(row.id) as { state: string; error: string | null; actor: string | null } | undefined;
+    if (t?.state === "queued" || t?.state === "running") {
+      wait = true;
+      waitingOn = deviceStatus(row.id) ?? waitingOn;
+      return true;
+    }
+    if (t?.state === "failed") throw new Error(`Could not transcribe “${row.title}” (${t.error ?? "no reason given"}): retry it in the Media Library`);
+    if (t?.state === "needs_key" || alwaysQueue) {
+      // parked for the creator: still no key throws NeedsKey with what to add; a key added since queues it again
+      if (t?.state === "needs_key" && t.actor === asker) versionRoute(asker, row.id);
+      enqueueJob(db, row.library_id, row.id, "transcribe", asker, true);
+      prepareFirst(row.id);
+      wait = true;
+      return true;
+    }
+    return false;
+  };
   for (const row of rows) {
     const probe = JSON.parse(row.probe ?? "null") as ProbeSummary | null;
     if (!probe) {
@@ -275,7 +295,7 @@ export async function analyzeGate({ edit, job }: Pick<StepContext, "edit" | "job
     askVersionIn.set(row.id, { by: asker, ...(languages ? { languages } : {}) });
     const words = wordsOf(db, row.id);
     const storedLang = words
-      ? ((db.prepare("SELECT language FROM transcripts WHERE version_id = ?").get(row.id) as { language: string | null } | undefined)?.language ?? null)
+      ? languageCode((db.prepare("SELECT language FROM transcripts WHERE version_id = ?").get(row.id) as { language: string | null } | undefined)?.language)
       : null;
     // a take heard as silence, or heard in another language than the edit names, is heard once more in that language
     if (words && languages && (!words.length || (storedLang !== null && !languages.includes(storedLang)))) {
@@ -287,22 +307,7 @@ export async function analyzeGate({ edit, job }: Pick<StepContext, "edit" | "job
         wait = true;
         continue;
       }
-      const t = db.prepare("SELECT state, error, actor FROM jobs WHERE version_id = ? AND kind = 'transcribe'").get(row.id) as
-        | { state: string; error: string | null; actor: string | null }
-        | undefined;
-      if (t?.state === "queued" || t?.state === "running") {
-        wait = true;
-        waitingOn = deviceStatus(row.id) ?? waitingOn;
-        continue;
-      }
-      if (t?.state === "failed") throw new Error(`Could not transcribe “${row.title}” (${t.error ?? "no reason given"}): retry it in the Media Library`);
-      if (t?.state === "needs_key") {
-        if (t.actor === asker) versionRoute(asker, row.id);
-        enqueueJob(db, row.library_id, row.id, "transcribe", asker, true);
-        prepareFirst(row.id);
-        wait = true;
-        continue;
-      }
+      if (waitTranscribe(row, false)) continue;
     }
     // one made on another engine than the AI Editor row's own choice is heard once more by that engine; it becomes
     // the clip's library transcript too (transcribeVersion)
@@ -315,22 +320,7 @@ export async function analyzeGate({ edit, job }: Pick<StepContext, "edit" | "job
         wait = true;
         continue;
       }
-      const t = db.prepare("SELECT state, error, actor FROM jobs WHERE version_id = ? AND kind = 'transcribe'").get(row.id) as
-        | { state: string; error: string | null; actor: string | null }
-        | undefined;
-      if (t?.state === "queued" || t?.state === "running") {
-        wait = true;
-        waitingOn = deviceStatus(row.id) ?? waitingOn;
-        continue;
-      }
-      if (t?.state === "failed") throw new Error(`Could not transcribe “${row.title}” (${t.error ?? "no reason given"}): retry it in the Media Library`);
-      if (t?.state === "needs_key") {
-        if (t.actor === asker) versionRoute(asker, row.id);
-        enqueueJob(db, row.library_id, row.id, "transcribe", asker, true);
-        prepareFirst(row.id);
-        wait = true;
-        continue;
-      }
+      if (waitTranscribe(row, false)) continue;
     }
     if (words) {
       askVersionIn.delete(row.id);
@@ -338,21 +328,7 @@ export async function analyzeGate({ edit, job }: Pick<StepContext, "edit" | "job
       continue;
     }
     prepareFirst(row.id); // the edit waits on its transcript: before the library's other clips
-    const job = db.prepare("SELECT state, error, actor FROM jobs WHERE version_id = ? AND kind = 'transcribe'").get(row.id) as
-      | { state: string; error: string | null; actor: string | null }
-      | undefined;
-    if (job?.state === "queued" || job?.state === "running") {
-      wait = true;
-      waitingOn = deviceStatus(row.id) ?? waitingOn;
-    }
-    else if (job?.state === "failed") throw new Error(`Could not transcribe “${row.title}” (${job.error ?? "no reason given"}): retry it in the Media Library`);
-    else {
-      // parked for the creator: still no key throws NeedsKey with what to add; a key added since queues it again
-      if (job?.state === "needs_key" && job.actor === asker) versionRoute(asker, row.id);
-      // none yet, done before word timings were kept, or parked for someone else: transcribe as the edit's creator
-      enqueueJob(db, row.library_id, row.id, "transcribe", asker, true);
-      wait = true;
-    }
+    waitTranscribe(row, true);
   }
   // a transcript being made on this computer: the step says what it is doing while it waits (the worker clears it when the step is done)
   if (wait && waitingOn) db.prepare("UPDATE edit_jobs SET error = ? WHERE id = ?").run(waitingOn, job.id);

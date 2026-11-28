@@ -11,7 +11,7 @@ import { DEVICE_AUDIO, transcribeOnDevice } from "../lib/device-transcribe";
 import { MIC_LIMITS, needComputerOn, transcribeOnComputer, type OwnSound } from "../lib/computer-transcribe";
 import { isThisMachine } from "../lib/devices";
 import { videoLanguages } from "../lib/video-languages";
-import type { SpeechUse } from "../../contracts/voice";
+import { languageCode, type SpeechUse } from "../../contracts/voice";
 import { isAdminActor, keyFor } from "../my-keys";
 import { findUser } from "../users";
 import { accountOf } from "./access";
@@ -168,7 +168,7 @@ async function openai(file: string, key: string, languages?: string[], actor?: s
   void recordService({ service: "OPENAI_API_KEY", key, actor, label: "Media Library: transcripts", units: (data.duration ?? 0) / 60, unit: "audio minutes" });
   const segments = (data.segments ?? []).map((s) => ({ start: s.start, end: s.end, text: s.text.trim() })).filter((s) => s.text);
   const words = (data.words ?? []).map((w) => ({ w: w.word.trim(), s: w.start, e: w.end })).filter((w) => w.w);
-  return fixed({ segments, words, language: data.language ?? null }, actor);
+  return fixed({ segments, words, language: languageCode(data.language) }, actor);
 }
 
 /** On this computer: `status` names the run for whoever shows what it is doing (deviceStatus). */
@@ -315,7 +315,7 @@ export function editorRoute(actor: string | null, languages?: string[]): Route |
 /** What a version's transcript runs on for its job's `actor`: the AI Editor row's route when an edit `actor` started asked for it, else the library's. */
 export function versionRoute(actor: string | null, versionId: string): Route {
   const ask = askVersionIn.get(versionId);
-  return (ask?.by === actor && editorRoute(actor, ask.languages)) || transcribeRoute(actor);
+  return (ask?.by === actor && editorRoute(actor, ask.languages)) || transcribeRoute(actor, "transcripts", ask?.languages);
 }
 
 /**

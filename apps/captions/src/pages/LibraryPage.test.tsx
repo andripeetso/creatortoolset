@@ -1183,4 +1183,21 @@ describe("Media Library redo: the ⋯ menu and the selection bar", () => {
     await settle();
     expect(server.redone).toEqual([{ kinds: ["embed"], ids: ["one"], count: false }]);
   });
+
+  it("plays clips from the server on a Mac server even when proxy uploads are off", async () => {
+    const { useAuth } = await import("@/lib/auth");
+    const prev = useAuth.getState().kind;
+    server.settings = { upload: "none" };
+    server.items = [{ ...clip("mac1"), versionId: "ver_mac1" }];
+    try {
+      useAuth.setState({ kind: "mac" });
+      const host = await mount();
+      await click(host.querySelector("main")!.querySelector<HTMLElement>("[data-keep-picked]")!);
+      await settle();
+      await settle();
+      expect(document.querySelector("video")?.getAttribute("src")).toContain("/api/library/media/ver_mac1/play");
+    } finally {
+      useAuth.setState({ kind: prev });
+    }
+  });
 });
