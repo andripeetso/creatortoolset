@@ -20,8 +20,9 @@ export const WAITS_FOR_SERVER = "Video work is off on this server";
 /** SQL: job `j`'s clip is out of the trash and not hidden while it waits on Folders left out (report.ts). Such a clip's
  *  jobs wait queued, for this server and every computer (no AI spent on it), and run again if it is restored or shown.
  *  Its own `v` and `a` aliases stay inside the subquery. */
-export const NOT_TRASHED =
-  "NOT EXISTS (SELECT 1 FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = j.version_id AND (a.trashed_at IS NOT NULL OR a.left_hidden_at IS NOT NULL))";
+export const notTrashed = (table = "j"): string =>
+  `NOT EXISTS (SELECT 1 FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ${table}.version_id AND (a.trashed_at IS NOT NULL OR a.left_hidden_at IS NOT NULL))`;
+export const NOT_TRASHED = notTrashed();
 const BACKOFF_MS = 60_000;
 
 /** The tables these functions run on: interpolated into SQL, so never a free string. */

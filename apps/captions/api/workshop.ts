@@ -43,7 +43,7 @@ import { partialTurn } from "./lib/workshop/stream-json";
 import { bumpUsage, canSee, findUser } from "./users";
 import { scriptsOwnerFor, sharedWith } from "./lib/workspaces";
 import { currentWorkspaceId, inCurrentWorkspace, listWorkspaceId } from "./lib/workspace-scope";
-import { mayLeave, workspaceLibrary } from "./library/upload-gate";
+import { mayKeepAsFilmed, mayLeave, workspaceLibrary } from "./library/upload-gate";
 import { deleteWorkspaceContents, WorkspaceBusy, workspaceContents } from "./lib/workspace-delete";
 import type { ClaudeSession, ClipRef, FileRef, GenerateInput, ImageRef, PastedRef, TurnStep } from "./lib/workshop/types";
 import { ATTACH_EXT, attachedFile, messageAttachments } from "./lib/workshop/attached";
@@ -102,7 +102,7 @@ import { buildAsidePrompt } from "./lib/workshop/aside";
 import { clipContext, externalLibraryRef, libraryRef } from "./library/attach";
 import { addToFinals, finalsCollectionId, finalsLinkedTo, linkFinalsPiece } from "./library/finals";
 import { probe as probeMedia } from "./library/media/probe";
-import { finalsUpload, libraryDb } from "./library/db";
+import { finalsUpload, finalsUploadStored, libraryDb } from "./library/db";
 import { addRole, ensureLibrary, libraryRole } from "./library/access";
 import { resolveCarouselType, visualizeCarousel } from "../src/lib/carousel-visualize";
 import {
@@ -3515,7 +3515,7 @@ export interface SessionFinals {
  * what the library took from it is linked here (a file it had already, or one read before a restart).
  * `device`: the computer asking, for the folder's place there.
  */
-export async function sessionFinals(meta: SessionMeta, device?: string): Promise<SessionFinals> {
+export async function sessionFinals(meta: SessionMeta, device?: string, actor = meta.owner): Promise<SessionFinals> {
   const main = await mainPiece(meta.id);
   const mainId = main?.id;
   const carousel = main?.kind === "carousel";
@@ -3530,7 +3530,9 @@ export async function sessionFinals(meta: SessionMeta, device?: string): Promise
   const libraryId = as === "owner" || as === "member" ? lib : null;
   // the upload goes straight into Finals, so the Media Library never lists it as footage
   const finalsId = libraryId ? finalsCollectionId(libraryId) : null;
-  const out: SessionFinals = { linked, libraryId, finalsId, upload: libraryId ? finalsUpload(libraryId) : "all", carousel };
+  // under Blur faces, an owner or admin's final is kept as filmed and follows the stored Finals hosting setting (blurAtIntake, uploadFor)
+  const upload = libraryId ? (mayKeepAsFilmed(actor, libraryId) ? finalsUploadStored(libraryId) : finalsUpload(libraryId)) : "all";
+  const out: SessionFinals = { linked, libraryId, finalsId, upload, carousel };
   const place = libraryId && finalsId ? await finalsPlace(meta) : null;
   if (!place) return out;
   const { root, dir } = place;
@@ -3590,8 +3592,9 @@ onEvent("library.version.probed", async ({ libraryId, versionId }) => {
 });
 
 workshopApp.get("/sessions/:id/finals", async (c) => {
-  const meta = await ownedSession(c.req.param("id"), c.get("user"));
-  return meta ? c.json(await sessionFinals(meta, c.req.query("device") || undefined)) : c.json({ error: "Not found" }, 404);
+  const user = c.get("user");
+  const meta = await ownedSession(c.req.param("id"), user);
+  return meta ? c.json(await sessionFinals(meta, c.req.query("device") || undefined, user.username)) : c.json({ error: "Not found" }, 404);
 });
 
 /** Link a Media Library Finals piece to this session (Finals' "Workshop session" link), or put a library video in Finals

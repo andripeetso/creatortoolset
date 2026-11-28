@@ -1,5 +1,5 @@
 import { rm, stat } from "node:fs/promises";
-import { ffmpegTo } from "./run";
+import { ffmpegTo, NO_DECODER } from "./run";
 import { browserPlayable, type ProbeSummary } from "./probe";
 import { PROXY_QUALITIES, type ProxyQuality } from "../../../contracts/library";
 
@@ -62,7 +62,7 @@ export async function makeProxy(src: string, out: string, soundOnly = false, qua
     // every sound track; with one FFmpeg has no decoder for (an iPhone video's spatial track, apac) the whole copy
     // failed, so then the first track alone
     await ffmpegTo(out, args("0:a?")).catch((e: unknown) => {
-      if (!/no decoder found/i.test(e instanceof Error ? e.message : String(e))) throw e;
+      if (!NO_DECODER.test(e instanceof Error ? e.message : String(e))) throw e;
       return ffmpegTo(out, args("0:a:0?"));
     });
   }

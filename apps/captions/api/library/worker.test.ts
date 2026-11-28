@@ -373,10 +373,10 @@ describe("strips of frames", () => {
   it("a clip on this disk whose card picture was deleted gets one once; a failure is not tried again", async () => {
     const { backfillThumb } = await import("./worker");
     add("lost", "video", { created: 9e12 }); // newest: picked first
-    d.prepare("INSERT INTO jobs (library_id, version_id, kind, state) VALUES ('lib_a', 'lost', 'thumb', 'done')").run(); // made, then deleted
+    d.prepare("INSERT INTO jobs (library_id, version_id, kind, state) VALUES ('lib_a', 'lost', 'thumb', 'done')").run(); // made, then deleted (NULL actor)
     expect(await backfillThumb()).toBe(true);
-    // its file is not video here: the try fails and is kept
-    expect(d.prepare("SELECT state FROM jobs WHERE version_id = 'lost' AND kind = 'thumb'").get()).toEqual({ state: "failed" });
+    // its file is not video here: the try fails and is kept, and actor is filled from the version's uploader
+    expect(d.prepare("SELECT state, actor FROM jobs WHERE version_id = 'lost' AND kind = 'thumb'").get()).toEqual({ state: "failed", actor: "local" });
     while (await backfillThumb()) {
       /* the other tests' clips with no picture */
     }

@@ -398,4 +398,28 @@ describe("a folder brought in for the AI (POST /api/library/import-folder)", () 
     expect(assets()).toBe(assetsBefore);
     expect((await importFolder("owner-w", { path: "~", libraryId: "lib_w" })).status).toBe(400);
   });
+
+  it("a file added from a watched Finals folder under Blur faces is kept as filmed (blur='no') for the library owner", async () => {
+    const { finalsCollectionId } = await import("./finals");
+    const { watchFinals } = await import("./watch");
+    const finalsRoot = path.join(dir, "Finals");
+    mkdirSync(finalsRoot, { recursive: true });
+    const finalsId = finalsCollectionId("lib_w");
+    libraryDb().prepare(`UPDATE libraries SET settings = json_set(IFNULL(settings, '{}'), '$.blurFaces', json('true')) WHERE id = 'lib_w'`).run();
+    try {
+      const sub = await watchFinals("owner-w", "lib_w", finalsRoot, "Project A", "sess-1", finalsId);
+      expect(sub).toBeTruthy();
+      const clip = path.join(sub!, "Final cut.mp4");
+      writeFileSync(clip, "final cut video bytes");
+      const t0 = Date.now() + 10_000;
+      await scanWatchFolders(t0);
+      await scanWatchFolders(t0 + SETTLE_MS);
+      const row = libraryDb()
+        .prepare("SELECT a.blur FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.source_path = ?")
+        .get(clip) as { blur: string | null } | undefined;
+      expect(row).toEqual({ blur: "no" });
+    } finally {
+      libraryDb().prepare(`UPDATE libraries SET settings = json_remove(settings, '$.blurFaces') WHERE id = 'lib_w'`).run();
+    }
+  });
 });

@@ -17,7 +17,7 @@ import { findUser } from "../users";
 import { accountOf } from "./access";
 import { libraryDb } from "./db";
 import { mayLeave } from "./upload-gate";
-import { ffmpegTo } from "./media/run";
+import { ffmpegTo, NO_DECODER } from "./media/run";
 import { libraryWorkspace, serverWorks } from "../work/server-work";
 
 /**
@@ -192,6 +192,16 @@ async function computer(file: string | OwnSound, actor: string, model: string, l
  */
 export const soundArgs = (wav: boolean): string[] => ["-vn", "-ac", "1", "-ar", "16000", ...(wav ? ["-c:a", "pcm_s16le"] : ["-c:a", "aac", "-b:a", "32k"])];
 
+/** Extracts the sound for transcription; retries with `-map 0:a:0` when ffmpeg's default pick lands on an undecodable track (iPhone spatial `apac`). */
+export async function cutSound(out: string, src: string, args: string[], soon?: boolean): Promise<void> {
+  try {
+    await ffmpegTo(out, ["-i", src, ...args], soon);
+  } catch (err) {
+    if (!NO_DECODER.test(String(err))) throw err;
+    await ffmpegTo(out, ["-i", src, "-map", "0:a:0", ...args], soon);
+  }
+}
+
 /**
  * A file's transcript as its actor's key gives it, or this computer: the route first (no audio is cut without one),
  * then the provider. Throws NeedsKey without a route. `status` names an on-device run (a version's id) for deviceStatus.
@@ -216,7 +226,7 @@ export async function transcribeFile(
   const file = async () => (typeof src === "string" ? src : src());
   let cutting: Promise<unknown> | undefined;
   const cut = async () => {
-    await (cutting = (async () => ffmpegTo(out, ["-i", await file(), ...(route.provider === "device" ? DEVICE_AUDIO : soundArgs(wav))], soon))());
+    await (cutting = (async () => cutSound(out, await file(), route.provider === "device" ? DEVICE_AUDIO : soundArgs(wav), soon))());
     return out;
   };
   // a library file's own rule: where this server does no video work, it cuts nothing for it (ownSound)

@@ -106,9 +106,17 @@ struct TranscribeJob {
     /// The sound of `src` as 16 kHz mono samples, cut with the server's own arguments (api/library/transcribe.ts
     /// soundArgs: ffmpeg's own pick of the sound tracks, as from the proxy or the original), so the words are the same.
     static func cut(ffmpeg: URL, _ src: URL) throws -> [Float] {
+        let base = ["-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", "-f", "s16le", "pipe:1"]
         do {
-            return WAVReader.pcm16(try LookSheets.run(ffmpeg, ["-i", src.path, "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", "-f", "s16le", "pipe:1"]))
+            return WAVReader.pcm16(try LookSheets.run(ffmpeg, ["-i", src.path] + base))
         } catch let failed as LibraryLookRefused {
+            if failed.why.range(of: "(?:no decoder found|decoder.*not found)", options: [.regularExpression, .caseInsensitive]) != nil {
+                do {
+                    return WAVReader.pcm16(try LookSheets.run(ffmpeg, ["-i", src.path, "-map", "0:a:0"] + base))
+                } catch let retry as LibraryLookRefused {
+                    throw TranscribeRefused(why: retry.why.replacingOccurrences(of: "ffmpeg could not make the sheet", with: "This Mac could not read the sound of \(src.lastPathComponent)"))
+                }
+            }
             throw TranscribeRefused(why: failed.why.replacingOccurrences(of: "ffmpeg could not make the sheet", with: "This Mac could not read the sound of \(src.lastPathComponent)"))
         }
     }

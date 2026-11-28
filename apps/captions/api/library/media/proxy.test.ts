@@ -7,10 +7,12 @@ import { afterAll, describe, expect, it, vi } from "vitest";
 // the real ffmpeg, behind a spy: one test makes its first run fail as a sound track with no decoder does
 vi.mock("./run", async (real) => {
   const m = await real<typeof import("./run")>();
-  return { ...m, ffmpegTo: vi.fn(m.ffmpegTo) };
+  return { ...m, ffmpeg: vi.fn(m.ffmpeg), ffmpegTo: vi.fn(m.ffmpegTo), spawnKillable: vi.fn(m.spawnKillable) };
 });
-const { ffmpegTo } = await import("./run");
+const { ffmpeg, ffmpegTo, spawnKillable } = await import("./run");
 const { makeProxy } = await import("./proxy");
+const { makeWave, soundMiddle } = await import("./wave");
+const { cutSound, soundArgs } = await import("../transcribe");
 
 // Real ffmpeg on small generated clips: the size rule is what the tests measure (UNIFIED-PRD §4.1, the size matrix).
 const dir = mkdtempSync(path.join(tmpdir(), "proxy-test-"));
@@ -45,17 +47,46 @@ describe.skipIf(!ffmpegHere)("makeProxy: never bigger than its source, at every 
     if (kept) expect(statSync(out).size).toBeLessThan(statSync(src).size);
   }, 60_000);
 
-  it("a sound track ffmpeg has no decoder for (an iPhone's spatial one): the proxy is made with the first track alone", async () => {
+  it("a sound track ffmpeg has no decoder for (an iPhone's spatial one): proxy, wave and transcribe fall back to the first audio track", async () => {
     const src = clip("spatial.mp4", "1920x1080", "libx264", 12000);
     const out = path.join(dir, "spatial-proxy.mp4");
-    vi.mocked(ffmpegTo).mockClear();
-    vi.mocked(ffmpegTo).mockRejectedValueOnce(new Error("[aist#0:2/none @ 0x1] Decoding requested, but no decoder found for: none"));
-    expect(await makeProxy(src, out, false, "standard", 2)).toBe(true);
-    const maps = vi.mocked(ffmpegTo).mock.calls.map(([, args]) => args.filter((a, i) => args[i - 1] === "-map").join(" "));
-    expect(maps).toEqual(["0:v:0 0:a?", "0:v:0 0:a:0?"]);
+    for (const msg of [
+      "[aist#0:2/none @ 0x1] Decoding requested, but no decoder found for: none",
+      "Decoder (codec none) not found for input stream #0:2",
+    ]) {
+      vi.mocked(ffmpegTo).mockClear();
+      vi.mocked(ffmpegTo).mockRejectedValueOnce(new Error(msg));
+      expect(await makeProxy(src, out, false, "standard", 2)).toBe(true);
+      const maps = vi.mocked(ffmpegTo).mock.calls.map(([, args]) => args.filter((a, i) => args[i - 1] === "-map").join(" "));
+      expect(maps).toEqual(["0:v:0 0:a?", "0:v:0 0:a:0?"]);
+    }
     // any other failure is the proxy's own: not tried again
     vi.mocked(ffmpegTo).mockRejectedValueOnce(new Error("Invalid data found when processing input"));
     await expect(makeProxy(src, out, false, "standard", 2)).rejects.toThrow("Invalid data");
+
+    // wave, soundMiddle and transcribe try ffmpeg's default pick first, then fall back to -map 0:a:0 on undecodable spatial audio
+    const audio = path.join(dir, "spatial-tone.mp4");
+    execFileSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=1", "-c:a", "aac", audio]);
+    const { EventEmitter } = await import("node:events");
+    vi.mocked(spawnKillable).mockClear();
+    vi.mocked(spawnKillable).mockImplementationOnce((() => {
+      const p = Object.assign(new EventEmitter(), { stdout: new EventEmitter(), stderr: new EventEmitter() });
+      queueMicrotask(() => {
+        p.stderr.emit("data", Buffer.from("Decoder (codec none) not found for input stream #0:2\n"));
+        p.emit("close", 1);
+      });
+      return p;
+    }) as never);
+    await makeWave(audio, path.join(dir, "spatial-wave.json"), true);
+    expect(vi.mocked(spawnKillable).mock.calls.map(([, args]) => args.includes("-map"))).toEqual([false, true]);
+    vi.mocked(ffmpeg).mockClear();
+    vi.mocked(ffmpeg).mockRejectedValueOnce(new Error("[aist#0:2/none] no decoder found for: none"));
+    await soundMiddle(audio, 1, 1, path.join(dir, "spatial-middle.mp3"));
+    expect(vi.mocked(ffmpeg).mock.calls.map(([args]) => args.includes("-map"))).toEqual([false, true]);
+    vi.mocked(ffmpegTo).mockClear();
+    vi.mocked(ffmpegTo).mockRejectedValueOnce(new Error("Decoder (codec none) not found for input stream #0:2"));
+    await cutSound(path.join(dir, "spatial.wav"), audio, soundArgs(true));
+    expect(vi.mocked(ffmpegTo).mock.calls.map(([, args]) => args.includes("-map"))).toEqual([false, true]);
   }, 60_000);
 
   it("a 1080p clip at standard quality: the proxy is kept and is smaller than the source", async () => {

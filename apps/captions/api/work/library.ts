@@ -3,7 +3,7 @@ import { mkdir, readFile, realpath, rm, stat, statfs } from "node:fs/promises";
 import path from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { hostsOriginals } from "../../contracts/library";
+import { hostsOriginals, PICTURE_FILE } from "../../contracts/library";
 import { WORK_V, type LibraryPackage, type LibraryResult, type LibraryTranscript, type PictureInput, type PicturePackage, type PictureResult } from "../../contracts/work";
 import { env } from "../lib/env";
 import { sha256File } from "../lib/uploads";
@@ -13,8 +13,8 @@ import { makeProxy, wantsProxy } from "../library/media/proxy";
 import { makeSprite } from "../library/media/sprite";
 import { makeThumb } from "../library/media/thumb";
 import { makeWave } from "../library/media/wave";
-import { ffmpegTo, withSignal } from "../library/media/run";
-import { soundArgs } from "../library/transcribe";
+import { withSignal } from "../library/media/run";
+import { cutSound, soundArgs } from "../library/transcribe";
 import { cutStills } from "../library/describe";
 import { cardVector, CARD_SEG, sheetVectors } from "../library/pictures";
 import { SHEET_FORMAT, type LookSheet } from "../library/shots";
@@ -80,9 +80,10 @@ async function derive(lib: LibraryPackage, src: string, dir: string, hear?: (sou
     const files: Made["files"] = {};
     if (p.vcodec) await makeThumb(src, (files.thumb = out("thumb.jpg")), p.duration, !!p.cover, p.turn);
     await makeWave(src, (files.wave = out("wave.json")), !!p.acodec);
-    if (wantsProxy(p, lib.proxy ?? { cloud: false, on: false }) && (await makeProxy(src, out("proxy.mp4"), !!p.cover || !p.vcodec, lib.proxy?.quality, p.duration))) files.proxy = out("proxy.mp4");
+    const still = PICTURE_FILE.test(src) || (!!p.vcodec && !p.cover && (!(p.duration > 0) || p.format === "image2" || /_pipe$/.test(p.format)));
+    if (!still && wantsProxy(p, lib.proxy ?? { cloud: false, on: false }) && (await makeProxy(src, out("proxy.mp4"), !!p.cover || !p.vcodec, lib.proxy?.quality, p.duration))) files.proxy = out("proxy.mp4");
     let print: string | undefined;
-    if (p.vcodec && !p.cover && !lib.music && !looksLikeSong(lib.file.title, p)) {
+    if (p.vcodec && !p.cover && !still && !lib.music && !looksLikeSong(lib.file.title, p)) {
       // from the lighter copy, as the server's steps read it (library/worker.ts lighter)
       const light = files.proxy ?? src;
       await makeSprite(light, (files.sprite = out("sprite.jpg")), p.duration, p.turn);
@@ -113,7 +114,7 @@ async function derive(lib: LibraryPackage, src: string, dir: string, hear?: (sou
     // the server's own cut, from this computer's copy: the same sound, so the same words
     const wav = lib.audio !== "m4a";
     const sound = out(wav ? "sound.wav" : "sound.m4a");
-    await ffmpegTo(sound, ["-i", src, ...soundArgs(wav)]);
+    await cutSound(sound, src, soundArgs(wav));
     return { files: {}, transcript: await hear(sound) };
   }
   throw new Error(`No library job ${kind} on this computer`);

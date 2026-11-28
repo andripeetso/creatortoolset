@@ -15,6 +15,7 @@ import { kindOf, recordVersion } from "./routes";
 import { copyFilesOn, knownCopy, librariesOf, mediaFoldersOf, mediaForLibrary, settleLeft, settleSilent } from "./report";
 import { pointSource } from "./locate";
 import { showHidden } from "./trash";
+import { blurAtIntake } from "./upload-gate";
 import { findUser, type SessionUser } from "../users";
 import { isThisMachine, listDevices } from "../lib/devices";
 import { parseStorageFile, storageFilePath } from "../lib/storage";
@@ -721,7 +722,7 @@ async function ingest(libraryId: string, f: WatchFolder & { blur?: Blur | null; 
         sha256,
         by: f.addedBy,
         collectionId: prior ? null : f.collectionId, // a new version stays where the asset is
-        blur: f.blur ?? null, // a file picked by hand (in-place) carries the import's answer; a watched folder's, the library's
+        blur: f.blur ?? blurAtIntake(f.addedBy, libraryId, undefined, f.collectionId), // a file picked by hand (in-place) carries the import's answer; a watched Finals folder's is kept as filmed where its sender may keep one
         proxy: f.proxy ?? null,
       });
       d.exec("COMMIT");

@@ -105,7 +105,7 @@ export function followUpload(versionId: string): void {
   if (!v || fileBlur(versionId)?.blur !== "no") return;
   const has = (kind: string) => !!d.prepare("SELECT 1 FROM jobs WHERE version_id = ? AND kind = ?").get(versionId, kind);
   const upload = versionUpload(versionId);
-  if (!hostsNone(upload) && !has("send")) {
+  if (!hostsNone(upload) && (v.kind !== "image" || hostsOriginals(upload)) && !has("send")) {
     d.prepare("UPDATE asset_versions SET from_path = mac_path, from_device = mac_device WHERE id = ?").run(versionId);
     enqueueJob(d, v.lib, versionId, "send", v.by);
   }
@@ -167,8 +167,8 @@ export function sendLater(
 }
 
 /** Whether a file of this name, sent to `libraryId` (into `collectionId`), goes the computer's way (sendLater) rather than as its original. */
-export const sendsFromComputer = (libraryId: string, filename: string, collectionId?: string | null): boolean => {
-  const upload = uploadFor({ id: libraryId, collectionId });
+export const sendsFromComputer = (libraryId: string, filename: string, collectionId?: string | null, blur?: Blur | null): boolean => {
+  const upload = uploadFor({ id: libraryId, collectionId, ...(blur ? { blur } : {}) });
   return kindOf(filename) === "video" && (hostsOriginals(upload) || hostsProxies(upload));
 };
 

@@ -433,4 +433,42 @@ describe("parallel lanes", () => {
     d.prepare("INSERT INTO jobs (library_id, version_id, kind, state, actor, started_at, done_at) VALUES ('lib_u', 'vu1', 'describe', 'done', 'local', 0, 1)").run();
     expect((await estimate("lib_u", "local", { clips: 0, bytes: 0 })).unanalyzed?.seconds).toBe(0);
   });
+
+  it("a flying timeline keeps share < 1, ETA > 0, and a timeline stage even when its look finished before the run; trashed relooks do not enable Stop", async () => {
+    const { watching } = await import("./timeline");
+    const { saveMyKey } = await import("../my-keys");
+    d.prepare("DELETE FROM jobs WHERE state != 'done'").run();
+    saveMyKey("local", "GEMINI_API_KEY", "gk-test");
+    // clear run state so runSince starts fresh now
+    await progress("lib_e", "local");
+    // seed 3 past timelines for a 30 s watchPace, plus one clip whose look finished long ago (done_at = 1)
+    const now = Date.now();
+    for (const [i, id] of ["f1", "f2", "f3"].entries()) {
+      d.prepare("INSERT INTO assets (id, library_id, kind, title, current_version_id, created_by, created_at, roll) VALUES (?, 'lib_e', 'video', ?, ?, 'local', 1, 'b')").run(`ast-${id}`, id, `ver-${id}`);
+      d.prepare("INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, probe, state, created_by, created_at) VALUES (?, ?, 1, 'k', 1, ?, '{\"duration\":30}', 'ready', 'local', 1)").run(`ver-${id}`, `ast-${id}`, `sha-${id}`);
+      d.prepare("INSERT INTO timelines (version_id, events, error, at) VALUES (?, '[]', NULL, ?)").run(`ver-${id}`, now - 90_000 + i * 30_000);
+    }
+    d.prepare("INSERT INTO assets (id, library_id, kind, title, current_version_id, created_by, created_at, roll) VALUES ('ast-fly', 'lib_e', 'video', 'Flying clip', 'ver-fly', 'local', 1, 'b')").run();
+    d.prepare("INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, probe, state, created_by, created_at) VALUES ('ver-fly', 'ast-fly', 1, 'k', 1, 'sha-fly', '{\"duration\":30}', 'ready', 'local', 1)").run();
+    d.prepare("INSERT INTO stretches (version_id, seg, a, b, motion, text, created_at) VALUES ('ver-fly', 0, 0, 4, 0.5, 'A jump.', 1)").run();
+    d.prepare("INSERT INTO jobs (library_id, version_id, kind, state, actor, done_at) VALUES ('lib_e', 'ver-fly', 'look', 'done', 'local', 1)").run();
+    // also a trashed asset with a queued relook job: must not set canStop
+    d.prepare("INSERT INTO assets (id, library_id, kind, title, current_version_id, created_by, created_at, roll, trashed_at) VALUES ('ast-trelook', 'lib_e', 'video', 'Trashed', 'ver-trelook', 'local', 1, 'b', 10)").run();
+    d.prepare("INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, probe, state, created_by, created_at) VALUES ('ver-trelook', 'ast-trelook', 1, 'k', 1, 'sha-tr', '{\"duration\":30}', 'ready', 'local', 1)").run();
+    d.prepare("INSERT INTO stretches (version_id, seg, a, b, motion, text, created_at) VALUES ('ver-trelook', 0, 0, 4, 0.5, 'Old.', 1)").run();
+    d.prepare("INSERT INTO jobs (library_id, version_id, kind, state, actor) VALUES ('lib_e', 'ver-trelook', 'look', 'queued', 'local')").run();
+    watching.set("ver-fly", Promise.resolve());
+    try {
+      const p = await progress("lib_e", "local");
+      expect(p).toMatchObject({ left: 1, clips: 1, canStop: false });
+      expect(p.share).toBeLessThan(1);
+      expect(p.seconds).toBeCloseTo(30, 0);
+      expect(p.stages).toContainEqual({ kind: "timeline", done: 0, of: 1, failed: 0, now: "Flying clip" });
+    } finally {
+      watching.delete("ver-fly");
+      saveMyKey("local", "GEMINI_API_KEY", null);
+      d.prepare("DELETE FROM jobs WHERE version_id IN ('ver-fly', 'ver-trelook')").run();
+      d.prepare("UPDATE assets SET trashed_at = 1 WHERE id IN ('ast-f1', 'ast-f2', 'ast-f3', 'ast-fly')").run();
+    }
+  });
 });

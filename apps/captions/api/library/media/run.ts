@@ -96,6 +96,9 @@ function run(args: string[]): Promise<void> {
   });
 }
 
+/** FFmpeg 7+ ("no decoder found") and 6.1 ("Decoder (codec none) not found"): e.g. an iPhone spatial audio track (apac). */
+export const NO_DECODER = /(?:no decoder found|decoder\b.*\bnot found)/i;
+
 /** Writes a derivative under its final name only when complete: a temp file, then a rename over the old one. */
 export async function atomically(out: string, write: (tmp: string) => Promise<void>): Promise<void> {
   const tmp = `${out}.part${path.extname(out)}`; // the extension keeps ffmpeg's muxer guess right

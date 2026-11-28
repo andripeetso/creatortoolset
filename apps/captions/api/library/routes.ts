@@ -778,7 +778,7 @@ async function startUpload(c: Context<{ Variables: AuthVars }>, libraryId: strin
   if (from && (await leftOut(user.username, libraryId, from, fromDevice))) return c.json({ error: LIBRARY_WORDS.notFootage, code: "invalid" }, 400);
   if (
     body?.send === true && from && !replaces && sender?.owner === user.username && (sender.work?.v ?? 0) >= WORK_MIN &&
-    typeof body.quick === "string" && /^[0-9a-f]{64}$/.test(body.quick) && sendsFromComputer(libraryId, filename, collection)
+    typeof body.quick === "string" && /^[0-9a-f]{64}$/.test(body.quick) && sendsFromComputer(libraryId, filename, collection, blur)
   ) {
     const r = sendLater(libraryId, user.username, { filename, size, fromPath: from, device: sender.id, quick: body.quick, collectionId: collection, blur, proxy: proxyAsked(body.proxy) });
     return c.json("versionId" in r ? { ...r, sent: true } : r);

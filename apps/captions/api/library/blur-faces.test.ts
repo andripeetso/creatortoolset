@@ -738,4 +738,26 @@ describe("Upload under Blur faces: Blurred is the blurred copies, Proxies the pr
     followUpload(off.versionId);
     expect(jobs(off.versionId)).toEqual([]); // Upload off, no proxies made: nothing to ask for
   });
+
+  it("sendsFromComputer respects blur='no' under Blur faces, and followUpload skips images under proxies-only", async () => {
+    const { followUpload, sendsFromComputer } = await import("./derived");
+    lib("lib_blur_send_all", { upload: "all", blurFaces: true });
+    lib("lib_blur_send_px", { upload: "proxies", blurFaces: true });
+    lib("lib_blur_send_off", { upload: "none", blurFaces: true });
+    // under Blur faces, a file without blur='no' stays on the computer; one kept as filmed ('no') follows stored upload
+    expect(sendsFromComputer("lib_blur_send_all", "clip.mp4")).toBe(false);
+    expect(sendsFromComputer("lib_blur_send_all", "clip.mp4", null, "no")).toBe(true);
+    expect(sendsFromComputer("lib_blur_send_px", "clip.mp4", null, "no")).toBe(true);
+    expect(sendsFromComputer("lib_blur_send_off", "clip.mp4", null, "no")).toBe(false);
+    // images have no proxy: under proxies-only, followUpload does not queue a no-op send; under all, it sends the original
+    const jobs = (v: string) => (d.prepare("SELECT kind FROM jobs WHERE version_id = ? AND kind IN ('send', 'proxy') ORDER BY kind").all(v) as { kind: string }[]).map((j) => j.kind);
+    const imgPx = await body(onMac("lib_blur_send_px", "Slide.png"));
+    d.prepare("UPDATE assets SET blur = 'no' WHERE id = ?").run(imgPx.assetId);
+    followUpload(imgPx.versionId);
+    expect(jobs(imgPx.versionId)).toEqual([]);
+    const imgAll = await body(onMac("lib_blur_send_all", "Slide.png"));
+    d.prepare("UPDATE assets SET blur = 'no' WHERE id = ?").run(imgAll.assetId);
+    followUpload(imgAll.versionId);
+    expect(jobs(imgAll.versionId)).toEqual(["send"]);
+  });
 });

@@ -88,4 +88,21 @@ describe.skipIf(rootReplaced)("Workshop: the final video of a project", () => {
     await call("maker", "GET", url);
     expect(libraryDb().prepare("SELECT kind FROM pieces WHERE id = ?").get(a.pieceId)).toEqual({ kind: "carousel" });
   });
+
+  it("under Blur faces, GET /sessions/:id/finals returns stored finalsUpload for an owner/admin who may keep finals as filmed", async () => {
+    const s = (await (await call("maker", "POST", "/api/workshop/sessions", { title: "Blur final upload" })).json()) as { id: string };
+    const url = `/api/workshop/sessions/${s.id}/finals`;
+    const first = (await (await call("maker", "GET", url)).json()) as { libraryId: string; upload: string };
+    const libId = first.libraryId;
+    libraryDb().prepare(`UPDATE libraries SET settings = json_set(IFNULL(settings, '{}'), '$.blurFaces', json('true'), '$.finalsUpload', 'all') WHERE id = ?`).run(libId);
+    try {
+      const asOwner = (await (await call("maker", "GET", url)).json()) as { upload: string };
+      expect(asOwner.upload).toBe("all");
+      libraryDb().prepare(`UPDATE libraries SET settings = json_set(settings, '$.finalsUpload', 'none') WHERE id = ?`).run(libId);
+      const asNone = (await (await call("maker", "GET", url)).json()) as { upload: string };
+      expect(asNone.upload).toBe("none");
+    } finally {
+      libraryDb().prepare(`UPDATE libraries SET settings = json_remove(settings, '$.blurFaces', '$.finalsUpload') WHERE id = ?`).run(libId);
+    }
+  });
 });

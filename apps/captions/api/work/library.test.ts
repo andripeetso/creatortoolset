@@ -646,4 +646,29 @@ describe("a photo goes only to a computer that reads its card picture with no se
     expect(lib?.job.versionId).toBe(r.versionId);
     d.prepare("UPDATE jobs SET state = 'done' WHERE version_id = ?").run(r.versionId);
   });
+
+  it("makeDerived send on a still image (PNG and JPEG) makes its card picture without failing on proxy, strip or fingerprint", async () => {
+    const { execFileSync } = await import("node:child_process");
+    const { makeDerived } = await import("./library");
+    for (const ext of ["png", "jpg"] as const) {
+      const src = path.join(dir, `slide.${ext}`);
+      execFileSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=1080x1350", "-frames:v", "1", src]);
+      const workDir = path.join(dir, `derive-still-${ext}`);
+      mkdirSync(workDir, { recursive: true });
+      const pkg: LibraryPackage = {
+        v: WORK_V,
+        job: { id: 1, kind: "send", versionId: `v_${ext}`, libraryId: "lib_all", actor: "tiny" },
+        file: { title: `slide.${ext}`, bytes: statSync(src).size, path: src },
+        upload: "all",
+        proxy: { cloud: true, on: true },
+      };
+      const made = await makeDerived(pkg, src, workDir);
+      expect(made.files.thumb).toBeTruthy();
+      expect(made.files.wave).toBeTruthy();
+      expect(made.files.original).toBe(src);
+      expect(made.files.proxy).toBeUndefined();
+      expect(made.files.sprite).toBeUndefined();
+      expect(made.fingerprint).toBeUndefined();
+    }
+  });
 });

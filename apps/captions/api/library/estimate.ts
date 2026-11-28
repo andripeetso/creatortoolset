@@ -11,7 +11,7 @@ import { embedRoute } from "./embed";
 import { NeedsKey, transcribeRoute } from "./transcribe";
 import { ON_ORIGINAL } from "./blur-mirror";
 import { BUDGET_STOP } from "../../contracts/service-usage";
-import { NOT_TRASHED, stillToCome, WAITS_FOR_COMPUTER, WAITS_FOR_SERVER } from "./jobs";
+import { NOT_TRASHED, notTrashed, stillToCome, WAITS_FOR_COMPUTER, WAITS_FOR_SERVER } from "./jobs";
 import { LANES, LIMIT_LIKE, leaveToComputers, type WaitSnapshot } from "./worker";
 import { deviceOf, isThisMachine, listDevices } from "../lib/devices";
 import { ownerKeeps } from "../../src/lib/wording";
@@ -496,13 +496,13 @@ export async function progress(libraryId: string, username: string): Promise<Lib
   // being prepared (left out, the strip said 47 clips beside "of 51" and closed while the last ones were being made)
   const flying = (
     db
-      .prepare("SELECT v.id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id IN (SELECT value FROM json_each(?)) AND a.library_id = ? AND a.trashed_at IS NULL")
+      .prepare("SELECT v.id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id IN (SELECT value FROM json_each(?)) AND a.library_id = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL")
       .all(JSON.stringify([...watching.keys()]), libraryId) as { id: string }[]
   ).map((r) => r.id);
   const left = pending.reduce((n, r) => n + r.n, 0) + toCome + coming.length + flying.length;
   // what the library's Stop reaches (made.ts stopQueued): a queued job of a kind with a Cancel, a file still on its way
   // and a look waiting to run again for its timeline (in the queue, or for its Mac): Stop puts it back as done
-  const relooks = (db.prepare(`SELECT COUNT(*) AS n FROM jobs WHERE library_id = ? AND ${RELOOK_WAITS}`).get(libraryId, MAC_WAITS) as { n: number }).n;
+  const relooks = (db.prepare(`SELECT COUNT(*) AS n FROM jobs WHERE library_id = ? AND ${notTrashed("jobs")} AND ${RELOOK_WAITS}`).get(libraryId, MAC_WAITS) as { n: number }).n;
   const canStop = toCome > 0 || coming.length > 0 || pending.some((r) => r.state === "queued" && STOPPED.has(r.kind)) || relooks > 0;
   const waiting: LibraryProgress["waiting"] = rows
     .filter((r) => r.state === "needs_key" && !r.ql && !r.cw)
@@ -587,19 +587,24 @@ export async function progress(libraryId: string, username: string): Promise<Lib
   ).n;
   const ahead = toCome + coming.filter((v) => !run.has(v)).length;
   const since = { $since: runSince.get(libraryId) ?? 0 };
+  const flyingJson = JSON.stringify(flying);
   // how far: each clip of the run counts the same, by the share of its steps that are through (a held one is not counted:
   // it is not work here); a clip still to come, or not read yet, counts as not started. A clip's steps are only known once
   // it is read (probe), so counting clips, not steps, keeps the share from going back when ten clips' steps appear at once.
   // ponytail: search by meaning is queued after a transcript, so a clip's share steps back by one step of its six then
   const through = db
     .prepare(
-      `SELECT SUM(CASE WHEN unread THEN 0 ELSE CAST(fin AS REAL) / n END) AS s, COUNT(*) AS clips FROM (SELECT SUM(state IN ('done', 'failed', 'stopped')) AS fin,
-         COUNT(*) AS n, MAX(kind = 'probe' AND state IN ('queued', 'running')) AS unread FROM jobs j
+      `SELECT SUM(CASE WHEN unread THEN 0 ELSE CAST(fin AS REAL) / (n + is_flying) END) AS s, COUNT(*) AS clips, IFNULL(SUM(is_flying), 0) AS flying_in
+       FROM (SELECT SUM(state IN ('done', 'failed', 'stopped')) AS fin, COUNT(*) AS n,
+         MAX(kind = 'probe' AND state IN ('queued', 'running')) AS unread,
+         version_id IN (SELECT value FROM json_each($flying)) AS is_flying FROM jobs j
        WHERE library_id = ? AND version_id IN (SELECT value FROM json_each(?)) AND ${NOT_TRASHED} AND ${FRESH} AND ((state != 'needs_key' AND NOT ${HELD} AND NOT ${AWAY}) OR ${QL}) GROUP BY version_id)`,
     )
-    .get({ ...away, ...look, ...since }, libraryId, JSON.stringify([...run]), LIMIT_LIKE) as { s: number | null; clips: number };
-  // a clip of the run whose every step left is held, or that went to the trash, is through, as far as this computer goes
-  const share = ((through.s ?? 0) + run.size - through.clips) / (run.size + ahead);
+    .get({ ...away, ...look, ...since, $flying: flyingJson }, libraryId, JSON.stringify([...run]), LIMIT_LIKE) as { s: number | null; clips: number; flying_in: number };
+  // a clip of the run whose every step left is held, or that went to the trash, is through, as far as this computer goes;
+  // a clip whose timeline is still flying is not through even when its look finished before this run
+  const flyingOut = flying.length - through.flying_in;
+  const share = ((through.s ?? 0) + run.size - through.clips - flyingOut) / (run.size + ahead);
   const counts = db
     .prepare(
       // still to do counts what waits for a key or a limit too (`waiting` says why), so a line never shrinks when one parks
@@ -624,20 +629,23 @@ export async function progress(libraryId: string, username: string): Promise<Lib
   }
   for (const kind of STAGES) {
     // a step with nothing to run it on says so in `waiting`, not as a line that never moves
-    if (routes[STEP_OF[kind]!].route === "none") continue;
-    const c = counts.find((r) => r.kind === kind);
+    const show = routes[STEP_OF[kind]!].route !== "none";
+    const c = show ? counts.find((r) => r.kind === kind) : undefined;
     // a look runs again for each timeline still to queue
-    const of = (c ? c.done + c.failed + c.open : 0) + (kind === "look" ? watches : 0);
-    const now = working.find((w) => w.kind === kind)?.title;
+    const of = show ? (c ? c.done + c.failed + c.open : 0) + (kind === "look" ? watches : 0) : 0;
+    const now = show ? working.find((w) => w.kind === kind)?.title : undefined;
     if (of) stages.push({ kind, done: c?.done ?? 0, of, failed: c?.failed ?? 0, ...(now ? { now } : {}) });
     // Timelines are no job of their own: Gemini watches each clip after its shot descriptions (timeline.ts watchAfter)
-    if (kind === "look" && of && librarySetting(libraryId, "timeline") && canWatch(db, libraryId, username)) {
+    if (kind === "look" && (flying.length > 0 || (of && librarySetting(libraryId, "timeline") && canWatch(db, libraryId, username)))) {
       const t = db
-        .prepare(`SELECT IFNULL(SUM(error IS NULL), 0) AS done, IFNULL(SUM(error IS NOT NULL), 0) AS failed FROM timelines WHERE version_id IN (SELECT value FROM json_each(?)) AND at >= ?`)
-        .get(JSON.stringify([...run]), since.$since) as { done: number; failed: number };
-      const on = [...run].find((v) => watching.has(v));
+        .prepare(
+          `SELECT IFNULL(SUM(error IS NULL), 0) AS done, IFNULL(SUM(error IS NOT NULL), 0) AS failed FROM timelines
+           WHERE version_id IN (SELECT value FROM json_each(?)) AND version_id NOT IN (SELECT value FROM json_each(?)) AND at >= ?`,
+        )
+        .get(JSON.stringify([...run]), flyingJson, since.$since) as { done: number; failed: number };
+      const on = flying[0] ?? [...run].find((v) => watching.has(v));
       const title = on && (db.prepare("SELECT a.title FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(on) as { title: string } | undefined)?.title;
-      stages.push({ kind: "timeline", done: t.done, of: Math.max(of, t.done + t.failed), failed: t.failed, ...(title ? { now: title } : {}) });
+      stages.push({ kind: "timeline", done: t.done, of: Math.max(of, t.done + t.failed + flying.length), failed: t.failed, ...(title ? { now: title } : {}) });
     }
   }
   const done = counts.reduce((n, r) => n + r.done, 0);
@@ -646,27 +654,35 @@ export async function progress(libraryId: string, username: string): Promise<Lib
   const parts: { step: LibraryStep; route: LibraryStepRoute; seconds: number }[] = [];
   for (const step of STEPS) {
     const mine = pending.filter((r) => STEP_OF[r.kind] === step);
-    const n = mine.reduce((t, r) => t + r.n, 0) + (step === "look" ? watches : 0);
+    const n = mine.reduce((t, r) => t + r.n, 0) + (step === "look" ? watches + flying.length : 0);
     let { route } = routes[step];
     // switched off, yet asked for (Describe with AI on one clip): at the pace it would have on
     if (route === "off") route = step === "describe" || step === "look" ? "provider" : "openai";
-    // nothing to run it on: those jobs stop as waiting for a key, they take no time
-    if (!n || route === "none") continue;
+    if (!n) continue;
     // the server's own steps each at their own pace: a lighter copy takes many pictures' time
     if (step === "files") {
+      if (route === "none") continue;
       parts.push({ step, route, seconds: mine.reduce((t, r) => t + r.n * (paceOf(db, r.kind) ?? filesGuess(r.kind, secondsPerClip)), 0) / laneSize("files") });
       continue;
     }
     // a run of timelines goes at the pace timelines come in, end to end (a computer reads each file, Gemini watches
     // it): a look that runs again for one is over in a moment here, and its pace would say a minute for an hour's work
     // (the sweep may have queued them all already: the looks waiting to run again are the run then, not `watches`)
-    const each = step === "look" && watches + relooks ? watchPace(db, libraryId) : null;
-    if (each) {
-      parts.push({ step, route, seconds: each * Math.max(n, watches + relooks) });
-      continue;
+    if (step === "look" && watches + relooks + flying.length > 0) {
+      const each = watchPace(db, libraryId);
+      if (each && (route !== "none" || flying.length > 0)) {
+        parts.push({ step, route: route === "none" ? "provider" : route, seconds: each * (route === "none" ? flying.length : n) });
+        continue;
+      }
+    }
+    // nothing to run it on: those jobs stop as waiting for a key, they take no time (unless a timeline is already flying)
+    if (route === "none") {
+      if (step !== "look" || !flying.length) continue;
+      route = "provider";
     }
     const p = await perClip(db, step, route, secondsPerClip, proxyShare);
-    parts.push({ step, route, seconds: (p.seconds * n) / p.at });
+    const count = step === "look" && routes.look.route === "none" ? flying.length : n;
+    parts.push({ step, route, seconds: (p.seconds * count) / p.at });
   }
   // ponytail: a clip a folder has still to hand over adds no time until it is in; the time grows by its steps then
   return { done, left, clips: clips + toCome, share, seconds: total(parts), canStop, waiting, stages };
