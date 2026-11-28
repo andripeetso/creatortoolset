@@ -59,16 +59,21 @@ export const MY_KEYS = [
 export type MyKeyEnv = (typeof MY_KEYS)[number]["env"];
 
 /**
- * A model the person runs themselves, on Settings → Providers (api/local-model.ts): the address its server answers at and the
- * model's name there, both typed by the person. An install's own admin only; a hosted server refuses all three.
+ * A model the person runs themselves, on Settings → Providers (api/local-model.ts): the address its server answers at
+ * and the model's name there, both typed by the person, with optional thinking and context length settings. An install's
+ * own admin only; Cloud servers refuse all three routes.
  *
  *   GET /api/my-keys/local-model              → LocalModel | {}
- *   PUT /api/my-keys/local-model              { url, model } | { url: null }  (null = forget it)
+ *   PUT /api/my-keys/local-model              { url, model, thinking?, contextLength? } | { url: null }  (null = forget it)
  *   GET /api/my-keys/local-model/models?url=  → { models: string[] }  (what that address lists; none when it does not answer)
  */
 export interface LocalModel {
   url: string;
   model: string;
+  /** Leave model thinking on instead of sending thinking: disabled. Default off (short contexts fill before output). */
+  thinking?: boolean;
+  /** Optional context window in tokens, passed as options.num_ctx on /api/chat servers such as Ollama. */
+  contextLength?: number;
 }
 
 export interface MyKeyView {

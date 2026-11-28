@@ -74,11 +74,23 @@ export function fewestTokens(text: string): number {
  * Returns why it does not fit, or null: it fits, or this server has no such route (404) or answered anything else.
  * The count of tokens read is the only check then (fewestTokens).
  */
+const MIN_CONTEXT_LENGTH = 1024;
+const MAX_CONTEXT_LENGTH = 1_048_576;
+
+function contextLengthOf(v: unknown): number | undefined | null {
+  if (v === undefined || v === null || v === "") return undefined;
+  const n = typeof v === "number" ? v : typeof v === "string" && /^\d+$/.test(v.trim()) ? Number(v.trim()) : Number.NaN;
+  if (!Number.isInteger(n) || n < MIN_CONTEXT_LENGTH || n > MAX_CONTEXT_LENGTH) return null;
+  return n;
+}
+
 export async function tooLongFor(local: LocalModel, system: string, user: string, signal: AbortSignal): Promise<string | null> {
+  const options: Record<string, number> = { num_predict: 1 };
+  if (local.contextLength) options.num_ctx = local.contextLength;
   const r = await fetch(`${local.url}/api/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model: local.model, stream: false, think: false, truncate: false, options: { num_predict: 1 }, messages: [{ role: "system", content: system }, { role: "user", content: user }] }),
+    body: JSON.stringify({ model: local.model, stream: false, think: Boolean(local.thinking), truncate: false, options, messages: [{ role: "system", content: system }, { role: "user", content: user }] }),
     signal,
   });
   const said = ((await r.json().catch(() => null)) as { error?: unknown } | null)?.error;
@@ -97,7 +109,15 @@ function saved(username: string): LocalModel | null {
   try {
     const j = file ? (JSON.parse(readFileSync(file, "utf-8")) as Partial<LocalModel>) : null;
     const url = addressOf(j?.url);
-    if (url && typeof j?.model === "string" && j.model) model = { url, model: j.model };
+    if (url && typeof j?.model === "string" && j.model) {
+      const contextLength = contextLengthOf(j.contextLength);
+      model = {
+        url,
+        model: j.model,
+        ...(j.thinking === true ? { thinking: true } : {}),
+        ...(typeof contextLength === "number" ? { contextLength } : {}),
+      };
+    }
   } catch {
     /* none saved */
   }
@@ -143,7 +163,7 @@ localModelApp.put("/", async (c) => {
   const username = c.get("user").username;
   const file = fileOf(username);
   if (!file) return c.json({ error: "No local model for this account" }, 400);
-  const b = (await c.req.json().catch(() => null)) as { url?: unknown; model?: unknown } | null;
+  const b = (await c.req.json().catch(() => null)) as { url?: unknown; model?: unknown; thinking?: unknown; contextLength?: unknown } | null;
   if (b?.url === null) {
     rmSync(file, { force: true });
     cache.set(username, null);
@@ -153,7 +173,15 @@ localModelApp.put("/", async (c) => {
   if (!url) return c.json({ error: "Type the address the model answers at, like http://localhost:11434" }, 400);
   const model = typeof b?.model === "string" ? b.model.trim() : "";
   if (!/^\S{1,200}$/.test(model)) return c.json({ error: "Type the model's name the way its server lists it" }, 400);
-  const next: LocalModel = { url, model };
+  if (b?.thinking !== undefined && typeof b.thinking !== "boolean") return c.json({ error: "Thinking must be true or false" }, 400);
+  const contextLength = contextLengthOf(b?.contextLength);
+  if (contextLength === null) return c.json({ error: `Context length must be a whole number between ${MIN_CONTEXT_LENGTH} and ${MAX_CONTEXT_LENGTH}` }, 400);
+  const next: LocalModel = {
+    url,
+    model,
+    ...(b?.thinking === true ? { thinking: true } : {}),
+    ...(typeof contextLength === "number" ? { contextLength } : {}),
+  };
   mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   const tmp = `${file}.tmp-${process.pid}`;
   writeFileSync(tmp, JSON.stringify(next), { mode: 0o600 });

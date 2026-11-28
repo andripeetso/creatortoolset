@@ -420,16 +420,75 @@ function completeLocalModel(system: string, user: string, cancelSignal?: AbortSi
   if (!local) return Promise.reject(new AiProviderError("No local model is set", "FAILED", false));
   const answer = (localLine.get(local.url) ?? Promise.resolve()).then(async () => {
     const signal = requestSignal(cancelSignal); // one time limit for the question below and the request
-    // asked first: does the whole request fit? A server that can say no refuses here; the request itself would be cut.
-    // No answer to the question (no such route, the server down or slow) decides nothing: the request says what is wrong.
-    const tooLong = await tooLongFor(local, system, user, signal).catch((e: unknown) => (cancelSignal?.aborted ? wrapFetchError(e, cancelSignal) : null));
-    if (tooLong) throw localFailed(local, `can't read the whole request (${tooLong}): give it a longer context on its server`);
+    // When a context length is configured, send the request directly to /api/chat with options.num_ctx so Ollama honors
+    // the configured context window during generation (the Messages route ignores num_ctx). Non-Ollama servers return 404
+    // and fall through to /v1/messages below.
+    if (local.contextLength) {
+      let chatResp: Response;
+      try {
+        chatResp = await fetch(`${local.url}/api/chat`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: local.model,
+            stream: false,
+            think: Boolean(local.thinking),
+            truncate: false,
+            options: { num_ctx: local.contextLength, num_predict: 16000 },
+            messages: [{ role: "system", content: system }, { role: "user", content: user }],
+          }),
+          signal,
+        });
+      } catch (e: unknown) {
+        if (cancelSignal?.aborted) wrapFetchError(e, cancelSignal);
+        const slow = e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError");
+        throw localFailed(local, slow ? `gave no answer in ${CHUNK_TIMEOUT_MS / 60_000} minutes` : "did not answer: check that it is running");
+      }
+      const chatBody = await readBody(chatResp);
+      let chat: { message?: { content?: string }; error?: string; prompt_eval_count?: number; eval_count?: number; done_reason?: string } = {};
+      try {
+        chat = JSON.parse(chatBody) as typeof chat;
+      } catch {
+        if (chatResp.ok) throw localFailed(local, "sent an answer this app can't read");
+      }
+      const noChatRoute = chatResp.status === 404 && !/model\b.*not found/i.test(chat.error ?? chatBody);
+      if (!noChatRoute) {
+        if (chatResp.status === 400 && typeof chat.error === "string" && /exceeds.*context/i.test(chat.error)) {
+          const n = /(\d+) tokens\D+(\d+) tokens/.exec(chat.error);
+          const why = n ? `it is ${n[1]} tokens and the model's context holds ${n[2]}` : chat.error.slice(0, 200);
+          throw localFailed(local, `can't read the whole request (${why}): give it a longer context on its server`);
+        }
+        if (!chatResp.ok || chat.error) throw localFailed(local, `answered ${chatResp.status}: ${chat.error || chatBody.slice(0, 200)}`);
+        if (chat.prompt_eval_count !== undefined || chat.eval_count !== undefined) {
+          opts.onUsage?.(apiUsage({ input_tokens: chat.prompt_eval_count ?? 0, output_tokens: chat.eval_count ?? 0 }, ""));
+        }
+        const read = chat.prompt_eval_count ?? 0;
+        if (read > 0 && read < fewestTokens(`${system} ${user}`))
+          throw localFailed(local, `read only part of the request (${read} tokens for a request of ${system.length + user.length} characters): give it a longer context on its server`);
+        if (chat.done_reason === "length")
+          throw localFailed(local, `ran out of room before it finished (${read || "?"} tokens in, ${chat.eval_count ?? "?"} out): give it a longer context on its server`);
+        const text = (chat.message?.content ?? "").trim();
+        if (!text) throw localFailed(local, "returned an empty answer");
+        return text;
+      }
+    } else {
+      // asked first: does the whole request fit? A server that can say no refuses here; the request itself would be cut.
+      // No answer to the question (no such route, the server down or slow) decides nothing: the request says what is wrong.
+      const tooLong = await tooLongFor(local, system, user, signal).catch((e: unknown) => (cancelSignal?.aborted ? wrapFetchError(e, cancelSignal) : null));
+      if (tooLong) throw localFailed(local, `can't read the whole request (${tooLong}): give it a longer context on its server`);
+    }
     let resp: Response;
     try {
       resp = await fetch(`${local.url}/v1/messages`, {
         method: "POST",
         headers: { "anthropic-version": "2023-06-01", "Content-Type": "application/json" },
-        body: JSON.stringify({ model: local.model, max_tokens: 16000, thinking: { type: "disabled" }, system, messages: [{ role: "user", content: user }] }),
+        body: JSON.stringify({
+          model: local.model,
+          max_tokens: 16000,
+          ...(local.thinking ? {} : { thinking: { type: "disabled" } }),
+          system,
+          messages: [{ role: "user", content: user }],
+        }),
         signal,
       });
     } catch (e: unknown) {

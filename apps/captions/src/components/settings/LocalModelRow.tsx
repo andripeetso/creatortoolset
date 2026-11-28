@@ -2,9 +2,9 @@ import { useEffect, useState } from "react";
 import type { LocalModel } from "@contracts/service-keys";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import { useAuth } from "@/lib/auth";
 import { useCachedLoad } from "@/lib/local-cache";
-import { useSetup } from "@/lib/setup";
 import { Card, FormDialog, ListRow, Row, RowMenu, Status } from "./ui";
 import { msg } from "./helpers";
 
@@ -26,18 +26,18 @@ const modelsAt = (url: string) =>
 
 /**
  * Settings → Providers: a model the person runs themselves (api/local-model.ts), in a card of its own under the
- * provider list. The row shows the model and its address; the dialog takes the address and the model's name, and lists
- * what that address has so a name can be picked instead of typed. Only an install's own admin gets it (a hosted server
- * refuses its routes); like the Anthropic key, it is hidden while the account has an AI provider and no local model
- * saved (until the setup is known, too).
+ * provider list. The row shows the model and its address; the dialog takes the address, the model's name (listing what
+ * that address has so a name can be picked instead of typed), an optional context length, and whether thinking stays on.
+ * Only an install's own admin gets it (Cloud servers refuse its routes).
  */
 export function LocalModelRow() {
   const mine = useAuth((s) => s.kind !== "cloud" && s.me?.role === "admin");
-  const ownAi = useSetup((s) => s.view?.have.includes("ownAi") ?? true);
   const { data, refresh } = useCachedLoad<Partial<LocalModel>>(mine ? ROUTE : null, getLocalModel, { own: true });
   const [open, setOpen] = useState(false);
   const [url, setUrl] = useState("");
   const [model, setModel] = useState("");
+  const [contextLength, setContextLength] = useState("");
+  const [thinking, setThinking] = useState(false);
   const [listed, setListed] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -55,21 +55,33 @@ export function LocalModelRow() {
     };
   }, [open, url]);
 
-  if (!mine || !data || (ownAi && !data.url)) return null;
+  if (!mine || !data) return null;
   const set = !!data.url;
 
   const show = () => {
     setUrl(data.url ?? "");
     setModel(data.model ?? "");
+    setContextLength(data.contextLength ? String(data.contextLength) : "");
+    setThinking(!!data.thinking);
     setListed([]);
     setError(null);
     setOpen(true);
   };
   const submit = async () => {
+    const ctx = contextLength.trim();
+    if (ctx && !/^\d+$/.test(ctx)) {
+      setError("Context length must be a whole number");
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
-      await saveLocalModel({ url: url.trim(), model: model.trim() });
+      await saveLocalModel({
+        url: url.trim(),
+        model: model.trim(),
+        ...(thinking ? { thinking: true } : {}),
+        ...(ctx ? { contextLength: Number(ctx) } : {}),
+      });
       await refresh();
       setOpen(false);
     } catch (e) {
@@ -79,16 +91,22 @@ export function LocalModelRow() {
     }
   };
 
-  // the two fields are one width, so their left edges line up
+  // the text fields are one width, so their left edges line up
   const input = "h-8 w-full font-mono text-xs sm:w-64";
+  const statusBits = [
+    data.url,
+    data.contextLength ? `${data.contextLength.toLocaleString()} ctx` : null,
+    data.thinking ? "thinking on" : null,
+  ].filter(Boolean);
+
   return (
     <>
       <Card>
         {/* no search id: the search index can't tell an install's own admin from everyone else, and a hit must land on a row */}
         <ListRow
           title="Local model"
-          subtitle="Used by the tools before the Anthropic API key."
-          status={set ? <Status>{data.url}</Status> : undefined}
+          subtitle="Used when no AI provider is running, before the Anthropic API key."
+          status={set ? <Status>{statusBits.join(" · ")}</Status> : undefined}
           actions={
             set ? (
               <>
@@ -138,6 +156,18 @@ export function LocalModelRow() {
             </div>
           )}
         </Row>
+        <Row
+          className="p-0 sm:p-0"
+          title="Context length"
+          description="Optional token window sent to Ollama."
+          control={<Input aria-label="Context length" inputMode="numeric" value={contextLength} onChange={(e) => setContextLength(e.target.value)} placeholder="Server default" autoComplete="off" spellCheck={false} className={input} />}
+        />
+        <Row
+          className="p-0 sm:p-0"
+          title="Thinking"
+          description="Leave model reasoning on. Needs a longer context."
+          control={<Switch aria-label="Thinking" checked={thinking} onCheckedChange={setThinking} />}
+        />
       </FormDialog>
     </>
   );

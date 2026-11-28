@@ -488,3 +488,68 @@ describe("a prompt longer than the model server's context", () => {
     expect(await send()).toBe("No door code was given.");
   });
 });
+
+
+describe("thinking and context length options", () => {
+  it("saves and reads optional thinking and contextLength, and rejects invalid values", async () => {
+    expect((await as(admin).put({ url: address, model: "big-one:12b", thinking: true, contextLength: 32768 })).status).toBe(200);
+    expect(await (await as(admin).get()).json()).toEqual({ url: address, model: "big-one:12b", thinking: true, contextLength: 32768 });
+    expect(localModelOf("admin")).toEqual({ url: address, model: "big-one:12b", thinking: true, contextLength: 32768 });
+
+    // clearing optional fields returns to minimal object
+    expect((await as(admin).put({ url: address, model: "big-one:12b", thinking: false })).status).toBe(200);
+    expect(await (await as(admin).get()).json()).toEqual({ url: address, model: "big-one:12b" });
+
+    for (const bad of [
+      { url: address, model: "m", thinking: "yes" },
+      { url: address, model: "m", contextLength: 512 },
+      { url: address, model: "m", contextLength: 2_000_000 },
+      { url: address, model: "m", contextLength: 4096.5 },
+      { url: address, model: "m", contextLength: "32k" },
+    ]) {
+      expect((await as(admin).put(bad)).status).toBe(400);
+    }
+  });
+
+  it("thinking on omits thinking: disabled on /v1/messages and sends think: true on /api/chat", async () => {
+    await as(admin).put({ url: address, model: "big-one:12b", thinking: true });
+    expect(await completeWithFallback("Sys", "User", undefined, (t) => t, aiFor(admin, "captions", "Caption Studio"))).toBe("from the local model");
+    expect(got.map((g) => g.url)).toEqual(["/api/chat", "/v1/messages"]);
+    expect(JSON.parse(got[0].body)).toMatchObject({ model: "big-one:12b", think: true, truncate: false, options: { num_predict: 1 } });
+    const msgBody = JSON.parse(got[1].body) as Record<string, unknown>;
+    expect(msgBody).toEqual({ model: "big-one:12b", max_tokens: 16000, system: "Sys", messages: [{ role: "user", content: "User" }] });
+    expect(msgBody).not.toHaveProperty("thinking");
+  });
+
+  it("contextLength routes through /api/chat with options.num_ctx on Ollama-compatible servers", async () => {
+    await as(admin).put({ url: address, model: "big-one:12b", thinking: true, contextLength: 32768 });
+    fits = () => ({ status: 200, body: { message: { content: "from ollama chat" }, prompt_eval_count: 42, eval_count: 6, done_reason: "stop" } });
+    expect(await completeWithFallback("Sys", "User", undefined, (t) => t, aiFor(admin, "notes", "Video Notes"))).toBe("from ollama chat");
+    expect(got.map((g) => g.url)).toEqual(["/api/chat"]);
+    expect(JSON.parse(got[0].body)).toEqual({
+      model: "big-one:12b",
+      stream: false,
+      think: true,
+      truncate: false,
+      options: { num_ctx: 32768, num_predict: 16000 },
+      messages: [{ role: "system", content: "Sys" }, { role: "user", content: "User" }],
+    });
+  });
+
+  it("contextLength falls back to /v1/messages when /api/chat returns 404", async () => {
+    await as(admin).put({ url: address, model: "big-one:12b", contextLength: 32768 });
+    fits = noSuchRoute;
+    expect(await completeWithFallback("Sys", "User", undefined, (t) => t, aiFor(admin, "notes", "Video Notes"))).toBe("from the local model");
+    expect(got.map((g) => g.url)).toEqual(["/api/chat", "/v1/messages"]);
+  });
+
+  it("contextLength on /api/chat still surfaces context-exceeded and truncation errors", async () => {
+    await as(admin).put({ url: address, model: "big-one:12b", contextLength: 8192 });
+    fits = () => ({ status: 400, body: { error: "request (10451 tokens) exceeds the available context size (8192 tokens)" } });
+    await expect(completeWithFallback("Sys", "User", undefined, (t) => t, aiFor(admin, "notes", "Video Notes"))).rejects.toThrow(
+      `The local model at ${address} can't read the whole request (it is 10451 tokens and the model's context holds 8192): give it a longer context on its server`,
+    );
+    fits = () => ({ status: 200, body: { message: { content: "half" }, prompt_eval_count: 50, eval_count: 8000, done_reason: "length" } });
+    await expect(completeWithFallback("Sys", "User", undefined, (t) => t, aiFor(admin, "notes", "Video Notes"))).rejects.toThrow("ran out of room before it finished");
+  });
+});
