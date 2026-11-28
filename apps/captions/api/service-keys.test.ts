@@ -58,3 +58,40 @@ it("Team use is off until an admin turns it on; admins only, and it is not a key
   await team(false);
   expect(teamUseOn()).toBe(false);
 });
+
+it("saving a server speech key or turning Team use on with one already set wakes parked transcripts", async () => {
+  const [{ libraryDb }, { claimJob, enqueueJob, parkJob }] = await Promise.all([import("./library/db"), import("./library/jobs")]);
+  const db = libraryDb();
+  const park = (ver: string, kind = "transcribe") => {
+    enqueueJob(db, "lib_s", ver, kind, "member");
+    const id = (db.prepare("SELECT id FROM jobs WHERE version_id = ?").get(ver) as { id: number }).id;
+    parkJob(db, id, "Add your Deepgram key in Settings → API keys", "jobs", claimJob(db, 300, 1000, "jobs", undefined, id)!.claim_id);
+  };
+  const state = (ver: string) => (db.prepare("SELECT state FROM jobs WHERE version_id = ?").get(ver) as { state: string }).state;
+  const team = (on: boolean) =>
+    app.request("/team-use", { method: "PUT", headers: { "x-role": "admin", "content-type": "application/json" }, body: JSON.stringify({ on }) });
+
+  park("ver_s1");
+  park("ver_s2", "describe");
+  // a non-speech server key wakes nothing
+  expect((await put("PERPLEXITY_API_KEY", "pplx-test-1234")).status).toBe(200);
+  expect(state("ver_s1")).toBe("needs_key");
+  // turning Team use on with no speech key wakes nothing
+  expect((await team(true)).status).toBe(200);
+  expect(state("ver_s1")).toBe("needs_key");
+  await team(false);
+  // saving a server speech key wakes parked transcripts, not descriptions
+  expect((await put("DEEPGRAM_API_KEY", "dg-server-1234")).status).toBe(200);
+  expect([state("ver_s1"), state("ver_s2")]).toEqual(["queued", "needs_key"]);
+
+  // a transcript parked while Team use was off wakes when Team use is turned on with the key already set
+  park("ver_s3");
+  expect((await team(false)).status).toBe(200);
+  expect(state("ver_s3")).toBe("needs_key");
+  expect((await team(true)).status).toBe(200);
+  expect([state("ver_s3"), state("ver_s2")]).toEqual(["queued", "needs_key"]);
+
+  await team(false);
+  await put("DEEPGRAM_API_KEY", null);
+  await put("PERPLEXITY_API_KEY", null);
+});

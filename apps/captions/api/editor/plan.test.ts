@@ -29,11 +29,11 @@ const { saveTranscript } = await import("../library/transcribe");
 const { enqueueJob } = await import("../library/jobs");
 const { readMeta } = await import("../review");
 const { NO_SPEECH } = await import("./analyze");
-const { APART_S, briefMaxS, byAction, isPlanned, lengthOf, MIN_SHOT_S, openerOf, parsePlans, planPrompt, planStep, planTimeline, repairPlan, shotPool, snapCuts, sourceSpan, speechShare, UNDER_DB } = await import("./plan");
+const { APART_S, briefMaxS, byAction, isPlanned, lengthOf, MIN_SHOT_S, NO_SHOTS, openerOf, parsePlans, planPrompt, planStep, planTimeline, repairPlan, shotPool, snapCuts, sourceSpan, speechShare, UNDER_DB } = await import("./plan");
 const { toOtio } = await import("./otio");
 const { toFcpxml } = await import("./fcpxml");
 const { qaOf } = await import("./qa");
-const { createEdit, readDraft, readEdit, readStep } = await import("./store");
+const { createEdit, readDraft, readEdit, readStep, saveEdit } = await import("./store");
 const { tick } = await import("./worker");
 const { songBeats } = await import("./index");
 
@@ -525,6 +525,10 @@ describe("footage where nobody speaks reaches Review", () => {
     expect(made.v1!.notes).toContain("The AI's plan had no shot that can be used: the footage is cut in turn instead");
     // nothing was planned by the AI: no line saying it planned one of the two
     expect(readStep(e.id, "plan")!.notes.join(" ")).not.toContain("versions asked for");
+    // a revise with no shots still fails, so a cut-in-turn fallback can never replace the last version
+    await saveEdit({ ...readEdit(e.id)!, feedback: [{ at: Date.now(), from: "chat", text: "Make it punchier", by: "mem-a" }] });
+    await expect(planStep({ edit: readEdit(e.id)!, job: { id: 0, actor: "mem-a" } as never, variant: "", signal: new AbortController().signal }, [])).rejects.toThrow(NO_SHOTS);
+    expect(readStep(e.id, "shots")).toEqual(made);
     // any other failure of the AI still ends the step
     vi.mocked(completeWithFallback).mockRejectedValue(new Error("AI is not configured"));
     await expect(planStep({ edit: readEdit(e.id)!, job: { id: 0, actor: "mem-a" } as never, variant: "", signal: new AbortController().signal }, [])).rejects.toThrow("AI is not configured");

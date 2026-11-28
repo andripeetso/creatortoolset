@@ -76,6 +76,11 @@ serviceKeysApp.put("/team-use", async (c) => {
   const b = (await c.req.json().catch(() => null)) as { on?: unknown } | null;
   if (typeof b?.on !== "boolean") return c.json({ error: "Turn Team use on or off" }, 400);
   persist({ ...saved, teamUse: b.on });
+  // sharing a server speech key that was already set wakes transcripts parked while Team use was off
+  if (b.on) {
+    const speech = (["DEEPGRAM_API_KEY", "OPENAI_API_KEY"] as const).find((k) => process.env[k]);
+    if (speech) await keySaved(speech);
+  }
   return c.json({ ok: true });
 });
 

@@ -184,8 +184,8 @@ describe("an account's workspace", () => {
     vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
       if (init?.method) sent.push([`${init.method} ${url}`, JSON.parse(String(init.body ?? "null"))]);
       const at = String(url).split("?")[0]!;
-      // a handle is read with the Apify key: refused while there is none
-      if (at === "/api/connectors/handles" && !saved.apify.configured) return new Response(JSON.stringify({ error: NEEDS_KEY }), { status: 409 });
+      // Instagram by handle refuses without a working Apify key (POST /api/instagram/accounts)
+      if (at === "/api/instagram/accounts" && (!saved.apify.configured || saved.apify.valid === false)) return new Response(JSON.stringify({ error: NEEDS_KEY }), { status: 409 });
       const answers: Record<string, unknown> = {
         "/api/connectors": saved,
         // the Apify key row reads the key as the server has it, and its usage: no use yet
@@ -268,7 +268,7 @@ describe("an account's workspace", () => {
         input.dispatchEvent(new Event("input", { bubbles: true }));
       });
     await open({ apify: { configured: false, valid: null } });
-    await press(document.body.querySelector('button[aria-label="Add TikTok"]') as HTMLElement);
+    await press(document.body.querySelector('button[aria-label="Add Instagram"]') as HTMLElement);
     const dialog = document.body.querySelector('[role="dialog"]')!;
     await type(dialog.querySelector("#add-account-handle")!, "@tinyx");
     await press(dialog.querySelector('button[type="submit"]') as HTMLElement);
@@ -280,7 +280,7 @@ describe("an account's workspace", () => {
     saved.apify = { configured: true, valid: true }; // the server takes it
     await press(keyDialog.querySelector('button[type="submit"]') as HTMLElement);
     // the key's own Save is not the handle's Add: one try at the handle, before the key
-    expect(sent.map(([what]) => what)).toEqual(["POST /api/connectors/handles", "PUT /api/instagram/apify"]);
+    expect(sent.map(([what]) => what)).toEqual(["POST /api/instagram/accounts", "PUT /api/instagram/apify"]);
     expect(dialog.querySelector('[role="alert"]')).toBeNull();
     // the row is still there, and with it the question its save asks
     expect(dialog.textContent).toContain("Apify");
@@ -289,7 +289,7 @@ describe("an account's workspace", () => {
 
   it("a key Apify refuses leaves the line that asked for a key", async () => {
     await open({ apify: { configured: false, valid: null } });
-    await press(document.body.querySelector('button[aria-label="Add TikTok"]') as HTMLElement);
+    await press(document.body.querySelector('button[aria-label="Add Instagram"]') as HTMLElement);
     const dialog = document.body.querySelector('[role="dialog"]')!;
     const input = dialog.querySelector("#add-account-handle")!;
     await act(async () => {
