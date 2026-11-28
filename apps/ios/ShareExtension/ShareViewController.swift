@@ -61,13 +61,15 @@ final class ShareModel: ObservableObject {
 
     /// Reads the shared items while the picker is up, and checks for your own post.
     func load(_ items: [NSExtensionItem]) {
-        link = ShareLink.saved()
-        if link == nil { step = .notConnected }
         text = Task { await Self.sharedText(items) }
-        guard let link else { return }
         step = .checking
-        Task { await checkOwnPost() }
         Task {
+            link = await ShareLink.reachable()
+            guard let link else {
+                step = .notConnected
+                return
+            }
+            Task { await checkOwnPost() }
             guard let ws = try? await link.workspace() else { return }
             projects = ws.projects
             let last = UserDefaults.standard.string(forKey: Self.lastProject)

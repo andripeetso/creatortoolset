@@ -28,6 +28,43 @@ struct ShareLink {
         }
     }
 
+    /// The server in use on the first of its routes that answers as that server now. The app forgets the route it last
+    /// connected over when the network changes, and the first in its order can be one this network can't reach (a
+    /// tailnet address with the tailnet off), so each is asked at once and the first in order that answers is taken.
+    static func reachable(_ entry: ServerEntry? = ServerRegistry.read().current, timeout: TimeInterval = 5) async -> ShareLink? {
+        guard let entry else { return nil }
+        let order = tryOrder(entry)
+        let answered = await withTaskGroup(of: String?.self) { group in
+            for route in order {
+                group.addTask { await answers(route.url, serverId: entry.provisional ? nil : entry.serverId, timeout: timeout) ? route.id : nil }
+            }
+            var out = Set<String>()
+            for await id in group { if let id { out.insert(id) } }
+            return out
+        }
+        guard let route = order.first(where: { answered.contains($0.id) }) ?? entry.activeRoute else { return nil }
+        return saved((route.url, entry, ServerRegistry.credential(entry.serverId, route: route)))
+    }
+
+    /// The routes to ask: the one the app last connected over, then the rest in the app's order. A plain HTTP address
+    /// off the tailnet only when the answer can say it is this server.
+    static func tryOrder(_ entry: ServerEntry) -> [Route] {
+        let first = entry.activeRoute
+        let rest = Routes.usable(entry.routes).filter { $0.id != first?.id && (!$0.needsVerifiedServer || !entry.provisional) }
+        return (first.map { [$0] } ?? []) + rest
+    }
+
+    /// Whether `base` answers as a Creator Toolset server (`serverId` nil: any).
+    private static func answers(_ base: URL, serverId: String?, timeout: TimeInterval) async -> Bool {
+        struct Descriptor: Decodable { let serverId: String? }
+        var request = URLRequest(url: URL(string: ".well-known/creator-toolset/server", relativeTo: base)?.absoluteURL ?? base)
+        request.timeoutInterval = timeout
+        guard let (data, response) = try? await session.data(for: request),
+              (response as? HTTPURLResponse)?.statusCode == 200,
+              let descriptor = try? JSONDecoder().decode(Descriptor.self, from: data) else { return false }
+        return serverId == nil || descriptor.serverId == serverId
+    }
+
     private static let session: URLSession = {
         let config = URLSessionConfiguration.ephemeral
         config.httpShouldSetCookies = false

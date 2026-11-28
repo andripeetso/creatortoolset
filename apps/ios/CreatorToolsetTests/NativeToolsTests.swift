@@ -447,4 +447,14 @@ final class NativeToolsTests: XCTestCase {
         XCTAssertEqual(link?.server, URL(string: "http://192.0.2.7:43190/"))
         XCTAssertEqual(link?.credential?.token, "cts_1")
     }
+
+    func testTheShareSheetAsksEveryRouteWhenTheLastOneIsForgotten() {
+        // a network change cleared the route last used; the tailnet one comes first but may be off on this phone
+        let tailnet = Route(id: "learned:http://100.64.0.9:43190", url: URL(string: "http://100.64.0.9:43190/")!, learned: true, network: "tailnet")
+        let web = Route.paired(URL(string: "https://studio.example.com/")!)
+        var entry = ServerEntry(serverId: "b", label: "B", routes: [tailnet, web], home: web.url)
+        XCTAssertEqual(ShareLink.tryOrder(entry).map(\.id), [tailnet.id, web.id])
+        entry.activeRouteId = web.id
+        XCTAssertEqual(ShareLink.tryOrder(entry).map(\.id), [web.id, tailnet.id])
+    }
 }
