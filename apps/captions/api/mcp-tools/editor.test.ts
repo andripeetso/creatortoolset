@@ -445,4 +445,20 @@ describe.skipIf(rootReplaced)("the AI Editor's page buttons as tools", () => {
     expect((await cut([{ key: "V1:0", tail: -3 }])).text).toBe("This version is still being made");
     await site(`/api/editor/${id}/stop`, "POST");
   });
+
+  it("editor_timeline makes an edit with chosen clips laid end to end on v1 and returns its direct timeline link", async () => {
+    libraryDb()
+      .prepare("UPDATE asset_versions SET probe = ? WHERE id = 'ver_a'")
+      .run(JSON.stringify({ duration: 4, width: 1920, height: 1080, fps: 25, rotation: 0, format: "mp4", vcodec: "h264", pixFmt: "yuv420p", acodec: "aac" }));
+    const res = await tool(anaKey, "editor_timeline", { name: "Tiny clips", sources: ["ver_a"] });
+    expect(res.error).toBe(false);
+    expect(res.value).toMatchObject({ draft: "v1", placed: 1, link: expect.stringMatching(/\/editor\/[^/]+\/v1$/) });
+    const tl = readDraft(res.value.id, "v1")!.timeline;
+    expect(tl.width).toBe(1920);
+    expect(tl.height).toBe(1080);
+    expect(tl.tracks.V1.items).toEqual([{ src: "ver_a", in: 0, len: 100, rec: 0, link: "c1" }]);
+    expect(tl.tracks.A1.items).toEqual([{ src: "ver_a", in: 0, len: 100, rec: 0, link: "c1" }]);
+    // another account's clip is refused
+    expect(await tool(nicoKey, "editor_timeline", { sources: ["ver_a"] })).toMatchObject({ error: true });
+  });
 });

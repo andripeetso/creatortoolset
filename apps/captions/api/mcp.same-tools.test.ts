@@ -34,7 +34,7 @@ const toolsOf = async (authorization: string) =>
 
 const file = path.join(import.meta.dirname, "golden", "assistant-no-style.json");
 /** The tools every account gets since: the list is main's with these in it and nothing else moved. */
-const ADDED = ["upload_file", "workspace_files", "workshop_project_update", "channel_posts", "find_sound_effects", "editor_feedback", "editor_cut", "editor_style_save", "editor_style_propose", "animation_style_save", "voice_make", "design_get", "design_make", "design_update", "carousel_style_save"];
+const ADDED = ["upload_file", "workspace_files", "workshop_project_update", "channel_posts", "find_sound_effects", "editor_feedback", "editor_cut", "editor_timeline", "editor_style_save", "editor_style_propose", "animation_style_save", "voice_make", "design_get", "design_make", "design_update", "carousel_style_save"];
 /** The tools only the app's own assistant gets since: an outside AI key is never given them, so its list does not move. */
 const DOCK_ADDED = ["folder_list", "chats_list", "chat_read"];
 /** The assistant's tools an outside AI key gets since, with the same definition as the dock's. */
@@ -115,8 +115,10 @@ describe.skipIf(serverPlugins.length > 0)("an account with no editing style", ()
     // a style's pictures: 145 bytes of description and the field)
     // editor_style_propose adds 483 (a style suggested from a reference video, pictures or finished edits, which only the
     // person keeps: its description, from_video, pictures and from_finished)
-    expect(bytes(dock) - bytes(main(dock))).toBe(10677);
+    // editor_timeline adds 378 (make a timeline directly with optional sources laid end to end on v1, no AI cut: its
+    // 203-byte description, name and sources)
+    expect(bytes(dock) - bytes(main(dock))).toBe(11055);
     // an outside key gets those and use_file (1465, as the dock lists it, with its sound for a song or a sound effect): a file its AI sent with upload_file goes on from there
-    expect(bytes(outside) - bytes(mainOutside(outside))).toBe(10613);
+    expect(bytes(outside) - bytes(mainOutside(outside))).toBe(10991);
   });
 });

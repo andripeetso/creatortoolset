@@ -89,6 +89,15 @@ describe.skipIf(rootReplaced)("AI Editor: edits and who sees them", () => {
     expect(await get()).toEqual(["fi"]);
     await call("maker", "PATCH", `/api/editor/${id}`, { languages: null });
     expect(await get()).toEqual([]);
+    // once analyze has run, changing the spoken language re-queues analyze so the footage is read in that language
+    enqueueJob(libraryDb(), "maker", `${id}:`, "analyze", "maker", false, "edit_jobs");
+    libraryDb().prepare("UPDATE edit_jobs SET state = 'done' WHERE edit_id = ? AND kind = 'analyze'").run(id);
+    const after = await json<Edit>(call("maker", "PATCH", `/api/editor/${id}`, { languages: ["fi"] }));
+    expect(after.jobs).toMatchObject([{ kind: "analyze", state: "queued" }]);
+    // patching the same language again does not re-queue a done analyze
+    libraryDb().prepare("UPDATE edit_jobs SET state = 'done' WHERE edit_id = ? AND kind = 'analyze'").run(id);
+    const same = await json<Edit>(call("maker", "PATCH", `/api/editor/${id}`, { languages: ["fi"] }));
+    expect(same.jobs).toMatchObject([{ kind: "analyze", state: "done" }]);
   });
 
   it("the creator runs, stops and deletes an edit; nobody else reaches it", async () => {
@@ -481,5 +490,27 @@ describe.skipIf(rootReplaced)("Editor: projects, versions and the timeline page"
     expect((await call("other", "POST", `/api/editor/${id}/restore`)).status).toBe(404);
     expect((await call("maker", "POST", `/api/editor/${id}/restore`)).status).toBe(200);
     expect((await call("maker", "GET", `/api/editor/${id}`)).status).toBe(200);
+  });
+
+  it("POST /empty with sources lays probed clips end to end on v1 and skips unprobed ones", async () => {
+    libraryDb()
+      .prepare("UPDATE asset_versions SET probe = ? WHERE id = 'ver_a1'")
+      .run(JSON.stringify({ duration: 3, width: 1080, height: 1920, fps: 30, rotation: 0, format: "mp4", vcodec: "h264", pixFmt: "yuv420p", acodec: "aac" }));
+    libraryDb()
+      .prepare("UPDATE asset_versions SET probe = ? WHERE id = 'ver_a2'")
+      .run(JSON.stringify({ duration: 2, width: 1920, height: 1080, fps: 25, rotation: 0, format: "mp4", vcodec: "h264", pixFmt: "yuv420p" }));
+    const res = await call("maker", "POST", "/api/editor/empty", { name: "All clips", sources: ["ver_a1", "ver_a2"] });
+    expect(res.status).toBe(201);
+    const made = await json<{ id: string; draft: string; placed: number }>(res);
+    expect(made).toMatchObject({ draft: "v1", placed: 2 });
+    const tl = readDraft(made.id, "v1")!.timeline;
+    expect(tl).toMatchObject({ fps: 30, width: 1080, height: 1920 });
+    expect(tl.tracks.V1.items).toEqual([
+      { src: "ver_a1", in: 0, len: 90, rec: 0, link: "c1" },
+      { src: "ver_a2", in: 0, len: 60, rec: 90 },
+    ]);
+    expect(tl.tracks.A1.items).toEqual([{ src: "ver_a1", in: 0, len: 90, rec: 0, link: "c1" }]);
+    // another account's clip is refused
+    expect((await call("maker", "POST", "/api/editor/empty", { sources: ["ver_b"] })).status).toBe(404);
   });
 });

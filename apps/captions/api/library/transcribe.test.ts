@@ -128,4 +128,20 @@ describe("library transcripts with words", () => {
     expect(wordsOf(db, "ver_1")).toBeNull();
     expect(wordsOf(db, "ver_none")).toBeNull();
   });
+
+  it("hearSound sends the workspace's video language when no edit language override is set", async () => {
+    const { mkdirSync, writeFileSync } = await import("node:fs");
+    const { libraryDb } = await import("./db");
+    const { hearSound } = await import("./transcribe");
+    const projects = path.join(dir, "workshop", "projects");
+    mkdirSync(projects, { recursive: true });
+    writeFileSync(path.join(projects, "ws_fi.json"), JSON.stringify({ id: "ws_fi", owner: "local", name: "Tiny Acrobatics", createdAt: 1, updatedAt: 1, languages: ["fi"] }));
+    libraryDb().exec(`
+      INSERT OR REPLACE INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES ('lib_fi', 'local', 'FI', 'local', '{"projectId":"ws_fi"}', 0);
+      INSERT OR REPLACE INTO assets (id, library_id, kind, title, created_by, created_at) VALUES ('ast_fi', 'lib_fi', 'video', 'Take', 'local', 0);
+      INSERT OR REPLACE INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, state, created_by, created_at) VALUES ('ver_fi', 'ast_fi', 1, 'k', 1, 'x', 'ready', 'local', 0);
+    `);
+    await hearSound("ver_fi", "local", wav);
+    expect(urls[0]).toMatch(/language=fi/);
+  });
 });

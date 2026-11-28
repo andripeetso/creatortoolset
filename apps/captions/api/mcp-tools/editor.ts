@@ -68,6 +68,12 @@ export const editorTools: ToolModule = {
         "A draft's timeline as Review shows its newest preview: each clip with its key, place and words, and how to write edits. With edits, cuts them into the draft with no AI (take out, trim, lengthen, split, move B-roll) and makes its next version: all of them as given, or none.",
       inputSchema: { type: "object", properties: { edit, draft: str, edits: { type: "array", items: { type: "object" } } }, required: ["edit", "draft"] },
     },
+    {
+      name: "editor_timeline",
+      description:
+        "Make an edit with a timeline right away (no AI cut): sources (optional library version_ids, up to 50) are laid end to end on v1, ready to open and edit on the timeline. Leave sources out for an empty timeline.",
+      inputSchema: { type: "object", properties: { name: str, sources: { type: "array", items: str } } },
+    },
     // editing styles: make or change one, put one on an edit (editor-styles.ts)
     ...editorStyleTools.defs,
     // a video with nothing filmed starts here: the script spoken, saved as a take (api/editor/voice.ts)
@@ -222,6 +228,19 @@ export const editorTools: ToolModule = {
         link: `${ctx.origin}/review/${p.assetId}`,
       };
     },
+    editor_timeline: async (a, ctx) => {
+      const sources = Array.isArray(a.sources) ? a.sources.map(String) : undefined;
+      const made = await ctx.json("/api/editor/empty", "POST", { ...(a.name ? { name: String(a.name) } : {}), ...(sources?.length ? { sources } : {}) });
+      const id = String(made.id);
+      const draft = String(made.draft ?? "v1");
+      return {
+        id,
+        draft,
+        ...(typeof made.placed === "number" ? { placed: made.placed } : {}),
+        ...(typeof made.skipped === "number" && made.skipped > 0 ? { skipped: made.skipped } : {}),
+        link: `${ctx.origin}/editor/${id}/${draft}`,
+      };
+    },
     voice_make: async (a, ctx) => {
       if (!a.text) throw new ToolError("Give text: what the voice says.");
       const v = await ctx.json("/api/editor/voice", "POST", pick(a, ["text", "voice", "name"]));
@@ -246,6 +265,7 @@ export const editorTools: ToolModule = {
     editor_delete: "Asking before the edit goes to the trash",
     editor_feedback: "Keeping the notes on the cut",
     editor_cut: "Working on the cut's timeline",
+    editor_timeline: "Making a timeline",
     voice_make: "Making the voice",
     ...editorStyleTools.steps,
   },

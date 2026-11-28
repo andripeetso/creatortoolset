@@ -383,7 +383,7 @@ export function keySound(actor: string | null, versionId: string): "wav" | "m4a"
 /** The words of `file`, the sound a computer cut from its own copy of a library version (soundArgs), on the actor's key. */
 export async function hearSound(versionId: string, actor: string | null, file: string): Promise<Transcribed & { provider: Route["provider"] }> {
   const route = versionRoute(actor, versionId);
-  const languages = askVersionIn.get(versionId)?.languages;
+  const languages = askVersionIn.get(versionId)?.languages ?? (await libraryLanguages(libraryDb(), versionId, actor));
   if (route.provider === "deepgram") return { ...(await deepgram(file, actor ?? "", true, languages)), provider: "deepgram" };
   if (route.provider === "openai") return { ...(await openai(file, route.key, languages, actor)), provider: "openai" };
   throw new Error("This transcript is not made on a key");

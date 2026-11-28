@@ -136,8 +136,8 @@ export const getDraft = (id: string, name: string) => send<Draft>(`${base(id)}/d
 export const duplicateVersion = (id: string, name: string) => send<{ name: string }>(`${base(id)}/drafts/${name}/duplicate`, "POST");
 /** Rename ({ label }, "" clears) or delete ({ trashed: true }; false is its Undo) a version. */
 export const markVersion = (id: string, name: string, change: { label: string } | { trashed: boolean }) => send<Record<string, VersionMark>>(`${base(id)}/versions/${name}`, "PATCH", change);
-/** An edit with no footage and one empty timeline. */
-export const createEmpty = (body: { name?: string }) => send<{ id: string; draft: string }>("/api/editor/empty", "POST", body);
+/** An edit with one timeline (empty, or with `sources` laid end to end on it). */
+export const createEmpty = (body: { name?: string; sources?: string[] }) => send<{ id: string; draft: string }>("/api/editor/empty", "POST", body);
 export const restoreEdit = (id: string) => send<{ ok: true }>(`${base(id)}/restore`, "POST");
 /** A version's cards (contracts/editor.ts): a card's still, the 👍 that keeps it in the animation style, and making them again. */
 export const cardStillUrl = (id: string, variant: string, card: string) => `${base(id)}/cards/${variant}/${card}/still`;

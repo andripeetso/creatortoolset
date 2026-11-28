@@ -203,21 +203,62 @@ function newestStill(id: string, names: string[]): { asset: string; n: number } 
   return best && { asset: best.asset, n: best.n };
 }
 
+/** A timeline with `ids` laid end to end in order: video on V1 (with linked A1 when it has sound), audio on A1. */
+function clipsTimeline(name: string, ids: string[], size?: { w: number; h: number } | null): { timeline: Timeline; placed: number; skipped: number } {
+  const db = libraryDb();
+  const ready: { id: string; src: ReturnType<typeof sourceOf>; sound: boolean }[] = [];
+  for (const id of ids) {
+    const row = db.prepare("SELECT a.title, v.probe FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(id) as { title: string; probe: string | null } | undefined;
+    const probe = row?.probe ? (JSON.parse(row.probe) as ProbeSummary) : null;
+    if (!row || !probe?.duration) continue;
+    ready.push({ id, src: sourceOf(id, row.title, probe), sound: !!probe.acodec });
+  }
+  const lead = ready.find((r) => r.src.w > 0)?.src ?? ready[0]?.src;
+  const fps = lead?.fps || 25;
+  const width = size?.w || lead?.w || 1080;
+  const height = size?.h || lead?.h || 1920;
+  const timeline: Timeline = { name, fps, width, height, sources: {}, tracks: emptyTracks(), markers: [] };
+  let rec = 0;
+  let placed = 0;
+  for (const { id, src, sound } of ready) {
+    if (!(src.w > 0 || sound)) continue;
+    const len = Math.max(1, Math.floor((src.dur * fps) / src.fps));
+    timeline.sources[id] = src;
+    placed++;
+    const link = `c${placed}`;
+    if (src.w > 0) {
+      timeline.tracks.V1.items.push({ src: id, in: 0, len, rec, ...(sound ? { link } : {}) });
+      if (sound) timeline.tracks.A1.items.push({ src: id, in: 0, len, rec, link });
+    } else {
+      timeline.tracks.A1.items.push({ src: id, in: 0, len, rec });
+    }
+    rec += len;
+  }
+  return { timeline, placed, skipped: ids.length - placed };
+}
+
 /**
- * An edit with no footage and one empty timeline (v1) in the workspace the person works in, for clips put on it by hand
- * (POST /:id/drafts/:name/clips). Its working size: its default style's, else 1080 × 1920; 25 fps.
+ * An edit with one timeline (v1) in the workspace the person works in, for editing by hand. With no `sources`, v1 is
+ * empty (default style's size, else 1080 × 1920; 25 fps). With `sources` (library version ids in the same workspace),
+ * those clips are laid end to end on v1 so the timeline opens with all of them ready.
  */
 editorApp.post("/empty", async (c) => {
   const user = c.get("user");
   const b = await body(c);
   const projectId = await resolveProjectId(user, typeof b.projectId === "string" ? b.projectId : null);
   const owner = (projectId && (await getWorkspace(user)).projects.find((p) => p.id === projectId)?.owner) || user.username;
-  const e = await createEdit(user.username, typeof b.name === "string" && b.name.trim() ? { name: b.name } : {}, viaTool(c), projectId, homeOf(owner));
+  const sources = Array.isArray(b.sources) ? [...new Set(b.sources.filter((s): s is string => typeof s === "string"))] : [];
+  if (sources.length > MAX_SOURCES) return c.json({ error: `An edit takes up to ${MAX_SOURCES} clips`, code: "invalid" }, 400);
+  const name = typeof b.name === "string" && b.name.trim() ? { name: b.name } : {};
+  const e = sources.length
+    ? await createEdit(user.username, { ...name, sources }, viaTool(c), projectId)
+    : await createEdit(user.username, name, viaTool(c), projectId, homeOf(owner));
   if (!e) return notFound(c);
-  const timeline: Timeline = { name: `${e.name} v1`, fps: 25, width: e.size?.w ?? 1080, height: e.size?.h ?? 1920, sources: {}, tracks: emptyTracks(), markers: [] };
+  const built = sources.length ? clipsTimeline(`${e.name} v1`, e.sources, e.size) : null;
+  const timeline: Timeline = built?.timeline ?? { name: `${e.name} v1`, fps: 25, width: e.size?.w ?? 1080, height: e.size?.h ?? 1920, sources: {}, tracks: emptyTracks(), markers: [] };
   await saveDraft(e.id, "v1", { timeline, notes: [] });
   await fileIntoProjects(user.username, () => listFor(user));
-  return c.json({ id: e.id, draft: "v1" }, 201);
+  return c.json({ id: e.id, draft: "v1", ...(built ? { placed: built.placed, ...(built.skipped ? { skipped: built.skipped } : {}) } : {}) }, 201);
 });
 
 // where footage picked from this computer is filed (api/editor/ingest.ts); registered before /:id
@@ -478,6 +519,10 @@ editorApp.patch("/:id", async (c) => {
     if (byTool) e.byTool = byTool;
     else delete e.byTool;
     await saveEdit(e);
+    // another spoken language on an edit that was already analyzed: read its footage again in that language
+    if (patch.languages !== undefined && JSON.stringify(patch.languages) !== JSON.stringify(now.languages ?? []) && jobsOf(e.id).some((j) => j.kind === "analyze")) {
+      enqueueJob(libraryDb(), e.workspaceId, `${e.id}:`, "analyze", r.user, true, "edit_jobs");
+    }
     // another voice: every version's sound is made again with it, the same cut (voice-mix.ts), as the next Review version
     if (patch.voice && JSON.stringify(patch.voice) !== JSON.stringify(now.voice ?? null)) await recutSound(e, draftNames(e.id).filter((n) => !e.marks?.[n]?.trashedAt), r.user);
     return e;

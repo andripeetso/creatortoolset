@@ -86,6 +86,9 @@ describe("sorting the clips in a library", () => {
     d().prepare("INSERT INTO jobs (library_id, version_id, kind, state, actor) VALUES ('lib_r', ?, 'transcribe', 'queued', 'ana')").run(v);
     expect(sortRoll(d(), v)).toBe(null);
     expect(rollOf(v)).toBe(null); // not B while its words are still to come
+    d().prepare("UPDATE jobs SET state = 'needs_key' WHERE version_id = ?").run(v);
+    expect(sortRoll(d(), v)).toBe(null);
+    expect(rollOf(v)).toBe(null); // not B while parked waiting for a speech key either
     saveTranscript(d(), v, "device", "en", talk);
     d().prepare("UPDATE jobs SET state = 'done' WHERE version_id = ?").run(v);
     sortAfter({ kind: "transcribe", version_id: v });

@@ -165,11 +165,20 @@ describe("a job parked by a key's spent budget", () => {
     park("ver_k1", "transcribe", "u1");
     park("ver_k2", "transcribe", "u2");
     park("ver_k3", "describe", "u1"); // waits for an AI provider, not a key
+    const parkEdit = (edit: string, kind: string, actor: string) => {
+      enqueueJob(db, "ws_k", `${edit}:`, kind, actor, false, "edit_jobs");
+      const id = (db.prepare("SELECT id FROM edit_jobs WHERE edit_id = ? AND kind = ?").get(edit, kind) as { id: number }).id;
+      parkJob(db, id, "Add your Deepgram key in Settings → API keys", "edit_jobs", claimJob(db, 300, 1000, "edit_jobs", undefined, id)!.claim_id);
+    };
+    parkEdit("ed_k1", "analyze", "u1");
+    parkEdit("ed_k2", "script", "u1"); // waits for an AI provider, not a speech key
     const of = (ver: string) => db.prepare("SELECT state, attempts, error FROM jobs WHERE version_id = ?").get(ver) as { state: string; attempts: number; error: string | null };
+    const ofEdit = (edit: string) => db.prepare("SELECT state, attempts, error FROM edit_jobs WHERE edit_id = ?").get(edit) as { state: string; attempts: number; error: string | null };
     expect(wakeKeyStops(db, "ANTHROPIC_API_KEY", "u1")).toBe(0);
-    expect(wakeKeyStops(db, "DEEPGRAM_API_KEY", "u1")).toBe(1);
+    expect(wakeKeyStops(db, "DEEPGRAM_API_KEY", "u1")).toBe(2);
     expect(of("ver_k1")).toEqual({ state: "queued", attempts: 0, error: null });
-    expect([of("ver_k2").state, of("ver_k3").state]).toEqual(["needs_key", "needs_key"]);
+    expect(ofEdit("ed_k1")).toEqual({ state: "queued", attempts: 0, error: null });
+    expect([of("ver_k2").state, of("ver_k3").state, ofEdit("ed_k2").state]).toEqual(["needs_key", "needs_key", "needs_key"]);
     expect(wakeKeyStops(db, "OPENAI_API_KEY")).toBe(1);
     expect([of("ver_k2").state, of("ver_k3").state]).toEqual(["queued", "needs_key"]);
   });

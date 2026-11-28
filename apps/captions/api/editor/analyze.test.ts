@@ -201,6 +201,26 @@ describe("AI Editor analyze", () => {
     // the next look, while that transcript is still to come: it waits, it does not fail on the old silence
     await tick(Date.now() + 60_000);
     expect(job()).toMatchObject({ state: "queued" });
+    // if that re-transcribe parks for a missing key, analyze parks in needs_key instead of falling through to No speech found
+    d.prepare("UPDATE jobs SET state = 'needs_key', error = 'Add your Deepgram (or OpenAI) key in Settings → API keys' WHERE version_id = 'ver_early' AND kind = 'transcribe'").run();
+    await tick(Date.now() + 120_000);
+    expect(job()).toMatchObject({ state: "needs_key", error: expect.stringMatching(/Deepgram|OpenAI/) });
+    // if that re-transcribe failed, analyze fails with its error instead of falling through
+    d.prepare("UPDATE jobs SET state = 'failed', error = 'bad audio' WHERE version_id = 'ver_early' AND kind = 'transcribe'").run();
+    d.prepare("UPDATE edit_jobs SET state = 'queued', run_after = 0, attempts = 0, error = NULL").run();
+    await tick(Date.now() + 180_000);
+    expect(job()).toMatchObject({ state: "queued", error: expect.stringContaining("bad audio") });
+    d.prepare("DELETE FROM edit_jobs").run();
+  });
+
+  it("a take transcribed in another language than the edit names is heard once more in that language even when it had words", async () => {
+    const d = libraryDb();
+    saveTranscript(d, "ver_early", "deepgram", "en", [], [word("wrong", 0, 0.4), word("words", 0.5, 0.9)]);
+    d.prepare("UPDATE jobs SET state = 'done' WHERE version_id = 'ver_early' AND kind = 'transcribe'").run();
+    const { job } = await analyze(["ver_early"], Date.now(), { languages: ["fi"] });
+    expect(askVersionIn.get("ver_early")).toEqual({ by: "mem-a", languages: ["fi"] });
+    expect(transcribeJob("ver_early")).toEqual({ state: "queued", actor: "mem-a" });
+    expect(job()).toMatchObject({ state: "queued" });
     d.prepare("DELETE FROM edit_jobs").run();
   });
 

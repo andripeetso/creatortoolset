@@ -468,7 +468,12 @@ describe("footage where nobody speaks reaches Review", () => {
     d.prepare("INSERT INTO descriptions (version_id, source, text, provider, created_at, roll) VALUES ('ver_long', 'ai', 'A view', 'mac', 0, 'b')").run();
     expect(allBroll(edit({ sources: ["ver_take", "ver_long"] }))).toBe(true);
     expect(isPlanned(edit({ sources: ["ver_take", "ver_long"] }), said)).toBe(true);
-    d.exec("UPDATE assets SET roll = NULL, filed_roll = NULL WHERE id IN ('ast_take', 'ast_long'); DELETE FROM descriptions WHERE version_id = 'ver_long'");
+    // an AI description calling it B-roll while transcription is still parked or queued does not skip transcription
+    d.prepare("INSERT INTO jobs (library_id, version_id, kind, state, actor) VALUES ('lib_a', 'ver_long', 'transcribe', 'needs_key', 'mem-a')").run();
+    expect(allBroll(edit({ sources: ["ver_take", "ver_long"] }))).toBe(false);
+    d.prepare("UPDATE jobs SET state = 'queued' WHERE version_id = 'ver_long' AND kind = 'transcribe'").run();
+    expect(allBroll(edit({ sources: ["ver_take", "ver_long"] }))).toBe(false);
+    d.exec("DELETE FROM jobs WHERE version_id = 'ver_long'; UPDATE assets SET roll = NULL, filed_roll = NULL WHERE id IN ('ast_take', 'ast_long'); DELETE FROM descriptions WHERE version_id = 'ver_long'");
   });
 
   it("is analyzed with no refusal, planned to the song among its sources, drawn and filed in Review", async () => {

@@ -77,7 +77,7 @@ export function sortRoll(db: DatabaseSync, versionId: string): Roll | null {
     .prepare(
       `SELECT a.id AS asset_id, a.kind, a.filed_roll, ${FINISHED} AS finished, a.current_version_id = v.id AS current, v.probe,
         (SELECT segments FROM transcripts t WHERE t.version_id = v.id) AS segments,
-        EXISTS (SELECT 1 FROM jobs j WHERE j.version_id = v.id AND j.kind = 'transcribe' AND j.state IN ('queued', 'running')) AS hearing,
+        EXISTS (SELECT 1 FROM jobs j WHERE j.version_id = v.id AND j.kind = 'transcribe' AND j.state IN ('queued', 'running', 'needs_key')) AS hearing,
         (SELECT roll FROM descriptions d WHERE d.version_id = v.id AND d.source = 'ai') AS ai
        FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?`,
     )

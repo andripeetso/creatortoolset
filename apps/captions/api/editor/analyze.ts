@@ -274,17 +274,32 @@ export async function analyzeGate({ edit, job }: Pick<StepContext, "edit" | "job
     const languages = spoken;
     askVersionIn.set(row.id, { by: asker, ...(languages ? { languages } : {}) });
     const words = wordsOf(db, row.id);
-    // a take heard as silence (asked in another language) is heard once more in the language the edit names
-    if (words && languages && !words.length) {
+    const storedLang = words
+      ? ((db.prepare("SELECT language FROM transcripts WHERE version_id = ?").get(row.id) as { language: string | null } | undefined)?.language ?? null)
+      : null;
+    // a take heard as silence, or heard in another language than the edit names, is heard once more in that language
+    if (words && languages && (!words.length || (storedLang !== null && !languages.includes(storedLang)))) {
       const again = `${row.id}|${languages.join(",")}`;
       if (!askedAgain.has(again)) {
         askedAgain.add(again);
         enqueueJob(db, row.library_id, row.id, "transcribe", asker, true);
+        prepareFirst(row.id);
         wait = true;
         continue;
       }
-      const t = db.prepare("SELECT state FROM jobs WHERE version_id = ? AND kind = 'transcribe'").get(row.id) as { state: string } | undefined;
+      const t = db.prepare("SELECT state, error, actor FROM jobs WHERE version_id = ? AND kind = 'transcribe'").get(row.id) as
+        | { state: string; error: string | null; actor: string | null }
+        | undefined;
       if (t?.state === "queued" || t?.state === "running") {
+        wait = true;
+        waitingOn = deviceStatus(row.id) ?? waitingOn;
+        continue;
+      }
+      if (t?.state === "failed") throw new Error(`Could not transcribe “${row.title}” (${t.error ?? "no reason given"}): retry it in the Media Library`);
+      if (t?.state === "needs_key") {
+        if (t.actor === asker) versionRoute(asker, row.id);
+        enqueueJob(db, row.library_id, row.id, "transcribe", asker, true);
+        prepareFirst(row.id);
         wait = true;
         continue;
       }
@@ -300,8 +315,19 @@ export async function analyzeGate({ edit, job }: Pick<StepContext, "edit" | "job
         wait = true;
         continue;
       }
-      const t = db.prepare("SELECT state FROM jobs WHERE version_id = ? AND kind = 'transcribe'").get(row.id) as { state: string } | undefined;
+      const t = db.prepare("SELECT state, error, actor FROM jobs WHERE version_id = ? AND kind = 'transcribe'").get(row.id) as
+        | { state: string; error: string | null; actor: string | null }
+        | undefined;
       if (t?.state === "queued" || t?.state === "running") {
+        wait = true;
+        waitingOn = deviceStatus(row.id) ?? waitingOn;
+        continue;
+      }
+      if (t?.state === "failed") throw new Error(`Could not transcribe “${row.title}” (${t.error ?? "no reason given"}): retry it in the Media Library`);
+      if (t?.state === "needs_key") {
+        if (t.actor === asker) versionRoute(asker, row.id);
+        enqueueJob(db, row.library_id, row.id, "transcribe", asker, true);
+        prepareFirst(row.id);
         wait = true;
         continue;
       }

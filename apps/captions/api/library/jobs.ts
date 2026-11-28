@@ -233,9 +233,14 @@ const SPEECH_KEYS = new Set(["DEEPGRAM_API_KEY", "OPENAI_API_KEY"]);
 export function wakeKeyStops(db: DatabaseSync, env: string, actor?: string): number {
   if (!SPEECH_KEYS.has(env)) return 0;
   const own = actor === undefined ? { sql: "", args: [] } : { sql: " AND actor = ?", args: [actor] };
-  return Number(
+  const lib = Number(
     db.prepare(`UPDATE jobs SET state = 'queued', attempts = 0, error = NULL, run_after = 0 WHERE state = 'needs_key' AND kind = 'transcribe'${own.sql}`).run(...own.args).changes,
   );
+  // an AI Editor analyze step parked while its footage waited for a speech key wakes with those transcripts
+  const edits = Number(
+    db.prepare(`UPDATE edit_jobs SET state = 'queued', attempts = 0, error = NULL, run_after = 0 WHERE state = 'needs_key' AND kind = 'analyze'${own.sql}`).run(...own.args).changes,
+  );
+  return lib + edits;
 }
 
 /** The AI Editor's job row (edit_jobs) this device holds (claimed by it and still running), or undefined. */

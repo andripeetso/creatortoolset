@@ -722,12 +722,13 @@ export function NewEditSheet({ open, onClose, start, styles, onStyles, dropped }
     }
   };
 
-  /** No footage: an edit with one empty timeline, opened to put clips on from the media bin. */
+  /** One timeline: empty, or with the picked clips laid on it end to end. */
   const empty = async () => {
     setBusy(true);
     setError(null);
     try {
-      const made = await createEmpty({ name: name.trim() || undefined });
+      const sources = filmed && picked.size ? [...picked.keys()] : undefined;
+      const made = await createEmpty({ name: name.trim() || undefined, ...(sources ? { sources } : {}) });
       navigate(`/editor/${made.id}/${made.draft}`);
     } catch (e) {
       setError(message(e));
@@ -999,7 +1000,7 @@ export function NewEditSheet({ open, onClose, start, styles, onStyles, dropped }
           <div className="flex items-center gap-3">
             <button type="button" disabled={busy} onClick={() => void empty()}
               className="text-xs text-zinc-500 underline-offset-2 hover:text-foreground hover:underline disabled:opacity-60">
-              Empty timeline
+              {filmed && picked.size ? "Open on timeline" : "Empty timeline"}
             </button>
             <Button type="submit" disabled={busy || (filmed ? picked.size === 0 : !script.trim() || !voice)} className="ml-auto">
               {busy && <Loader2 className="h-4 w-4 animate-spin" />}

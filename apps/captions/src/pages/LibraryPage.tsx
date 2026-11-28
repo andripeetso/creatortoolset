@@ -1502,7 +1502,7 @@ export default function LibraryPage() {
               libraryId={libId}
               asset={preview}
               startAt={startAt}
-              serverPlays={!library || hostsOriginals(library.settings.upload) || hostsProxies(library.settings.upload) || !!library.shared || !!preview.finished}
+              serverPlays={serverKind === "mac" || !library || hostsOriginals(library.settings.upload) || hostsProxies(library.settings.upload) || !!library.shared || !!preview.finished}
               inTrash={trash}
               readOnly={readOnly}
               mayKeepAsFilmed={!!library?.mayKeepAsFilmed}
