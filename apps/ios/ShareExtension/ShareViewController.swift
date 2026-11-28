@@ -69,6 +69,10 @@ final class ShareModel: ObservableObject {
                 step = .notConnected
                 return
             }
+            guard link.reached else {
+                step = .choosing
+                return
+            }
             Task { await checkOwnPost() }
             guard let ws = try? await link.workspace() else { return }
             projects = ws.projects

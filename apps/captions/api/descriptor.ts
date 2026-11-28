@@ -3,7 +3,7 @@ import { hostname, networkInterfaces } from "node:os";
 import { routeAddress, type AuthVars } from "./auth";
 import { computerKey } from "./connect/keys";
 import { connectState } from "./connect/state";
-import { hasTeam, hostedPlatform, isCloud, serverKind } from "./lib/env";
+import { hasTeam, hostedPlatform, serverKind } from "./lib/env";
 import { accountTicketHost } from "./sign-in";
 import type { ServerDescriptor, ServerEndpoint } from "./lib/clients";
 
@@ -52,10 +52,11 @@ const TAILNET = /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./; // 100.64.0.0/10
 
 /**
  * The addresses other machines can reach this server on: the default route's (LAN) and a tailnet one. Never loopback,
- * and none in hosted mode: there the container's own addresses reach nobody.
+ * and none in hosted mode or on a Server with a public address: there it sits behind a reverse proxy or inside a
+ * container, so its own interface addresses reach nobody (or only over a tailnet the phone may not have on).
  */
 export async function endpoints(port: string): Promise<ServerEndpoint[]> {
-  if (isCloud() || !listensEverywhere()) return [];
+  if (hostedPlatform() || (hasTeam() && !!(process.env.PUBLIC_ORIGIN?.trim() || process.env.DOMAIN?.trim())) || !listensEverywhere()) return [];
   const out: ServerEndpoint[] = [];
   const lan = await routeAddress();
   if (lan && isLan(lan)) out.push({ kind: "lan", httpBaseUrl: `http://${lan}:${port}` });

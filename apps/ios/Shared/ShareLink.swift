@@ -11,6 +11,8 @@ struct ShareLink {
     var credential: Credential? = nil
     /// The phone's pick of workspace on this server (`WorkspacePick`): every request names it.
     var workspace: String? = nil
+    /// False when no route answered the probe and this link fell back to an unprobed safe route.
+    var reached = true
 
     struct Failure: LocalizedError {
         let status: Int   // 0 = no answer
@@ -30,40 +32,134 @@ struct ShareLink {
 
     /// The server in use on the first of its routes that answers as that server now. The app forgets the route it last
     /// connected over when the network changes, and the first in its order can be one this network can't reach (a
-    /// tailnet address with the tailnet off), so each is asked at once and the first in order that answers is taken.
-    static func reachable(_ entry: ServerEntry? = ServerRegistry.read().current, timeout: TimeInterval = 5) async -> ShareLink? {
+    /// tailnet address with the tailnet off), so each is asked at once. A higher-priority route keeps a short
+    /// `headStart` before a lower-priority answer wins; once decided, slower probes are cancelled.
+    static func reachable(_ entry: ServerEntry? = ServerRegistry.read().current,
+                          timeout: TimeInterval = 5,
+                          headStart: TimeInterval = 0.5,
+                          credential: ((Route) -> Credential?)? = nil,
+                          now: Date = Date(),
+                          probe: (@Sendable (Route, String?, TimeInterval) async -> Bool)? = nil) async -> ShareLink? {
         guard let entry else { return nil }
-        let order = tryOrder(entry)
-        let answered = await withTaskGroup(of: String?.self) { group in
-            for route in order {
-                group.addTask { await answers(route.url, serverId: entry.provisional ? nil : entry.serverId, timeout: timeout) ? route.id : nil }
-            }
-            var out = Set<String>()
-            for await id in group { if let id { out.insert(id) } }
-            return out
+        let readCred = credential ?? { ServerRegistry.credential(entry.serverId, route: $0) }
+        let order = tryOrder(entry, credential: readCred, now: now)
+        let serverId = entry.provisional ? nil : entry.serverId
+        let ask = probe ?? { route, id, t in await answers(route.url, serverId: id, timeout: t) }
+        if let index = await pickRoute(order, headStart: headStart, probe: { await ask($0, serverId, timeout) }) {
+            let route = order[index]
+            return saved((route.url, entry, readCred(route)))
         }
-        guard let route = order.first(where: { answered.contains($0.id) }) ?? entry.activeRoute else { return nil }
-        return saved((route.url, entry, ServerRegistry.credential(entry.serverId, route: route)))
+        // None answered: fall back only to a route that needs no server check (never plain HTTP outside the tailnet),
+        // preferring HTTPS over a plain-HTTP tailnet address.
+        let safe = order.filter { !$0.needsVerifiedServer }
+        let activeFallback = entry.activeRoute.flatMap { $0.needsVerifiedServer ? nil : $0 }
+        guard let route = safe.first(where: { !$0.isPlainHTTP }) ?? safe.first ?? activeFallback else { return nil }
+        var link = saved((route.url, entry, readCred(route)))
+        link?.reached = false
+        return link
     }
 
     /// The routes to ask: the one the app last connected over, then the rest in the app's order. A plain HTTP address
-    /// off the tailnet only when the answer can say it is this server.
-    static func tryOrder(_ entry: ServerEntry) -> [Route] {
-        let first = entry.activeRoute
-        let rest = Routes.usable(entry.routes).filter { $0.id != first?.id && (!$0.needsVerifiedServer || !entry.provisional) }
-        return (first.map { [$0] } ?? []) + rest
+    /// off the tailnet only when the answer can say it is this server. When any route has a live credential, routes
+    /// with a missing or expired credential are skipped so they don't win the unauthenticated probe and 401.
+    static func tryOrder(_ entry: ServerEntry,
+                         credential: ((Route) -> Credential?)? = nil,
+                         now: Date = Date()) -> [Route] {
+        let readCred = credential ?? { ServerRegistry.credential(entry.serverId, route: $0) }
+        let allUsable = Routes.usable(entry.routes)
+        let active = entry.activeRouteId.flatMap { id in allUsable.first { $0.id == id } }
+        let rest = allUsable.filter { $0.id != active?.id && (!$0.needsVerifiedServer || !entry.provisional) }
+        let ordered = (active.map { [$0] } ?? []) + rest
+        let ready = ordered.filter { readCred($0).map { !$0.expired(now) } ?? false }
+        return ready.isEmpty ? ordered : ready
     }
 
-    /// Whether `base` answers as a Creator Toolset server (`serverId` nil: any).
-    private static func answers(_ base: URL, serverId: String?, timeout: TimeInterval) async -> Bool {
-        struct Descriptor: Decodable { let serverId: String? }
+    private enum ProbeEvent: Sendable {
+        case probed(Int, Bool)
+        case headStartEnded
+    }
+
+    /// Probes every route in `order` concurrently and returns the lowest index that answers. A lower-priority answer
+    /// waits at most `headStart` for higher-priority routes; once decided, remaining probes are cancelled immediately.
+    static func pickRoute(_ order: [Route], headStart: TimeInterval = 0.5,
+                          probe: @escaping @Sendable (Route) async -> Bool) async -> Int? {
+        guard !order.isEmpty else { return nil }
+        return await withTaskGroup(of: ProbeEvent.self) { group in
+            for (index, route) in order.enumerated() {
+                group.addTask { .probed(index, await probe(route)) }
+            }
+            let waitHeadStart = order.count > 1 && headStart > 0
+            if waitHeadStart {
+                group.addTask {
+                    try? await Task.sleep(for: .seconds(headStart))
+                    return .headStartEnded
+                }
+            }
+            var resolved = Set<Int>()
+            var answered = Set<Int>()
+            var headStartDone = !waitHeadStart
+
+            func bestReady() -> Int? {
+                guard let best = answered.min() else { return nil }
+                return (headStartDone || (0..<best).allSatisfy { resolved.contains($0) }) ? best : nil
+            }
+
+            for await event in group {
+                switch event {
+                case .probed(let index, let ok):
+                    resolved.insert(index)
+                    if ok { answered.insert(index) }
+                case .headStartEnded:
+                    headStartDone = true
+                }
+                if let winner = bestReady() {
+                    group.cancelAll()
+                    return winner
+                }
+                if resolved.count == order.count {
+                    group.cancelAll()
+                    return answered.min()
+                }
+            }
+            return answered.min()
+        }
+    }
+
+    /// Whether `base` answers as this Creator Toolset server (`serverId` nil: any server with a valid descriptor).
+    static func answers(_ base: URL, serverId: String?, timeout: TimeInterval, session: URLSession = probeSession) async -> Bool {
+        struct Descriptor: Decodable {
+            let serverId: String
+            let label: String
+            let protocolVersion: Int
+
+            enum CodingKeys: String, CodingKey {
+                case serverId, label
+                case protocolVersion = "protocol"
+            }
+        }
         var request = URLRequest(url: URL(string: ".well-known/creator-toolset/server", relativeTo: base)?.absoluteURL ?? base)
         request.timeoutInterval = timeout
         guard let (data, response) = try? await session.data(for: request),
               (response as? HTTPURLResponse)?.statusCode == 200,
-              let descriptor = try? JSONDecoder().decode(Descriptor.self, from: data) else { return false }
+              let descriptor = try? JSONDecoder().decode(Descriptor.self, from: data),
+              !descriptor.serverId.isEmpty else { return false }
         return serverId == nil || descriptor.serverId == serverId
     }
+
+    private final class ProbeNoRedirect: NSObject, URLSessionTaskDelegate {
+        func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                        newRequest request: URLRequest) async -> URLRequest? { nil }
+    }
+
+    /// No redirects followed and nothing cached: a cached answer or redirect would speak for an untrusted host.
+    static let probeSession: URLSession = {
+        let config = URLSessionConfiguration.ephemeral
+        config.httpShouldSetCookies = false
+        config.httpCookieStorage = nil
+        config.urlCache = nil
+        config.requestCachePolicy = .reloadIgnoringLocalCacheData
+        return URLSession(configuration: config, delegate: ProbeNoRedirect(), delegateQueue: nil)
+    }()
 
     private static let session: URLSession = {
         let config = URLSessionConfiguration.ephemeral

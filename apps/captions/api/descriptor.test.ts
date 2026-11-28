@@ -59,12 +59,28 @@ describe("endpoints", () => {
     expect(isLan("127.0.0.1")).toBe(false);
   });
 
-  it("lists nothing on Cloud, where the container's addresses reach nobody", async (ctx) => {
+  it("lists nothing on Cloud, in hosted mode, or on a Server with a public address (This Mac still lists its own)", async (ctx) => {
     vi.stubEnv("HOST", "");
+    vi.stubEnv("PUBLIC_ORIGIN", "");
+    vi.stubEnv("DOMAIN", "");
     // a machine with no network address of its own can't show the difference
     if ((await endpoints("3000")).length === 0) ctx.skip();
     vi.stubEnv("CT_SERVER", "cloud");
     expect(await endpoints("3000")).toEqual([]);
+    vi.stubEnv("CT_SERVER", "");
+    vi.stubEnv("CT_MODE", "hosted");
+    expect(await endpoints("3000")).toEqual([]);
+    vi.stubEnv("CT_MODE", "");
+    vi.stubEnv("CT_SERVER", "server");
+    vi.stubEnv("PUBLIC_ORIGIN", "https://tools.example.com");
+    expect(await endpoints("3000")).toEqual([]);
+    vi.stubEnv("PUBLIC_ORIGIN", "");
+    vi.stubEnv("DOMAIN", "tools.example.com");
+    expect(await endpoints("3000")).toEqual([]);
+    // This Mac still reports its LAN/tailnet addresses even when a relay/tailnet PUBLIC_ORIGIN is set
+    vi.stubEnv("CT_SERVER", "mac");
+    vi.stubEnv("PUBLIC_ORIGIN", "https://mac.example.com");
+    expect((await endpoints("3000")).length).toBeGreaterThan(0);
   });
 
   it("needs a sign-in", async () => {

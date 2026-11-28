@@ -453,8 +453,123 @@ final class NativeToolsTests: XCTestCase {
         let tailnet = Route(id: "learned:http://100.64.0.9:43190", url: URL(string: "http://100.64.0.9:43190/")!, learned: true, network: "tailnet")
         let web = Route.paired(URL(string: "https://studio.example.com/")!)
         var entry = ServerEntry(serverId: "b", label: "B", routes: [tailnet, web], home: web.url)
-        XCTAssertEqual(ShareLink.tryOrder(entry).map(\.id), [tailnet.id, web.id])
+        XCTAssertEqual(ShareLink.tryOrder(entry, credential: { _ in nil }).map(\.id), [tailnet.id, web.id])
         entry.activeRouteId = web.id
-        XCTAssertEqual(ShareLink.tryOrder(entry).map(\.id), [web.id, tailnet.id])
+        XCTAssertEqual(ShareLink.tryOrder(entry, credential: { _ in nil }).map(\.id), [web.id, tailnet.id])
+
+        // an expired account DPoP session or missing credential is skipped when another route has a live token
+        let now = Date()
+        let account = Route.account(URL(string: "https://mac.connect.example/")!)
+        let withAccount = ServerEntry(serverId: "b", label: "B", routes: [account, web], activeRouteId: account.id, home: web.url)
+        let expired = Credential(kind: .dpop, token: "old", expiresAt: now.addingTimeInterval(-10))
+        let live = Credential(kind: .bearer, token: "cts_ok", expiresAt: now.addingTimeInterval(3600))
+        let creds: [String: Credential] = [account.id: expired, web.id: live]
+        XCTAssertEqual(ShareLink.tryOrder(withAccount, credential: { creds[$0.id] }, now: now).map(\.id), [web.id])
     }
+
+    func testTheShareSheetDoesNotWaitForDeadRoutesAndKeepsSafeFallbacks() async throws {
+        let tailnet = Route(id: "learned:http://100.64.0.9:43190", url: URL(string: "http://100.64.0.9:43190/")!, learned: true, network: "tailnet")
+        let lan = Route.paired(URL(string: "http://10.0.0.20:43190/")!)
+        let web = Route.paired(URL(string: "https://studio.example.com/")!)
+        let entry = ServerEntry(serverId: "srv-1", label: "Studio", routes: [tailnet, web], home: web.url)
+
+        // dead tailnet hangs, web answers at once: picks web after the short head-start without waiting 5s
+        let start = Date()
+        let pickedResult = await ShareLink.reachable(entry, timeout: 5, headStart: 0.05, credential: { _ in nil }) { route, _, _ in
+            if route.id == web.id { return true }
+            try? await Task.sleep(for: .seconds(5))
+            return false
+        }
+        let picked = try XCTUnwrap(pickedResult)
+        XCTAssertEqual(picked.server, web.url)
+        XCTAssertTrue(picked.reached)
+        XCTAssertLessThan(Date().timeIntervalSince(start), 1.0)
+
+        // route 0 (active web) answers at once while dead tailnet hangs: exits immediately without waiting even headStart
+        var activeWeb = entry
+        activeWeb.activeRouteId = web.id
+        let fastStart = Date()
+        let fastResult = await ShareLink.reachable(activeWeb, timeout: 5, headStart: 2.0, credential: { _ in nil }) { route, _, _ in
+            if route.id == web.id { return true }
+            try? await Task.sleep(for: .seconds(5))
+            return false
+        }
+        let fast = try XCTUnwrap(fastResult)
+        XCTAssertEqual(fast.server, web.url)
+        XCTAssertTrue(fast.reached)
+        XCTAssertLessThan(Date().timeIntervalSince(fastStart), 0.5)
+
+        // higher-priority LAN answering within headStart still beats a faster web answer
+        let lanAndWeb = ServerEntry(serverId: "srv-1", label: "Studio", routes: [lan, web], home: web.url)
+        let preferredResult = await ShareLink.reachable(lanAndWeb, timeout: 5, headStart: 0.3, credential: { _ in nil }) { route, _, _ in
+            if route.id == lan.id { try? await Task.sleep(for: .milliseconds(30)) }
+            return true
+        }
+        let preferred = try XCTUnwrap(preferredResult)
+        XCTAssertEqual(preferred.server, lan.url)
+        XCTAssertTrue(preferred.reached)
+
+        // none answer: falls back to HTTPS (marked unreached), never to an unverified plain-HTTP LAN address
+        let offlineResult = await ShareLink.reachable(entry, timeout: 0.1, headStart: 0.05, credential: { _ in nil }) { _, _, _ in false }
+        let offline = try XCTUnwrap(offlineResult)
+        XCTAssertEqual(offline.server, web.url)
+        XCTAssertFalse(offline.reached)
+
+        let lanOnly = ServerEntry(serverId: "srv-1", label: "Mac", routes: [lan], activeRouteId: lan.id, home: lan.url)
+        let denied = await ShareLink.reachable(lanOnly, timeout: 0.1, headStart: 0.05, credential: { _ in nil }) { _, _, _ in false }
+        XCTAssertNil(denied)
+    }
+
+    func testTheShareSheetProbeRejectsRedirectsWrongServersAndNonDescriptors() async {
+        XCTAssertNil(ShareLink.probeSession.configuration.urlCache)
+        XCTAssertEqual(ShareLink.probeSession.configuration.requestCachePolicy, .reloadIgnoringLocalCacheData)
+
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [ShareProbeStub.self]
+        let session = URLSession(configuration: config, delegate: ShareLink.probeSession.delegate, delegateQueue: nil)
+
+        ShareProbeStub.handlers = [
+            "ok.example": (200, [:], #"{"serverId":"srv-1","label":"Studio","protocol":1}"#),
+            "other.example": (200, [:], #"{"serverId":"srv-2","label":"Other","protocol":1}"#),
+            "empty.example": (200, [:], #"{}"#),
+            "evil.example": (302, ["Location": "https://ok.example/.well-known/creator-toolset/server"], ""),
+        ]
+
+        let ok = await ShareLink.answers(URL(string: "https://ok.example/")!, serverId: "srv-1", timeout: 2, session: session)
+        let wrong = await ShareLink.answers(URL(string: "https://other.example/")!, serverId: "srv-1", timeout: 2, session: session)
+        let redirect = await ShareLink.answers(URL(string: "http://evil.example/")!, serverId: "srv-1", timeout: 2, session: session)
+        let nonDescriptor = await ShareLink.answers(URL(string: "https://empty.example/")!, serverId: nil, timeout: 2, session: session)
+        let provisionalOk = await ShareLink.answers(URL(string: "https://ok.example/")!, serverId: nil, timeout: 2, session: session)
+
+        XCTAssertTrue(ok)
+        XCTAssertFalse(wrong)
+        XCTAssertFalse(redirect)
+        XCTAssertFalse(nonDescriptor)
+        XCTAssertTrue(provisionalOk)
+    }
+}
+
+private final class ShareProbeStub: URLProtocol {
+    nonisolated(unsafe) static var handlers: [String: (Int, [String: String], String)] = [:]
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        let url = request.url!
+        let host = url.host() ?? ""
+        let (status, headers, body) = Self.handlers[host] ?? (404, [:], "")
+        let response = HTTPURLResponse(url: url, statusCode: status, httpVersion: nil, headerFields: headers)!
+        if (300..<400).contains(status), let location = headers["Location"], let nextUrl = URL(string: location) {
+            var next = request
+            next.url = nextUrl
+            client?.urlProtocol(self, wasRedirectedTo: next, redirectResponse: response)
+            return
+        }
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data(body.utf8))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
 }

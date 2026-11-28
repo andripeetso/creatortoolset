@@ -251,8 +251,9 @@ With a bad token: 401 as above.
 
 `[{ "kind": "lan" | "tailnet", "httpBaseUrl": "http://192.0.2.10:43128" }]`. LAN: the default route's address, when the
 server listens on every interface (`HOST` unset, `0.0.0.0` or `::`). Tailnet: an interface address in 100.64.0.0/10, same condition. Never
-loopback, and none on Creator Toolset Cloud (`CT_SERVER=cloud`: a container's addresses reach nobody; pairing links carry the
-public origin only). The phone learns these after each connect; addresses it stops seeing are dropped.
+loopback, and none on Creator Toolset Cloud (`CT_SERVER=cloud`), in hosted mode (`CT_MODE=hosted`), or on a Server with
+a public address (`PUBLIC_ORIGIN` or `DOMAIN`: it sits behind a reverse proxy or inside a container; pairing links carry
+the public origin only). The phone learns these after each connect; addresses it stops seeing are dropped.
 
 ### `POST /api/connect/health` (connect service, through the tunnel; no sign-in)
 
