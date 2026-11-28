@@ -963,7 +963,11 @@ export const LIBRARY_WORDS = {
   smartFolders: { label: "Smart folders", tip: "Clips and photos are filed into a folder for each shoot, by the day and place they were filmed, as they come in. What they show becomes tags. Files on disk never move." },
   organizeYourself: { label: "Organize yourself", tip: "Every clip goes into one library. You make and fill the folders yourself." },
   proxyTitle: "Proxy workflow",
-  generateProxies: { label: "Generate proxies", tip: "A smaller copy is made of each new video too heavy to play smoothly, and of every new video while Upload to server sends proxies." },
+  generateProxies: {
+    label: "Generate proxies",
+    tip: "A smaller copy is made of each new video too heavy to play smoothly, and of every new video while Upload to server sends proxies.",
+    macTip: "A smaller copy is made of each new video too heavy to play smoothly. Files the player can't open get one automatically.",
+  },
   makeProxies: "Make proxies?",
   proxiesOff: "proxies turned off",
   proxyQuality: { label: "Proxy quality", tip: "Higher quality looks sharper while editing and takes more space. A proxy is never larger than its original." },

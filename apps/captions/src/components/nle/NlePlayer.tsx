@@ -38,28 +38,52 @@ type Media = {
   frames: number;
   vfc: boolean;
   gone?: boolean;
-  /** why it doesn't play, once the Mac app said (a drive away, a folder not allowed) */
+  /** why it doesn't play, once the Mac app or server said (a drive away, a folder not allowed, proxy not ready) */
   why?: string;
+  /** true while the library is generating a proxy for this clip */
+  preparing?: boolean;
   /** a numbered picture sequence: its pictures by number, loaded ahead of the playhead */
   seq?: { frame: (n: number) => string; got: Map<number, HTMLImageElement> };
 };
 
 /** A source's file as this browser plays it; `lead`: seconds into the file where the source's frame 0 is; `frame`: the
  *  file of picture n when the source is a numbered picture sequence (from 0). `why`, with no `url`: it doesn't play here,
- *  and this is the line drawn on its frame ("<drive> isn't connected", "Needs your OK"). `log`: whether the file is in
- *  its camera's log. Not said = the file as filmed (an original, today's proxies and blurred masters, which keep the
- *  log), so the source's camera conversion applies; a file already converted (a 709 proxy or render) must say false,
- *  or it is converted twice. */
-export type NleFile = { url: string; lead?: number; frame?: (n: number) => string; why?: string; log?: boolean;
+ *  and this is the line drawn on its frame ("<drive> isn't connected", "Needs your OK"). `preparing`: a proxy is being
+ *  made now, so a failed <video> shows a calm dark progress card instead of the red Media Offline alarm. `log`: whether
+ *  the file is in its camera's log. Not said = the file as filmed (an original, today's proxies and blurred masters,
+ *  which keep the log), so the source's camera conversion applies; a file already converted (a 709 proxy or render) must
+ *  say false, or it is converted twice. */
+export type NleFile = { url: string; lead?: number; frame?: (n: number) => string; why?: string; preparing?: boolean; log?: boolean;
   /** what it shows may be drawn into a design (Design on This Frame): a blurred copy, the person's own file, a design */
   grab?: true;
   /** a sound heard as a blend of two files of one recording, lined up sample for sample (a voice as recorded and its
    *  cleaned version): `url` at 1 − share of the clip's gain, this one at `share` */
   mix?: { url: string; share: number } };
 
-/** The line for a Mac file that didn't load, from the Mac app's answer (HTTP 409 disk_away, 403 not allowed). */
+const LIBRARY_PLAY = /^\/api\/library\/media\/[^/?#]+\/play(?:[?#]|$)/;
+
+/** The line for a clip that didn't load: a Mac file asks the Mac app (409 disk_away, 403 not allowed); a library `/play`
+ *  URL does a 1-byte range request so 409 reasons and codec failures surface instead of a generic error. */
 export async function whyNot(url: string): Promise<string | undefined> {
-  return url.startsWith("ctlocal://media/") ? pathLine(await localFileState(url)) : undefined;
+  if (url.startsWith("ctlocal://media/")) return pathLine(await localFileState(url));
+  if (!LIBRARY_PLAY.test(url)) return undefined;
+  try {
+    const r = await fetch(url, { headers: { Range: "bytes=0-0" } });
+    if (r.status === 200 || r.status === 206) {
+      void r.body?.cancel?.();
+      return "This format needs a proxy to play here";
+    }
+    if (r.status === 409) {
+      const body = (await r.json().catch(() => null)) as { error?: string; message?: string; code?: string } | null;
+      if (!body) return undefined;
+      if (body.code === "conflict" || body.error === "Not ready") return "Proxy isn't ready yet";
+      return body.error || body.message || undefined;
+    }
+    if (r.status === 404) return "Clip not found";
+    return undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 const SEQ_AHEAD = 8;
@@ -157,7 +181,7 @@ export function NlePlayer({ tl, clock, rate, urlOf, nameOf, className, loop, onS
     toStage(true);
     const videos = () => [...pool.current.values()].filter((m) => m.el instanceof HTMLVideoElement);
     const make = (u: string, file: NleFile, el: Media["el"], owner: string): Media => {
-      const m: Media = { el, url: u, lead: file.lead ?? 0, bad: false, used: tick, owner, frames: 0, vfc: false, ...(file.frame ? { seq: { frame: file.frame, got: new Map() } } : {}) };
+      const m: Media = { el, url: u, lead: file.lead ?? 0, bad: false, used: tick, owner, frames: 0, vfc: false, preparing: !!file.preparing, ...(file.frame ? { seq: { frame: file.frame, got: new Map() } } : {}) };
       el.addEventListener("error", () => {
         m.bad = true;
         void whyNot(u).then((why) => void (m.why = why));
@@ -220,6 +244,7 @@ export function NlePlayer({ tl, clock, rate, urlOf, nameOf, className, loop, onS
         m.owner = owner;
         m.lead = file.lead ?? 0;
       }
+      m.preparing = !!file.preparing;
       m.used = tick;
       claimed.add(m);
       return m;
@@ -266,10 +291,9 @@ export function NlePlayer({ tl, clock, rate, urlOf, nameOf, className, loop, onS
     };
     /** what a picture shows now, for knowing whether to draw again: its frame count, else its time or image */
     const stamp = (m: Media | null, d: Drawable | null) =>
-      !m ? "x" : m.bad ? `bad${m.why ?? ""}` : !d ? "-" : m.el instanceof HTMLVideoElement ? `${m.vfc ? `f${m.frames}` : `t${m.el.currentTime}`}${m.el.seeking ? "s" : ""}${m.el.readyState}` : (d.el as HTMLImageElement).src;
-    // a picture with no file here: Resolve's red Media Offline frame where the picture would be (as if it were the
-    // frame's size), with the clip's name and why
-    const missing = (ctx: CanvasRenderingContext2D, it: NleItem, track: string, name: string, why?: string) => {
+      !m ? "x" : m.bad ? `bad${m.preparing ? "!" : ""}${m.why ?? ""}` : !d ? "-" : m.el instanceof HTMLVideoElement ? `${m.vfc ? `f${m.frames}` : `t${m.el.currentTime}`}${m.el.seeking ? "s" : ""}${m.el.readyState}` : (d.el as HTMLImageElement).src;
+    // a picture with no file here: red Media Offline frame with name and why, or a calm dark card while a proxy is being made
+    const missing = (ctx: CanvasRenderingContext2D, it: NleItem, track: string, name: string, why?: string, preparing = false) => {
       if (stage) {
         // as text on a 2D canvas the frame's size, then laid on the stage as a picture
         const [cw, ch] = [Math.max(1, Math.round(W * px)), Math.max(1, Math.round(H * px))];
@@ -277,27 +301,27 @@ export function NlePlayer({ tl, clock, rate, urlOf, nameOf, className, loop, onS
         const n = note.getContext("2d")!;
         n.setTransform(px, 0, 0, px, 0, 0);
         n.clearRect(0, 0, W, H);
-        drawMissing(n, it, track, name, why);
+        drawMissing(n, it, track, name, why, preparing);
         stage.screen.save();
         stage.screen.setTransform(1, 0, 0, 1, 0, 0);
         stage.screen.drawImage(note, 0, 0, cw, ch, 0, 0, cw, ch);
         stage.screen.restore();
-      } else drawMissing(ctx, it, track, name, why);
+      } else drawMissing(ctx, it, track, name, why, preparing);
     };
-    const drawMissing = (ctx: CanvasRenderingContext2D, it: NleItem, track: string, name: string, why?: string) => {
+    const drawMissing = (ctx: CanvasRenderingContext2D, it: NleItem, track: string, name: string, why?: string, preparing = false) => {
       const p = placement(it, track, W, H, W, H);
       ctx.save();
       ctx.transform(...p.m);
-      ctx.fillStyle = "#8f1414";
+      ctx.fillStyle = preparing ? "#18181b" : "#8f1414";
       ctx.fillRect(...p.crop);
       ctx.setTransform(px, 0, 0, px, 0, 0);
       const [cx, cy] = [p.m[0] * (W / 2) + p.m[2] * (H / 2) + p.m[4], p.m[1] * (W / 2) + p.m[3] * (H / 2) + p.m[5]];
-      ctx.fillStyle = "#fff";
+      ctx.fillStyle = preparing ? "#f4f4f5" : "#fff";
       ctx.textAlign = "center";
       ctx.font = `600 ${Math.round(W / 14)}px system-ui, sans-serif`;
-      ctx.fillText("Media Offline", cx, cy, W * 0.9);
+      ctx.fillText(preparing ? "Making a proxy…" : "Media Offline", cx, cy, W * 0.9);
       ctx.font = `${Math.round(W / 30)}px system-ui, sans-serif`;
-      ctx.fillStyle = "#fecaca";
+      ctx.fillStyle = preparing ? "#a1a1aa" : "#fecaca";
       ctx.fillText(name, cx, cy + W / 14, W * 0.9);
       if (why) ctx.fillText(why, cx, cy + W / 8, W * 0.9);
       ctx.restore();
@@ -468,8 +492,10 @@ export function NlePlayer({ tl, clock, rate, urlOf, nameOf, className, loop, onS
             continue;
           }
           if (!m || m.bad) {
-            const why = m?.why ?? now.current.urlOf(item.src)?.why;
-            missing(ctx as CanvasRenderingContext2D, item, track, name(item.src), why ?? (m ? "This file won't play here" : undefined));
+            const f = now.current.urlOf(item.src);
+            const preparing = !!(m?.preparing || f?.preparing);
+            const why = preparing ? f?.why : (m?.why ?? f?.why);
+            missing(ctx as CanvasRenderingContext2D, item, track, name(item.src), why ?? (!preparing && m ? "This file won't play here" : undefined), preparing);
             continue;
           }
           if (!d || !got || !fade) continue;

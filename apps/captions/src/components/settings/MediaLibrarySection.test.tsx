@@ -55,6 +55,7 @@ beforeEach(() => {
   serverHere = false;
   storageFolders = [];
   made = [];
+  useAuth.setState({ me: null, kind: "server" });
   // the Mac app: the bridge is there, so the Mac-only rows show
   vi.stubGlobal("webkit", { messageHandlers: { thisMac: { postMessage: async () => ({}) } } });
   vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
@@ -185,14 +186,18 @@ describe("Settings → Media Library, the owner's page", () => {
     expect(gen.disabled).toBe(false);
   });
 
-  // replaced (Andri 11-19): Upload to server is one pick-one, as in setup; on This Mac it is a row saying there is no server
-  it("on This Mac with no server connected, Upload to server says so and offers no choice, whatever is stored", async () => {
+  it("on This Mac, Hosted media is hidden completely and Generate proxies tooltip does not mention Upload to server", async () => {
     serverHere = true;
     const stored: LibrarySummary = { ...library, settings: { ...SETTINGS, upload: "all" } };
     useAuth.setState({ kind: "mac" });
     await render(<LibrarySettingsBody library={stored} watch={{ ...watch, allowed: true }} onChange={() => {}} onError={() => {}} />);
-    expect(bodyText()).toContain("No server connected");
+    expect(headings()).not.toContain(LIBRARY_WORDS.hostedTitle);
+    expect(bodyText()).not.toContain("Upload to server");
+    expect(bodyText()).not.toContain("No server connected");
     expect(host!.querySelector('button[role="switch"][aria-label="Proxies"]')).toBeNull();
+    await press(tip(LIBRARY_WORDS.generateProxies.label)!);
+    expect(bodyText()).toContain(LIBRARY_WORDS.generateProxies.macTip);
+    expect(bodyText()).not.toContain("Upload to server");
   });
 
   it("a Server opened in the Mac app by its admin keeps its Upload to server choices, so hosted proxies can be turned off", async () => {
@@ -200,6 +205,7 @@ describe("Settings → Media Library, the owner's page", () => {
     useAuth.setState({ kind: "server" });
     const stored: LibrarySummary = { ...library, settings: { ...SETTINGS, upload: "all" } };
     await render(<LibrarySettingsBody library={stored} watch={{ ...watch, allowed: true }} onChange={() => {}} onError={() => {}} />);
+    expect(headings()).toContain(LIBRARY_WORDS.hostedTitle);
     expect(bodyText()).not.toContain("No server connected");
   });
 

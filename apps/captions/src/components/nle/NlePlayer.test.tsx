@@ -61,7 +61,74 @@ describe("a shot whose file doesn't play here", () => {
   it("a Mac file that failed to load asks the app why: 409 disk_away names the drive", async () => {
     vi.stubGlobal("fetch", async () => ({ status: 409, json: async () => ({ state: "disk_away", disk: "Tiny Drive" }) }));
     expect(await whyNot("ctlocal://media/L2E")).toBe("Tiny Drive isn't connected");
-    expect(await whyNot("/api/library/media/v1/play")).toBeUndefined();
+    expect(await whyNot("/other/clip.mp4")).toBeUndefined();
+  });
+
+  it("a library /play URL inspects the response with a 1-byte Range request to surface real errors", async () => {
+    const calls: Array<[string, RequestInit | undefined]> = [];
+    const stub = (res: Partial<Response>) =>
+      vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+        calls.push([url, init]);
+        return res;
+      });
+    stub({ status: 409, json: async () => ({ error: "Not ready", code: "conflict" }) });
+    expect(await whyNot("/api/library/media/ver_1/play")).toBe("Proxy isn't ready yet");
+    expect(calls.at(-1)?.[1]?.headers).toEqual({ Range: "bytes=0-0" });
+
+    stub({ status: 409, json: async () => ({ error: "The original is on Tiny Mac, not on this server", code: "on_mac" }) });
+    expect(await whyNot("/api/library/media/ver_1/play?r=1")).toBe("The original is on Tiny Mac, not on this server");
+
+    stub({ status: 409, json: async () => ({ message: "Upload is off for this workspace.", code: "upload_refused" }) });
+    expect(await whyNot("/api/library/media/ver_1/play")).toBe("Upload is off for this workspace.");
+
+    const cancel = vi.fn();
+    stub({ status: 206, body: { cancel } as unknown as ReadableStream });
+    expect(await whyNot("/api/library/media/ver_1/play")).toBe("This format needs a proxy to play here");
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
+  it("renders a calm dark Making a proxy banner instead of red Media Offline when preparing is true on a failed clip", async () => {
+    const texts: string[] = [];
+    const fills: string[] = [];
+    let currentFill = "";
+    const ctx = new Proxy({} as Record<string | symbol, unknown>, {
+      get: (t, k) => {
+        if (k === "fillText") return (s: string) => void texts.push(s);
+        if (k === "fillRect") return () => void fills.push(currentFill);
+        return k in t ? t[k] : () => {};
+      },
+      set: (t, k, v) => {
+        if (k === "fillStyle") currentFill = String(v);
+        t[k] = v;
+        return true;
+      },
+    });
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(ctx as unknown as CanvasRenderingContext2D);
+    vi.stubGlobal("fetch", async () => ({ status: 206, body: { cancel: () => {} } }));
+    const videos: HTMLVideoElement[] = [];
+    const origCreate = document.createElement.bind(document);
+    vi.spyOn(document, "createElement").mockImplementation(((tag: string) => {
+      const el = origCreate(tag);
+      if (tag === "video") videos.push(el as HTMLVideoElement);
+      return el;
+    }) as typeof document.createElement);
+    let next = null as FrameRequestCallback | null;
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => ((next = cb), 1));
+    vi.stubGlobal("cancelAnimationFrame", () => void (next = null));
+    const urlOf = (): NleFile => ({ url: "/api/library/media/ver_mkv/play", preparing: true });
+    const root = createRoot(document.body.appendChild(document.createElement("div")));
+    await act(async () => root.render(<NlePlayer tl={tl} clock={new NleClock()} rate={1} urlOf={urlOf} nameOf={() => "capture.mkv"} />));
+    next?.(16);
+    expect(videos).toHaveLength(1);
+    videos[0]!.dispatchEvent(new Event("error"));
+    next?.(32);
+    expect(texts).toContain("Making a proxy…");
+    expect(texts).toContain("capture.mkv");
+    expect(texts).not.toContain("Media Offline");
+    expect(fills).toContain("#18181b");
+    expect(fills).not.toContain("#8f1414");
+    act(() => root.unmount());
+    vi.restoreAllMocks();
   });
 });
 

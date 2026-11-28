@@ -125,4 +125,59 @@ describe("AI Editor cut", () => {
     expect(faults(segments)).toEqual([false, false, false]);
     expect([3, 5, 10, 16].map((n) => covers(segments, spoken[n]!.s + 0.1))).toEqual([true, true, true, true]);
   });
+
+  it("never places an internal silence cut through a word when loudness dips inside it", () => {
+    // a long compound word whose middle syllable drops below threshold for 0.5 s
+    const w: TimedWord[] = [
+      { w: "we", s: 0.5, e: 0.8 },
+      { w: "harjoittelemme", s: 0.8, e: 2.2 },
+      { w: "tänään", s: 2.2, e: 2.8 },
+    ];
+    const e = loudness(w);
+    e.fill(0, Math.round(1.2 * ENERGY_PER_SECOND), Math.round(1.7 * ENERGY_PER_SECOND));
+    const { segments } = cutTake(w, 0, w.length, "we harjoittelemme tänään", e, fps);
+    expect(segments).toHaveLength(1);
+    expect(segments[0]![0] / fps).toBeLessThanOrEqual(w[0]!.s);
+    expect(segments[0]![1] / fps).toBeGreaterThanOrEqual(w[2]!.e);
+  });
+
+  it("snaps a pause cut cleanly outside a word that trails off softly, and keeps a quiet word spoken in the dip", () => {
+    // w[0] trails off quietly from 1.0..1.35, followed by a real 0.6 s pause before w[1]
+    const w: TimedWord[] = [
+      { w: "first", s: 0.5, e: 1.35 },
+      { w: "second", s: 1.95, e: 2.8 },
+    ];
+    const e = loudness(w);
+    e.fill(0, Math.round(1.0 * ENERGY_PER_SECOND), Math.round(1.95 * ENERGY_PER_SECOND));
+    const { segments } = cutTake(w, 0, w.length, "first second", e, fps);
+    expect(segments).toHaveLength(2);
+    // first piece finishes at or after "first" ends (never cuts through it), second opens before "second" starts
+    expect(segments[0]![1] / fps).toBeGreaterThanOrEqual(w[0]!.e);
+    expect(segments[1]![0] / fps).toBeLessThanOrEqual(w[1]!.s);
+
+    // a quiet word spoken inside a low-energy stretch is not sliced out
+    const soft: TimedWord[] = [
+      { w: "start", s: 0.5, e: 1.0 },
+      { w: "ja", s: 1.15, e: 1.45 },
+      { w: "finish", s: 1.6, e: 2.2 },
+    ];
+    const es = loudness([soft[0]!, soft[2]!]);
+    const res = cutTake(soft, 0, soft.length, "start ja finish", es, fps);
+    expect(res.segments).toHaveLength(1);
+    expect(covers(res.segments, 1.3)).toBe(true);
+  });
+
+  it("does not trim through a quiet onset on the first word or a quiet trail on the last word", () => {
+    const w: TimedWord[] = [
+      { w: "hello", s: 0.5, e: 1.3 },
+      { w: "world", s: 1.35, e: 2.2 },
+    ];
+    const e = new Float32Array(Math.ceil(3 * ENERGY_PER_SECOND));
+    // only the middle of each word is loud; first 0.35 s of "hello" and last 0.35 s of "world" are quiet
+    e.fill(0.5, Math.round(0.85 * ENERGY_PER_SECOND), Math.round(1.85 * ENERGY_PER_SECOND));
+    const { segments } = cutTake(w, 0, w.length, "hello world", e, fps);
+    expect(segments).toHaveLength(1);
+    expect(segments[0]![0] / fps).toBeLessThanOrEqual(w[0]!.s);
+    expect(segments[0]![1] / fps).toBeGreaterThanOrEqual(w[1]!.e);
+  });
 });

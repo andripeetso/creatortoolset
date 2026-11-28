@@ -15,7 +15,7 @@ import { libraryDb } from "../library/db";
 import type { JobRow } from "../library/jobs";
 import { NeedsKey } from "../library/transcribe";
 import { cacheAway, cacheReport, dropProxies, setCacheAccount, emptyCache, keptPath, madeProxies, moveFile, noteMade, proxiesDir, proxyBytes, proxyPath, roomFor, setKeptOffline, sizeOf, touchProxy, trimCache, trimOnFirstClaim } from "./cache";
-import { makeProxy, needsProxy } from "../library/media/proxy";
+import { isUnplayable, makeProxy, needsProxy } from "../library/media/proxy";
 import { probe } from "../library/media/probe";
 import { proxySize } from "../../contracts/library";
 import { downloadInto, resolveFiles, type Progress } from "./files";
@@ -333,7 +333,7 @@ export async function makeKept(list: ComputerProxy[]): Promise<boolean> {
       console.warn(`[work] proxy ${m.id}: not made, the disk would have less than its free-space floor left`);
       return false;
     }
-    if (await makeProxy(m.path, part, false, quality, p.duration)) {
+    if (await makeProxy(m.path, part, false, quality, p.duration, isUnplayable(p))) {
       // a cache file like any other proxy: it counts toward the size limit (cacheLimit) and the oldest go first
       moveFile(part, proxyPath(m.id));
       // drawn upright by the file's own rotation (ffmpeg turns it on decode)

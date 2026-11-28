@@ -131,6 +131,8 @@ const versionsText = (n: number) => `${n} ${n === 1 ? "version" : "versions"}`;
 function EditorList() {
   // Read (Settings → Team → Access): edits and styles open to look at; nothing is created, moved, dropped in or changed
   const editable = canChange(useMe(), "editor");
+  const navigate = useNavigate();
+  const [makingEmpty, setMakingEmpty] = useState(false);
   // the saved list paints at once; a step that moves (the server's worker, a device) reads it again: lib/local-cache
   const list = useCachedLoad<EditSummary[]>("/api/editor", listEdits);
   // each workspace keeps its own edits apart: the page has only the current workspace's
@@ -172,6 +174,17 @@ function EditorList() {
     return `${versionsText(inside.reduce((n, e) => n + (e.versionCount ?? 0), 0))} · ${day(Math.max(...inside.map((e) => e.updatedAt)))}`;
   };
   const fail = (e: unknown) => toast.error(message(e));
+  const newTimeline = async () => {
+    if (makingEmpty) return;
+    setMakingEmpty(true);
+    try {
+      const made = await createEmpty({});
+      navigate(`/editor/${made.id}/${made.draft}`);
+    } catch (e) {
+      fail(e);
+      setMakingEmpty(false);
+    }
+  };
   const act: EditActions = {
     folders,
     editable,
@@ -359,10 +372,16 @@ function EditorList() {
             <div className={cn("flex flex-col items-center gap-3 rounded-xl border border-dashed py-16 text-center transition-colors", over ? "border-violet-500 bg-violet-500/10" : "border-zinc-500/30")}>
               <Clapperboard className="h-6 w-6 text-zinc-500" aria-hidden="true" />
               <p className="hidden text-sm font-medium sm:block">Drop footage here</p>
-              <Button size="sm" onClick={() => setCreating(true)}>
-                <Plus className="h-4 w-4" />
-                New project
-              </Button>
+              <div className="flex flex-wrap items-center justify-center gap-2">
+                <Button size="sm" variant="outline" disabled={makingEmpty} onClick={() => void newTimeline()}>
+                  <Clapperboard className="h-4 w-4" />
+                  Empty timeline
+                </Button>
+                <Button size="sm" onClick={() => setCreating(true)}>
+                  <Plus className="h-4 w-4" />
+                  New project
+                </Button>
+              </div>
             </div>
           )}
           {anything && (
@@ -397,6 +416,11 @@ function EditorList() {
               }
             >
               {editable && <NewFolderButton onClick={() => void folders.newFolder()} />}
+              {editable && (
+                <Button size="sm" variant="outline" className="h-8" disabled={makingEmpty} aria-label="Empty timeline" title="Empty timeline" onClick={() => void newTimeline()}>
+                  <Clapperboard className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Empty timeline</span>
+                </Button>
+              )}
               {editable && (
                 <Button size="sm" className="h-8" onClick={() => setCreating(true)}>
                   <Plus className="h-4 w-4" /> <span className="hidden sm:inline">New project</span>
@@ -997,12 +1021,11 @@ export function NewEditSheet({ open, onClose, start, styles, onStyles, dropped }
             </div>
           </details>
           {error && <p className="text-sm text-red-400">{error}</p>}
-          <div className="flex items-center gap-3">
-            <button type="button" disabled={busy} onClick={() => void empty()}
-              className="text-xs text-zinc-500 underline-offset-2 hover:text-foreground hover:underline disabled:opacity-60">
+          <div className="flex items-center justify-end gap-2">
+            <Button type="button" variant="outline" disabled={busy} onClick={() => void empty()}>
               {filmed && picked.size ? "Open on timeline" : "Empty timeline"}
-            </button>
-            <Button type="submit" disabled={busy || (filmed ? picked.size === 0 : !script.trim() || !voice)} className="ml-auto">
+            </Button>
+            <Button type="submit" disabled={busy || (filmed ? picked.size === 0 : !script.trim() || !voice)}>
               {busy && <Loader2 className="h-4 w-4 animate-spin" />}
               {filmed || !busy ? "Start" : "Making the voice"}
             </Button>

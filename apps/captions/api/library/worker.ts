@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
-import { env } from "../lib/env";
+import { env, serverKind } from "../lib/env";
 import { libraryChanged } from "./access";
 import { emitEvent } from "../lib/events";
 import { blobs, fileBlur, fileProxy, isBlurred, keepsOnlyOriginals, libraryDb, libraryProxyQuality, librarySetting, makesProxyOf, proxiesInCloud, versionUpload } from "./db";
@@ -16,7 +16,7 @@ import { MacClaudeError, usageIn, wakeEditorPolls } from "../lib/mac-claude";
 import { limitLine } from "../../contracts/plans";
 import { hostsOriginals, hostsProxies, SOUNDS } from "../../contracts/library";
 import { tagSoundType } from "./sfx-type";
-import { makeProxy, needsProxy, wantsProxy } from "./media/proxy";
+import { isUnplayable, makeProxy, needsProxy, wantsProxy } from "./media/proxy";
 import { makeSprite, noteStrip, OLD_CELL, strayStrip, watchedAspect } from "./media/sprite";
 import { looksLikeSong, probe, type ProbeSummary } from "./media/probe";
 import { placeUnplaced } from "./media/probe";
@@ -629,7 +629,8 @@ export async function afterProbe(
   // blurred copy, by the Mac that made the copy (its send, or its own proxy job: on-mac.ts); this server cuts none of one
   // the add's own answer (the add sheet): Skip processing makes none, Generate proxies one whatever the switch says
   const asked = fileProxy(v.id);
-  if (v.kind !== "image" && !isBlurred(v.id) && fileBlur(v.id)?.blur !== "yes" && asked !== "no" && wantsProxy(p, { cloud: (!originalsOnly && proxiesInCloud(v.library_id)) || onlyProxy, on: !originalsOnly && (asked === "yes" || makesProxyOf(v.library_id, v.id)) })) want("proxy");
+  const macUnplayable = serverKind() === "mac" && isUnplayable(p);
+  if (v.kind !== "image" && !isBlurred(v.id) && fileBlur(v.id)?.blur !== "yes" && asked !== "no" && (macUnplayable || wantsProxy(p, { cloud: (!originalsOnly && proxiesInCloud(v.library_id)) || onlyProxy, on: !originalsOnly && (asked === "yes" || makesProxyOf(v.library_id, v.id)) }))) want("proxy");
   // Analysis effort (UNIFIED-PRD §4.4): Off makes no transcript on import, so no AI call
   if (p.acodec && !music && librarySetting(v.library_id, "transcribe")) enqueueJob(db, v.library_id, v.id, "transcribe", actor);
   // the duplicate check compares videos only (similar.ts): a photo's fingerprint would never be read
@@ -753,9 +754,11 @@ async function run(job: JobRow): Promise<void> {
     await keep("wave", file, `${base}/wave.json`);
   } else if (job.kind === "proxy") {
     // no proxy kept when it would be no smaller than the file: the lighter copy is then the original (lighter above)
+    // except for browser-unplayable local files, which must keep their playable MP4 copy even when larger
     // an Originals only library keeps none, whatever asked for one (a backfill queued before the setting changed)
     const file = out("mp4");
-    if (!keepsOnlyOriginals(v.library_id) && (await makeProxy(await src(), file, !!p.cover || !p.vcodec, libraryProxyQuality(v.library_id), p.duration))) await keep("proxy", file, `${base}/proxy.mp4`);
+    const soundOnly = !!p.cover || !p.vcodec;
+    if ((serverKind() === "mac" || !keepsOnlyOriginals(v.library_id)) && (await makeProxy(await src(), file, soundOnly, libraryProxyQuality(v.library_id), p.duration, isUnplayable(p)))) await keep("proxy", file, `${base}/proxy.mp4`);
   } else if (job.kind === "sprite") {
     // after the proxies in the lane: a 4K original's frames come from its 720p copy
     const file = out("jpg");

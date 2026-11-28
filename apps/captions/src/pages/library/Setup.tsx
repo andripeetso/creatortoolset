@@ -88,7 +88,7 @@ const START: Answers = {
   hosted: HOSTED_DEFAULT,
 };
 
-const stepsFor = (kind: Kind): Step[] => (kind === "mac" ? ["start", "folders", "proxy", "analysis"] : ["start", "folders", "proxy", "analysis", "hosted"]);
+const stepsFor = (kind: Kind): Step[] => (kind === "mac" ? ["start", "folders", "analysis"] : ["start", "folders", "proxy", "analysis", "hosted"]);
 
 const TITLE: Record<Step, string> = {
   start: LIBRARY_WORDS.setupTitle,

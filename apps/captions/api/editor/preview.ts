@@ -222,17 +222,22 @@ export async function renderPreview(tl: Timeline, files: Record<string, string>,
         const c = over ? undefined : p.cut;
         // a cutaway's picture: its own clip from its in point, at its own zoom and tilt, ungraded
         const pic = c
-          ? { file: files[c.src]!, at: c.in / tl.sources[c.src]!.fps + (p.at - c.rec) / tl.fps, filter: shotFilter(tl, c) }
+          ? { file: files[c.src]!, at: c.in / tl.sources[c.src]!.fps + (p.at - c.rec) / tl.fps, filter: `setpts=PTS-STARTPTS,${shotFilter(tl, c)}` }
           : vs.w > 0 ? {
             file: files[v.src]!,
-            // a freeze holds the shot's first frame: that one frame, repeated
+            // a freeze holds the shot's first frame: that one frame, repeated (tpad+fps already produces clean CFR frames)
             at: v.in / vs.fps + (v.freeze ? 0 : off),
-            filter: [...(v.freeze ? ["trim=end_frame=1", "tpad=stop=-1:stop_mode=clone"] : []), shotFilter(tl, v, grade, undefined, off), ...fadeFilter(v, p.at - v.rec, p.frames, tl.fps)].join(","),
+            filter: [
+              ...(v.freeze ? ["trim=end_frame=1", "tpad=stop=-1:stop_mode=clone"] : ["setpts=PTS-STARTPTS"]),
+              shotFilter(tl, v, grade, undefined, off),
+              ...fadeFilter(v, p.at - v.rec, p.frames, tl.fps),
+            ].join(","),
           } : null;
         const voiceAf = a ? [...(a.gainDb ? [`volume=${a.gainDb}dB`] : []), ...fadeFilter(a, p.at - a.rec, p.frames, tl.fps, true)] : [];
         // a take with no picture (a voice recording) under no cutaway: black, as a gap in the picture is
         const picture = pic ? ["-ss", pic.at.toFixed(6), "-i", pic.file] : ["-f", "lavfi", "-i", `color=c=black:s=${previewSize(tl).w}x${previewSize(tl).h}:r=${den}/${num}`];
         // ponytail: a linked voice from a file with no sound stream fails the render; the editor's sources are transcribed, so they have one
+        // reset PTS and lock CFR + 90 kHz timescale on every segment so VFR/OBS sources join cleanly under concat -c:v copy
         const vf = pic ? pic.filter : "format=yuv420p";
         const args = [
           ...picture,
@@ -240,12 +245,13 @@ export async function renderPreview(tl: Timeline, files: Record<string, string>,
           ...(over
             ? [
               "-ss", (over.in / tl.sources[over.src]!.fps + (p.at - over.rec) / tl.fps).toFixed(6), "-i", files[over.src]!,
-              "-filter_complex", `[0:v]${vf}[b];[2:v]${shotFilter(tl, over, undefined, undefined, 0, true)}[o];[b][o]overlay=0:0,format=yuv420p[v]`,
+              "-filter_complex", `[0:v]${vf}[b];[2:v]setpts=PTS-STARTPTS,${shotFilter(tl, over, undefined, undefined, 0, true)}[o];[b][o]overlay=0:0,format=yuv420p[v]`,
               "-map", "[v]", "-map", "1:a:0",
             ]
             : ["-map", "0:v:0", "-map", "1:a:0", "-vf", vf]),
-          "-af", [...voiceAf, "aresample=48000", "aformat=channel_layouts=stereo"].join(","),
+          "-af", ["asetpts=PTS-STARTPTS", ...voiceAf, "aresample=48000", "aformat=channel_layouts=stereo"].join(","),
           "-frames:v", String(p.frames), "-t", secs(p.frames),
+          "-fps_mode", "cfr", "-video_track_timescale", "90000",
           "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
           "-c:a", "pcm_s16le",
         ];
@@ -445,11 +451,19 @@ export async function withMix(video: string, dir: string): Promise<void> {
  * own line), that the look or its fix could not be made and why. Nothing for a cut that passed, or was never due one.
  */
 export const saidOf = (d: Pick<DraftFile, "critique" | "unchecked">): Critique["fails"] => [...(d.critique?.fails ?? []), ...(d.unchecked ? [{ n: 0, why: d.unchecked }] : [])];
+/** Max flagged shots listed in chat before summarizing the rest. */
+const MAX_SAID_SHOTS = 4;
+
 /** saidOf in the chat's words, said with the cut being ready (owner, 2026-11-16: in the chat, not as lines on the Review page). */
 export function saidWords(fails: Critique["fails"]): string {
   const shots = fails.filter((f) => f.n).map((f) => `shot ${f.n} (${f.why})`);
-  const list = shots.length > 1 ? `${shots.slice(0, -1).join(", ")} and ${shots.at(-1)}` : shots[0];
-  return [list ? `I couldn't fix ${list}.` : "", ...fails.filter((f) => !f.n).map((f) => f.why.replace(/\.?$/, "."))].filter(Boolean).join(" ");
+  const list =
+    shots.length > MAX_SAID_SHOTS
+      ? `${shots.slice(0, MAX_SAID_SHOTS - 1).join(", ")}, and ${shots.length - (MAX_SAID_SHOTS - 1)} more shots — see Review for details`
+      : shots.length > 1
+        ? `${shots.slice(0, -1).join(", ")} and ${shots.at(-1)}`
+        : shots[0];
+  return [list ? `Notes on this draft: ${list}.` : "", ...fails.filter((f) => !f.n).map((f) => f.why.replace(/\.?$/, "."))].filter(Boolean).join(" ");
 }
 
 /**

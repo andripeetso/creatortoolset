@@ -8,7 +8,8 @@ import { Button } from "@/components/ui/button";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { confirmDialog } from "@/lib/dialogs";
 import { SheetTitle } from "@/components/ui/sheet";
-import { canUse, hasTeam, useAuth, useMe } from "@/lib/auth";
+import { canChange, hasTeam, useAuth, useMe } from "@/lib/auth";
+import { createEmpty } from "@/lib/editor";
 import { useWorkspace } from "@/lib/workspace";
 import { BLUR_WORDS, blurState, faceBlurOn, useFaceBlurAuto } from "./face-blur";
 import { clipHref } from "./folders";
@@ -210,9 +211,21 @@ function Panel({ libraryId, asset, startAt, serverPlays, inTrash, readOnly, mayK
     v.currentTime = s;
     void v.play().catch(() => {});
   };
+  const [openingTimeline, setOpeningTimeline] = useState(false);
   // New edit opens with this take picked: the other takes, the style and the rest are chosen there, and no edit is
   // made before Create and run (EditorPage reads the pick from the navigation's state)
   const newEdit = () => navigate("/editor?new=1", { state: { pick: [{ versionId: a.versionId, title: a.title }] } });
+  const openOnTimeline = async () => {
+    if (openingTimeline) return;
+    setOpeningTimeline(true);
+    try {
+      const made = await createEmpty({ name: a.title, sources: [a.versionId] });
+      navigate(`/editor/${made.id}/${made.draft}`);
+    } catch (e) {
+      onError(message(e));
+      setOpeningTimeline(false);
+    }
+  };
   // the folders it is in are read again after the move: its Folder line says where it is now
   const move = (id: string | null) => void onMove(id).then(() => setReread((n) => n + 1));
   // the file's blur answer (contracts Blur): turning it off asks first, turning it on queues the blur
@@ -274,7 +287,7 @@ function Panel({ libraryId, asset, startAt, serverPlays, inTrash, readOnly, mayK
           Share
         </DropdownMenuItem>
         {/* only a take someone talks in: an edit is built on those, and B-roll is laid over them by the edit itself */}
-        {a.kind === "video" && a.roll === "a" && canUse(me, "editor") && (
+        {a.kind === "video" && a.roll === "a" && canChange(me, "editor") && (
           <DropdownMenuItem onSelect={newEdit}>
             <Clapperboard className="h-4 w-4" />
             New project
@@ -467,9 +480,9 @@ function Panel({ libraryId, asset, startAt, serverPlays, inTrash, readOnly, mayK
     </div>
   );
 
-  // one row: the two everyday tools written out, the rest in the menu at the end
+  // one row: the everyday tools written out, the rest in the menu at the end
   const actions = (
-    <div className="flex items-center gap-2">
+    <div className="flex flex-wrap items-center gap-2">
       {inTrash ? (
         !a.review && !readOnly && (
           <Button size="sm" variant="outline" onClick={() => onTrash(false)}>
@@ -510,6 +523,12 @@ function Panel({ libraryId, asset, startAt, serverPlays, inTrash, readOnly, mayK
                 ))}
               </DropdownMenuContent>
             </DropdownMenu>
+          )}
+          {playable && a.state === "ready" && canChange(me, "editor") && (
+            <Button size="sm" variant="outline" disabled={openingTimeline} onClick={() => void openOnTimeline()}>
+              <Clapperboard className="h-4 w-4" />
+              Open on timeline
+            </Button>
           )}
           {more}
         </>

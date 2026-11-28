@@ -8,7 +8,7 @@ import { deviceOf, listDevices } from "../lib/devices";
 import { hostPath, rootAt } from "../lib/storage";
 import { libraryChanged } from "./access";
 import { libraryDb } from "./db";
-import { enqueueJob } from "./jobs";
+import { enqueueJob, prepareFirst } from "./jobs";
 import { needsProxy } from "./media/proxy";
 import { mayLeave } from "./upload-gate";
 import type { ProbeSummary } from "./media/probe";
@@ -407,6 +407,54 @@ placesApp.get("/:id/places/moves", async (c) => {
 });
 
 /**
+ * Checks/queues proxies for `ids` in `libraryId` visible to `username` (readerOf + canSee + not left-hidden).
+ * Returns `{ queued, pending }` or null when the caller cannot read the library.
+ */
+export async function ensureLibraryProxies(
+  username: string,
+  libraryId: string,
+  ids: string[],
+  opts: { check?: boolean; prioritize?: boolean } = {},
+): Promise<{ queued: string[]; pending: string[] } | null> {
+  const viewer = await readerOf(username, libraryId);
+  if (!viewer) return null;
+  const d = libraryDb();
+  const hasProxy = d.prepare(
+    `SELECT 1 FROM derivatives x WHERE x.version_id = ? AND x.kind = 'proxy' AND x.storage_key IS NOT NULL
+     UNION ALL
+     SELECT 1 FROM version_places p WHERE p.version_id = ? AND p.kind = 'proxy' AND p.state IN ('verified','found')
+     LIMIT 1`,
+  );
+  const activeProxy = d.prepare("SELECT 1 FROM jobs j WHERE j.version_id = ? AND j.kind = 'proxy' AND j.state IN ('queued','running') LIMIT 1");
+  const info = d.prepare(
+    "SELECT v.probe FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ? AND a.kind = 'video' AND a.current_version_id = v.id AND a.left_hidden_at IS NULL",
+  );
+  const queued: string[] = [];
+  const pending: string[] = [];
+  for (const v of await versionsOf(libraryId, viewer, "", ids)) {
+    if (hasProxy.get(v.id, v.id)) continue;
+    if (activeProxy.get(v.id)) {
+      pending.push(v.id);
+      continue;
+    }
+    if (opts.check) continue;
+    const r = info.get(v.id) as { probe: string | null } | undefined;
+    const p = r?.probe ? (JSON.parse(r.probe) as ProbeSummary) : null;
+    if (!p?.width || !p.height) continue;
+    // a file indexed on a Mac carries no codec (on-mac.ts): its size alone says it is heavy
+    if (!(p.vcodec === "mac" ? Math.min(p.width, p.height) > 1080 : needsProxy(p))) continue;
+    // never of an original waiting for its blur: its proxy is made from its blurred copy (docs/media-library-proxies-prd.md §1)
+    if (!mayLeave(libraryId, { versionId: v.id }).ok) continue;
+    enqueueJob(d, libraryId, v.id, "proxy", username, true);
+    if (opts.prioritize) prepareFirst(v.id);
+    queued.push(v.id);
+    pending.push(v.id);
+  }
+  if (queued.length) libraryChanged(libraryId);
+  return { queued, pending };
+}
+
+/**
  * POST /api/library/:id/proxies {versions} → { queued }: an edit opened in the editor. Each of its videos that plays
  * slowly as it is (above 1080p, or a file the browser can't play: a phone's 4K HEVC; media/proxy.ts needsProxy) and has
  * no proxy on the server or on any computer gets a proxy job. The job takes the usual road (library-package.ts): the
@@ -414,32 +462,9 @@ placesApp.get("/:id/places/moves", async (c) => {
  * The proxy is a derivative of the same version, so whatever the original carries (a "not blurred yet" mark) holds for it.
  */
 placesApp.post("/:id/proxies", async (c) => {
-  const user = c.get("user");
-  const libraryId = c.req.param("id");
-  const viewer = await readerOf(user.username, libraryId);
-  if (!viewer) return c.json({ error: "Not found", code: "not_found" }, 404);
   const b = ((await c.req.json().catch(() => null)) ?? {}) as Record<string, unknown>;
   const ids = Array.isArray(b.versions) ? b.versions.filter(isId) : [];
   if (ids.length > PLACES_MAX) return c.json({ error: `At most ${PLACES_MAX} versions`, code: "invalid" }, 400);
-  const d = libraryDb();
-  const none = d.prepare(
-    `SELECT v.probe FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ? AND a.kind = 'video' AND a.current_version_id = v.id
-       AND NOT EXISTS (SELECT 1 FROM derivatives x WHERE x.version_id = v.id AND x.kind = 'proxy' AND x.storage_key IS NOT NULL)
-       AND NOT EXISTS (SELECT 1 FROM version_places p WHERE p.version_id = v.id AND p.kind = 'proxy' AND p.state IN ('verified','found'))
-       AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.version_id = v.id AND j.kind = 'proxy' AND j.state IN ('queued','running'))`,
-  );
-  const queued: string[] = [];
-  for (const v of await versionsOf(libraryId, viewer, "", ids)) {
-    const r = none.get(v.id) as { probe: string | null } | undefined;
-    const p = r?.probe ? (JSON.parse(r.probe) as ProbeSummary) : null;
-    if (!p?.width || !p.height) continue;
-    // a file indexed on a Mac carries no codec (on-mac.ts): its size alone says it is heavy
-    if (!(p.vcodec === "mac" ? Math.min(p.width, p.height) > 1080 : needsProxy(p))) continue;
-    // never of an original waiting for its blur: its proxy is made from its blurred copy (docs/media-library-proxies-prd.md §1)
-    if (!mayLeave(libraryId, { versionId: v.id }).ok) continue;
-    enqueueJob(d, libraryId, v.id, "proxy", user.username, true);
-    queued.push(v.id);
-  }
-  if (queued.length) libraryChanged(libraryId);
-  return c.json({ queued });
+  const res = await ensureLibraryProxies(c.get("user").username, c.req.param("id"), ids);
+  return res ? c.json({ queued: res.queued }) : c.json({ error: "Not found", code: "not_found" }, 404);
 });

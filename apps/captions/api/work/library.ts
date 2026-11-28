@@ -9,7 +9,7 @@ import { env } from "../lib/env";
 import { sha256File } from "../lib/uploads";
 import { fingerprint } from "../library/fingerprint";
 import { looksLikeSong, probe, type ProbeSummary } from "../library/media/probe";
-import { makeProxy, wantsProxy } from "../library/media/proxy";
+import { isUnplayable, makeProxy, wantsProxy } from "../library/media/proxy";
 import { makeSprite } from "../library/media/sprite";
 import { makeThumb } from "../library/media/thumb";
 import { makeWave } from "../library/media/wave";
@@ -81,7 +81,7 @@ async function derive(lib: LibraryPackage, src: string, dir: string, hear?: (sou
     if (p.vcodec) await makeThumb(src, (files.thumb = out("thumb.jpg")), p.duration, !!p.cover, p.turn);
     await makeWave(src, (files.wave = out("wave.json")), !!p.acodec);
     const still = PICTURE_FILE.test(src) || (!!p.vcodec && !p.cover && (!(p.duration > 0) || p.format === "image2" || /_pipe$/.test(p.format)));
-    if (!still && wantsProxy(p, lib.proxy ?? { cloud: false, on: false }) && (await makeProxy(src, out("proxy.mp4"), !!p.cover || !p.vcodec, lib.proxy?.quality, p.duration))) files.proxy = out("proxy.mp4");
+    if (!still && wantsProxy(p, lib.proxy ?? { cloud: false, on: false }) && (await makeProxy(src, out("proxy.mp4"), !!p.cover || !p.vcodec, lib.proxy?.quality, p.duration, isUnplayable(p)))) files.proxy = out("proxy.mp4");
     let print: string | undefined;
     if (p.vcodec && !p.cover && !still && !lib.music && !looksLikeSong(lib.file.title, p)) {
       // from the lighter copy, as the server's steps read it (library/worker.ts lighter)
@@ -106,7 +106,7 @@ async function derive(lib: LibraryPackage, src: string, dir: string, hear?: (sou
   // no proxy when it is no smaller than the original: the server then keeps the original as its light copy
   // one kept on this computer leaves the disk its free-space floor (cache.ts roomFor), else none is made and the original plays
   if (kind === "proxy" && lib.keepProxy && !roomFor(proxyBytes(sizeOf(src) ?? 0, p.duration, lib.proxy?.quality))) return { files: {} };
-  if (kind === "proxy") return { files: (await makeProxy(src, out("proxy.mp4"), !!p.cover || !p.vcodec, lib.proxy?.quality, p.duration)) ? { proxy: out("proxy.mp4") } : {} };
+  if (kind === "proxy") return { files: (await makeProxy(src, out("proxy.mp4"), !!p.cover || !p.vcodec, lib.proxy?.quality, p.duration, isUnplayable(p))) ? { proxy: out("proxy.mp4") } : {} };
   if (kind === "wave") return { files: { wave: (await makeWave(src, out("wave.json"), !!p.acodec), out("wave.json")) } };
   if (kind === "sprite") return { files: { sprite: (await makeSprite(src, out("sprite.jpg"), p.duration, p.turn), out("sprite.jpg")) } };
   if (kind === "fingerprint") return { files: {}, fingerprint: JSON.stringify(await fingerprint(src)) };

@@ -22,6 +22,9 @@ import { emptyTracks, NATURAL_CUT, sourceOf } from "./timeline";
 import { lineTakes } from "./takes";
 import type { ProbeSummary } from "../library/media/probe";
 import { homeOf } from "../library/access";
+import { ensureLibraryProxies } from "../library/places";
+import { PLACES_MAX } from "../../contracts/places";
+import { isId } from "../lib/ids";
 import { statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { PROPOSAL_STILLS } from "../../contracts/editor-styles";
@@ -486,6 +489,54 @@ editorApp.post("/:id/pass", async (c) => {
   await markPasses(r.e.id, queued);
   for (const [n, p] of Object.entries(queued)) enqueueJob(db, r.e.workspaceId, `${r.e.id}:${n}`, p, r.user, true, "edit_jobs");
   return c.json(viewFor(r));
+});
+
+/**
+ * Ensures local proxies exist or are queued for heavy / browser-unplayable clips used by this edit (4K, OBS .mkv,
+ * HEVC, 10-bit). With `versions`, checks those version ids (capped at PLACES_MAX); else every non-own-file source across
+ * the edit and its draft(s). With `check: true`, only reports active proxy jobs without enqueueing new ones.
+ */
+editorApp.post("/:id/proxies", async (c) => {
+  const r = await load(c);
+  if (!r) return notFound(c);
+  const b = await body(c);
+  const checkOnly = b.check === true;
+  let ids: string[];
+  if (Array.isArray(b.versions)) {
+    ids = [...new Set(b.versions.filter(isId))];
+    if (ids.length > PLACES_MAX) return c.json({ error: `At most ${PLACES_MAX} versions`, code: "invalid" }, 400);
+  } else {
+    const set = new Set<string>(r.e.sources);
+    const drafts = typeof b.draft === "string" ? [b.draft] : draftNames(r.e.id);
+    for (const n of drafts) {
+      const tl = readDraft(r.e.id, n)?.timeline;
+      if (!tl) continue;
+      for (const [k, s] of Object.entries(tl.sources)) if (!s.file) set.add(String(s.versionId ?? k));
+    }
+    ids = [...set].filter(isId).slice(0, PLACES_MAX);
+  }
+  if (!ids.length) return c.json({ queued: [], pending: [] });
+  const rows = libraryDb()
+    .prepare(
+      `SELECT v.id, a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id
+       WHERE a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND v.id IN (SELECT value FROM json_each(?))`,
+    )
+    .all(JSON.stringify(ids)) as { id: string; library_id: string }[];
+  const byLib = new Map<string, string[]>();
+  for (const row of rows) {
+    const list = byLib.get(row.library_id) ?? [];
+    list.push(row.id);
+    byLib.set(row.library_id, list);
+  }
+  const queued: string[] = [];
+  const pending: string[] = [];
+  for (const [libId, libIds] of byLib) {
+    const res = await ensureLibraryProxies(r.user, libId, libIds, { check: checkOnly, prioritize: true });
+    if (!res) continue;
+    queued.push(...res.queued);
+    pending.push(...res.pending);
+  }
+  return c.json({ queued, pending });
 });
 
 editorApp.get("/:id", async (c) => {

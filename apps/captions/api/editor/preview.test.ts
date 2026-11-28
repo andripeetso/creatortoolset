@@ -302,14 +302,50 @@ describe("AI Editor preview", () => {
     expect(m.owner).toBe("mem-a");
     expect(m.versions[0]!.draft).toMatchObject({ edit: made.id, name: "v1", by: "mem-c" });
   }, 60_000);
+
+  it("joins segments from a VFR / non-standard-timescale recording with uniform 90 kHz timescale and monotonic timestamps", async () => {
+    // a 1000 Hz timescale clip (as screen/OBS MKV/MP4 recordings produce) cut into 3 segments
+    const vfr = path.join(dir, "Tiny Acrobatics vfr.mp4");
+    execFileSync(ffmpegCommand(), [
+      "-v", "error", "-y",
+      "-f", "lavfi", "-i", "testsrc=duration=4:size=360x640:rate=30",
+      "-f", "lavfi", "-i", "sine=frequency=440:duration=4",
+      "-vf", "setpts=PTS+0.123/TB",
+      "-video_track_timescale", "1000",
+      "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", vfr,
+    ]);
+    const t = timeline();
+    t.tracks.V1.items = [
+      { src: "ver_a", in: 5, len: 15, rec: 0, link: "c1" },
+      { src: "ver_a", in: 30, len: 15, rec: 15, link: "c2" },
+      { src: "ver_a", in: 60, len: 15, rec: 30, link: "c3", zoom: 1.15 },
+    ];
+    t.tracks.A1.items = t.tracks.V1.items.map(({ src, in: i, len, rec, link }) => ({ src, in: i, len, rec, link }));
+    const out = path.join(dir, "vfr-joined.mp4");
+    await renderPreview(t, { ver_a: vfr }, out);
+    expect(Number(ffprobe(out, "-count_frames", "-select_streams", "v:0", "-show_entries", "stream=nb_read_frames", "-of", "csv=p=0"))).toBe(45);
+    expect(ffprobe(out, "-select_streams", "v:0", "-show_entries", "stream=time_base", "-of", "csv=p=0")).toBe("1/90000");
+    const pts = ffprobe(out, "-select_streams", "v:0", "-show_entries", "frame=pts", "-of", "default=noprint_wrappers=1:nokey=1")
+      .split("\n")
+      .filter(Boolean)
+      .map(Number);
+    expect(pts).toHaveLength(45);
+    for (let i = 1; i < pts.length; i++) expect(pts[i]! - pts[i - 1]!).toBe(3000);
+    expect(await checkRender(out, { duration: previewSeconds(t), sound: true })).toEqual({ ok: true });
+  }, 60_000);
 });
 
 describe("saidWords", () => {
-  it("says what the look before Review left in the chat's words, nothing when the cut passed", async () => {
+  it("says what the look before Review left in the chat's words, capped for long lists, nothing when the cut passed", async () => {
     const { saidWords } = await import("./preview");
     expect(saidWords([])).toBe("");
-    expect(saidWords([{ n: 37, why: "same fight again, ends early" }])).toBe("I couldn't fix shot 37 (same fight again, ends early).");
+    expect(saidWords([{ n: 37, why: "same fight again, ends early" }])).toBe("Notes on this draft: shot 37 (same fight again, ends early).");
     expect(saidWords([{ n: 3, why: "dark" }, { n: 5, why: "shaky" }, { n: 9, why: "too long" }, { n: 0, why: "The look could not be made" }]))
-      .toBe("I couldn't fix shot 3 (dark), shot 5 (shaky) and shot 9 (too long). The look could not be made.");
+      .toBe("Notes on this draft: shot 3 (dark), shot 5 (shaky) and shot 9 (too long). The look could not be made.");
+    expect(saidWords([{ n: 1, why: "a" }, { n: 2, why: "b" }, { n: 3, why: "c" }, { n: 4, why: "d" }]))
+      .toBe("Notes on this draft: shot 1 (a), shot 2 (b), shot 3 (c) and shot 4 (d).");
+    const many = Array.from({ length: 14 }, (_, i) => ({ n: i + 1, why: `note ${i + 1}` }));
+    expect(saidWords(many)).toBe("Notes on this draft: shot 1 (note 1), shot 2 (note 2), shot 3 (note 3), and 11 more shots — see Review for details.");
+    expect(saidWords([{ n: 0, why: "The look could not be made" }])).toBe("The look could not be made.");
   });
 });

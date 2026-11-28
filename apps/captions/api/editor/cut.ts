@@ -177,15 +177,27 @@ function pause(e: Float32Array, lo: number, hi: number, step: 1 | -1, need: numb
   }
 }
 
-/** Speech pieces of frames [a, b): silences of minSilence or more cut, keeping a little each side; never outside [a, b). */
-export function speechPieces(e: Float32Array, a: number, b: number, fps: number, c: CutSettings = CUT): [number, number][] {
+/** Margin inside a word span that a cut may not cross (tighter than checks.ts CLIP_S = 0.06). */
+const WORD_MARGIN_S = 0.04;
+
+/** Speech pieces of frames [a, b): silences of minSilence or more cut, keeping a little each side; never outside [a, b), and never through `words` when given. */
+export function speechPieces(e: Float32Array, a: number, b: number, fps: number, c: CutSettings = CUT, words?: TimedWord[]): [number, number][] {
   const fr = (s: number) => Math.max(1, Math.round(s * fps));
   const loud = (f: number) => (e[f] ?? 0) >= c.threshold;
+  const wordAt = (frame: number) => {
+    if (!words?.length) return undefined;
+    const t = frame / fps;
+    return words.find((w) => w.s < t - WORD_MARGIN_S && w.e > t + WORD_MARGIN_S);
+  };
   let first = -1;
   let last = -1;
   for (let f = a; f < b; f++) if (loud(f)) (first < 0 && (first = f), (last = f));
   if (first < 0) return [];
-  const pieces: [number, number][] = [[Math.max(first - fr(c.lineHeadS), a), 0]];
+  let start = Math.max(first - fr(c.lineHeadS), a);
+  const ws = wordAt(start);
+  if (ws) start = Math.max(a, Math.floor(ws.s * fps));
+  const pieces: [number, number][] = [[start, 0]];
+  const minGap = Math.max(1, fr(c.minSilenceS) - fr(c.keepTailS) - fr(c.keepHeadS));
   let quiet = 0;
   for (let f = first; f <= last; f++) {
     if (!loud(f)) {
@@ -193,12 +205,35 @@ export function speechPieces(e: Float32Array, a: number, b: number, fps: number,
       continue;
     }
     if (quiet >= fr(c.minSilenceS)) {
-      pieces[pieces.length - 1]![1] = f - quiet + fr(c.keepTailS);
-      pieces.push([f - fr(c.keepHeadS), 0]);
+      let tail = f - quiet + fr(c.keepTailS);
+      let head = f - fr(c.keepHeadS);
+      let ok = true;
+      if (words?.length) {
+        const wt = wordAt(tail);
+        if (wt) tail = Math.max(tail, Math.ceil(wt.e * fps));
+        const wh = wordAt(head);
+        if (wh) head = Math.min(head, Math.floor(wh.s * fps));
+        ok =
+          tail > pieces[pieces.length - 1]![0] &&
+          head - tail >= minGap &&
+          !wordAt(tail) &&
+          !wordAt(head) &&
+          !words.some((w) => {
+            const mid = (w.s + w.e) / 2;
+            return mid > tail / fps && mid < head / fps;
+          });
+      }
+      if (ok) {
+        pieces[pieces.length - 1]![1] = tail;
+        pieces.push([head, 0]);
+      }
     }
     quiet = 0;
   }
-  pieces[pieces.length - 1]![1] = Math.min(last + 1 + fr(c.lineTailS), b);
+  let stop = Math.min(last + 1 + fr(c.lineTailS), b);
+  const we = wordAt(stop);
+  if (we) stop = Math.min(b, Math.ceil(we.e * fps));
+  pieces[pieces.length - 1]![1] = stop;
   const len = (p: [number, number]) => p[1] - p[0];
   while (pieces.length && len(pieces[0]!) < fr(c.minPieceS)) pieces.shift();
   while (pieces.length && len(pieces[pieces.length - 1]!) < fr(c.minPieceS)) pieces.pop();
@@ -262,11 +297,14 @@ export function cutTake(words: TimedWord[], from: number, to: number, text: stri
   let ranges: [number, number][] = [[head, tail]];
   const gone = restarts(words.slice(i0, i1), c);
   for (const [i, j] of strays(take, pairs, c)) if (!gone.some(([x, y]) => i - t0 < y && j - t0 > x)) gone.push([i - t0, j - t0]);
+  const dropped = new Set<number>();
   for (const [i, j] of gone) {
+    for (let k = i; k < j; k++) dropped.add(k);
     removed.push(`false start: ${quote(i0 + i, i0 + j)}`);
     ranges = without(ranges, i === 0 ? head : between(i0 + i, "before"), between(i0 + j, "after"));
   }
+  const kept = words.slice(i0, i1).filter((_, k) => !dropped.has(k));
   // no loudness read (a file with no sound frames): keep the word ranges as they are
-  const segments = e.length ? ranges.flatMap(([a, b]) => speechPieces(e, a, b, fps, c)) : ranges;
+  const segments = e.length ? ranges.flatMap(([a, b]) => speechPieces(e, a, b, fps, c, kept)) : ranges;
   return { segments, removed };
 }

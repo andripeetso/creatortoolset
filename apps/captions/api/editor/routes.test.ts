@@ -520,4 +520,62 @@ describe.skipIf(rootReplaced)("Editor: projects, versions and the timeline page"
     libraryDb().prepare("UPDATE asset_versions SET probe = NULL WHERE id = 'ver_a2'").run();
     expect((await call("maker", "POST", "/api/editor/empty", { sources: ["ver_a2"] })).status).toBe(409);
   });
+
+  it("POST /:id/proxies queues proxies for heavy/unplayable clips, skips playable/proxied ones, and reports pending", async () => {
+    const db = libraryDb();
+    db.exec(`
+      INSERT INTO assets (id, library_id, kind, title, current_version_id, created_by, created_at, trashed_at) VALUES
+        ('ast_4k', 'lib_a', 'video', 'OBS 4K', 'ver_4k', 'maker', 0, NULL),
+        ('ast_mkv', 'lib_a', 'video', 'Capture', 'ver_mkv', 'maker', 0, NULL),
+        ('ast_hd', 'lib_a', 'video', 'HD H264', 'ver_hd', 'maker', 0, NULL),
+        ('ast_hasp', 'lib_a', 'video', 'Has Proxy', 'ver_hasp', 'maker', 0, NULL);
+      INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, state, created_by, created_at, probe) VALUES
+        ('ver_4k', 'ast_4k', 1, 'k4k', 1000, 'x4k', 'ready', 'maker', 0, '{"duration":5,"width":3840,"height":2160,"fps":30,"rotation":0,"format":"mov,mp4","vcodec":"h264","pixFmt":"yuv420p","acodec":"aac"}'),
+        ('ver_mkv', 'ast_mkv', 1, 'kmkv', 1000, 'xmkv', 'ready', 'maker', 0, '{"duration":5,"width":1920,"height":1080,"fps":30,"rotation":0,"format":"matroska,webm","vcodec":"h264","pixFmt":"yuv420p","acodec":"aac"}'),
+        ('ver_hd', 'ast_hd', 1, 'khd', 1000, 'xhd', 'ready', 'maker', 0, '{"duration":5,"width":1920,"height":1080,"fps":30,"rotation":0,"format":"mov,mp4","vcodec":"h264","pixFmt":"yuv420p","acodec":"aac"}'),
+        ('ver_hasp', 'ast_hasp', 1, 'khasp', 1000, 'xhasp', 'ready', 'maker', 0, '{"duration":5,"width":3840,"height":2160,"fps":30,"rotation":0,"format":"mov,mp4","vcodec":"hevc","pixFmt":"yuv420p10le","acodec":"aac"}');
+      INSERT INTO derivatives (version_id, kind, storage_key, bytes) VALUES
+        ('ver_hasp', 'proxy', 'p/ver_hasp.mp4', 100);
+    `);
+    const { id } = await json<{ id: string }>(create("maker", ["ver_4k", "ver_hd", "ver_hasp"]));
+    await saveDraft(id, "v1", {
+      timeline: {
+        name: "Hook v1", fps: 30, width: 1080, height: 1920, tracks: emptyTracks(), markers: [],
+        sources: {
+          ver_4k: { versionId: "ver_4k", name: "OBS 4K", fps: 30, tc: 0, dur: 150, w: 3840, h: 2160 },
+          ver_mkv: { versionId: "ver_mkv", name: "Capture", fps: 30, tc: 0, dur: 150, w: 1920, h: 1080 },
+          card_1: { versionId: "card_1", name: "Card", fps: 30, tc: 0, dur: 30, w: 1080, h: 1920, file: "cards/1" },
+        },
+      },
+      notes: [],
+    });
+    // another user gets 404
+    expect((await call("other", "POST", `/api/editor/${id}/proxies`, {})).status).toBe(404);
+    // default collects edit sources + draft non-own-file sources; queues 4K + MKV, skips 1080p H264 + already-proxied + own-file card
+    const first = await json<{ queued: string[]; pending: string[] }>(call("maker", "POST", `/api/editor/${id}/proxies`, {}));
+    expect(first.queued.sort()).toEqual(["ver_4k", "ver_mkv"]);
+    expect(first.pending.sort()).toEqual(["ver_4k", "ver_mkv"]);
+    // calling again while active reports them pending without re-queueing
+    const again = await json<{ queued: string[]; pending: string[] }>(call("maker", "POST", `/api/editor/${id}/proxies`, { versions: ["ver_4k", "ver_mkv"] }));
+    expect(again).toEqual({ queued: [], pending: ["ver_4k", "ver_mkv"] });
+    // once ver_4k gets a proxy and ver_mkv fails, check: true reports neither pending and does NOT re-queue failed jobs
+    db.prepare("INSERT INTO derivatives (version_id, kind, storage_key, bytes) VALUES ('ver_4k', 'proxy', 'p/ver_4k.mp4', 100)").run();
+    db.prepare("UPDATE jobs SET state = 'done' WHERE version_id = 'ver_4k' AND kind = 'proxy'").run();
+    db.prepare("UPDATE jobs SET state = 'failed', error = 'bad' WHERE version_id = 'ver_mkv' AND kind = 'proxy'").run();
+    const checked = await json<{ queued: string[]; pending: string[] }>(call("maker", "POST", `/api/editor/${id}/proxies`, { versions: ["ver_4k", "ver_mkv"], check: true }));
+    expect(checked).toEqual({ queued: [], pending: [] });
+    expect((db.prepare("SELECT state FROM jobs WHERE version_id = 'ver_mkv' AND kind = 'proxy'").get() as { state: string }).state).toBe("failed");
+    // oversized version lists are rejected with 400
+    const tooMany = Array.from({ length: 201 }, (_, i) => `ver_${i}`);
+    expect((await call("maker", "POST", `/api/editor/${id}/proxies`, { versions: tooMany })).status).toBe(400);
+    // left-hidden assets are excluded
+    db.exec(`
+      INSERT INTO assets (id, library_id, kind, title, current_version_id, created_by, created_at, trashed_at, left_hidden_at) VALUES
+        ('ast_hidden', 'lib_a', 'video', 'Hidden 4K', 'ver_hidden', 'maker', 0, NULL, 123);
+      INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, state, created_by, created_at, probe) VALUES
+        ('ver_hidden', 'ast_hidden', 1, 'khidden', 1000, 'xhidden', 'ready', 'maker', 0, '{"duration":5,"width":3840,"height":2160,"fps":30,"rotation":0,"format":"mov,mp4","vcodec":"h264","pixFmt":"yuv420p","acodec":"aac"}');
+    `);
+    expect(await json<{ queued: string[]; pending: string[] }>(call("maker", "POST", `/api/editor/${id}/proxies`, { versions: ["ver_hidden"] }))).toEqual({ queued: [], pending: [] });
+  });
 });
+

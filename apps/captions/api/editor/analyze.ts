@@ -246,7 +246,8 @@ export async function analyzeGate({ edit, job }: Pick<StepContext, "edit" | "job
         .get(id) as unknown as SourceRow,
   );
   // the edit's own language, else its workspace's (Settings → Workspace → Details); neither: the asker's own list
-  const spoken = edit.languages?.length ? edit.languages : await videoLanguages(ownerOf(edit), edit.projectId);
+  const explicitLang = !!edit.languages?.length;
+  const spoken = explicitLang ? edit.languages : await videoLanguages(ownerOf(edit), edit.projectId);
   const notes: string[] = [];
   const planned = !!edit.plan || allBroll(edit);
   const ready: { row: SourceRow; probe: ProbeSummary; words: TimedWord[] }[] = [];
@@ -297,8 +298,8 @@ export async function analyzeGate({ edit, job }: Pick<StepContext, "edit" | "job
     const storedLang = words
       ? languageCode((db.prepare("SELECT language FROM transcripts WHERE version_id = ?").get(row.id) as { language: string | null } | undefined)?.language)
       : null;
-    // a take heard as silence, or heard in another language than the edit names, is heard once more in that language
-    if (words && languages && (!words.length || (storedLang !== null && !languages.includes(storedLang)))) {
+    // a take heard as silence is heard once more in `languages`; a non-empty transcript is only re-transcribed for language mismatch when the edit explicitly named its languages
+    if (words && languages && (!words.length || (explicitLang && storedLang !== null && !languages.includes(storedLang)))) {
       const again = `${row.id}|${languages.join(",")}`;
       if (!askedAgain.has(again)) {
         askedAgain.add(again);

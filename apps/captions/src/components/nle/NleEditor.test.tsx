@@ -160,7 +160,7 @@ describe("beside the chats (chat mode)", () => {
     localStorage.setItem("ct-nle-panels", JSON.stringify({ media: true, inspector: false }));
     useChatMode.setState({ on: true, shown: true });
     const foots: NleFoot[] = [];
-    const p = await mount(spare, { bin: <div />, bar: <span>Draft 2</span>, foot: (f) => (foots.push(f), <p>{f.changes} by you</p>) });
+    const p = await mount(spare, { bin: <div />, side: () => <div />, bar: <span>Draft 2</span>, foot: (f) => (foots.push(f), <p>{f.changes} by you</p>) });
     expect(p.host.querySelector('[role="toolbar"][aria-label="Editor"]')?.textContent).toContain("Draft 2");
     expect(shows(p.host, "Inspector")).toBe(false);
     expect(heads(p.host)).toEqual(["V1", "A1"]);

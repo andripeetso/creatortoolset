@@ -61,8 +61,8 @@ describe("AI Editor draft: the cut of a plain edit stays what it was", () => {
     const text = `${JSON.stringify(got, null, 1)}\n`;
     if (process.env.UPDATE_GOLDEN) writeFileSync(file, text);
     expect(text).toBe(readFileSync(file, "utf8"));
-    // the fixture does make the cut work: both pauses of the first line are cut, so it is three shots, the middle one punched in
+    // the fixture does make the cut work: both pauses of the first line are cut into three ~1 s shots that hold wide, then line 2 punches in
     const v1 = got.v1!.timeline.tracks.V1.items;
-    expect(v1.map((i) => [i.src, i.zoom ?? 1])).toEqual([["ver_a", 1], ["ver_a", 1.15], ["ver_a", 1], ["ver_b", 1.15], ["ver_b", 1]]);
+    expect(v1.map((i) => [i.src, i.zoom ?? 1])).toEqual([["ver_a", 1], ["ver_a", 1], ["ver_a", 1], ["ver_b", 1.15], ["ver_b", 1.15]]);
   });
 });

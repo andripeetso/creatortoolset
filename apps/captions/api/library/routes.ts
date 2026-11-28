@@ -26,7 +26,7 @@ import { type Blur, cantFind, LIBRARY_WORDS, flagsOf, HOSTED_DEFAULT, hostedSett
 import type { LibraryViewer } from "../../contracts/library-source";
 import { enqueueJob, prepareFirst } from "./jobs";
 import { fileUnfiled, organizeOf } from "./organize";
-import { needsProxy, wantsProxy } from "./media/proxy";
+import { isUnplayable, needsProxy, wantsProxy } from "./media/proxy";
 import type { ProbeSummary } from "./media/probe";
 import { stripOf, thumbsVtt } from "./media/sprite";
 import { spaceApp } from "./space";
@@ -135,7 +135,9 @@ export function unproxied(libraryId: string, versionId?: string, hosted = false)
   const keeps = keepsOnlyOriginals(libraryId);
   const on = librarySetting(libraryId, "proxy") && !keeps;
   const want = { cloud: !keeps && (proxiesInCloud(libraryId) || (hosted && on)), on };
-  if (!want.cloud && !want.on) return [];
+  // on This Mac, opening a single browser-unplayable clip auto-queues a local proxy even with Generate proxies off
+  const macSingle = serverKind() === "mac" && !!versionId;
+  if (!want.cloud && !want.on && !macSingle) return [];
   const rows = db()
     .prepare(
       `SELECT v.id, v.created_by, v.probe, v.source_key FROM asset_versions v JOIN assets a ON a.id = v.asset_id
@@ -147,7 +149,11 @@ export function unproxied(libraryId: string, versionId?: string, hosted = false)
     .all(libraryId, versionId ?? null, versionId ?? null) as { id: string; created_by: string; probe: string; source_key: string }[];
   // Blur faces: the server cuts no proxy of a clip not blurred that it holds; one on a computer is made and kept there.
   // A file added with Skip processing is left out above; Make in What's made still covers it
-  return rows.filter((r) => wantsProxy(JSON.parse(r.probe) as ProbeSummary, want) && (r.source_key.startsWith("mac:") || mayLeave(libraryId, { versionId: r.id }).ok));
+  return rows.filter((r) => {
+    const p = JSON.parse(r.probe) as ProbeSummary;
+    const macUnplayable = macSingle && isUnplayable(p);
+    return (wantsProxy(p, want) || macUnplayable) && (r.source_key.startsWith("mac:") || mayLeave(libraryId, { versionId: r.id }).ok);
+  });
 }
 
 /** The name an original downloads as: the file's own name when it is read where it is, else its title with its type's extension. */

@@ -12,8 +12,8 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { Input } from "@/components/ui/input";
 import { canChange, useMe } from "@/lib/auth";
 import { promptDialog } from "@/lib/dialogs";
-import { clipSource, duplicateVersion, exportUrl, getDraft, getEdit, markVersion, saveTimeline } from "@/lib/editor";
-import { listAssets, listLibraries } from "@/lib/library";
+import { clipSource, duplicateVersion, ensureEditProxies, exportUrl, getDraft, getEdit, markVersion, saveTimeline } from "@/lib/editor";
+import { listAssets, listLibraries, useLibraryChanges } from "@/lib/library";
 import { useCachedLoad } from "@/lib/local-cache";
 import { toNle } from "@/lib/nle/draft";
 import type { NleTimeline } from "@/lib/nle/model";
@@ -59,10 +59,47 @@ export function NleDraftPage({ id, name }: { id: string; name: string }) {
   const control = useRef<NleControl | null>(null);
   // the Review version that is exactly the saved timeline
   const [filed, setFiled] = useState<Draft["filed"]>(null);
+  // clips whose proxy job is queued/running; leaving this set bumps retryRev so NlePlayer reloads /play seamlessly
+  const [pendingProxies, setPendingProxies] = useState<ReadonlySet<string>>(() => new Set());
+  const [retryRev, setRetryRev] = useState<Record<string, number>>({});
+  const pendingRef = useRef(pendingProxies);
+  pendingRef.current = pendingProxies;
+  const scopeRef = useRef(`${id}/${name}`);
+  scopeRef.current = `${id}/${name}`;
+  const seenSources = useRef<Set<string>>(new Set());
+
+  const ensureProxies = useCallback((versions: string[], check = false) => {
+    if (!editable || !versions.length) return;
+    const scope = `${id}/${name}`;
+    void ensureEditProxies(id, versions, check ? { check: true } : undefined).then(({ pending }) => {
+      if (scopeRef.current !== scope) return;
+      const asked = new Set(versions);
+      const still = new Set(pending);
+      const done = [...pendingRef.current].filter((v) => asked.has(v) && !still.has(v));
+      setPendingProxies((prev) => {
+        const next = new Set(prev);
+        for (const v of asked) {
+          if (still.has(v)) next.add(v);
+          else next.delete(v);
+        }
+        return next.size === prev.size && [...next].every((v) => prev.has(v)) ? prev : next;
+      });
+      if (done.length) {
+        setRetryRev((prev) => {
+          const next = { ...prev };
+          for (const v of done) next[v] = (next[v] ?? 0) + 1;
+          return next;
+        });
+      }
+    }, () => {});
+  }, [id, name, editable]);
 
   useEffect(() => {
     let gone = false;
     setDraft(null);
+    setPendingProxies(new Set());
+    setRetryRev({});
+    seenSources.current = new Set();
     getDraft(id, name).then((d) => {
       if (gone) return;
       setDraft(d);
@@ -70,6 +107,18 @@ export function NleDraftPage({ id, name }: { id: string; name: string }) {
     }, (x) => !gone && setLoadError(message(x)));
     return () => void (gone = true);
   }, [id, name]);
+
+  useEffect(() => {
+    if (!draft || !editable) return;
+    const versions = [...new Set(Object.entries(draft.timeline.sources).flatMap(([k, s]) => (s.file ? [] : [String(s.versionId ?? k)])))];
+    seenSources.current = new Set(versions);
+    ensureProxies(versions);
+  }, [draft, editable, ensureProxies]);
+
+  useLibraryChanges(() => {
+    if (pendingRef.current.size) ensureProxies([...pendingRef.current], true);
+  });
+
   const initial = useMemo(() => (draft ? toNle(draft.timeline) : null), [draft]);
   const making = e?.jobs.find((j) => j.variant === name && (j.state === "queued" || j.state === "running"));
   // read again when a step of this version ends (its render filed)
@@ -84,8 +133,12 @@ export function NleDraftPage({ id, name }: { id: string; name: string }) {
   // a library clip plays from the server (its proxy, or the original); a card made in the edit's own folder doesn't play here
   const urlOf = useCallback((src: string, tl: NleTimeline): NleFile | null => {
     const s = tl.sources[src];
-    return !s || s.file ? null : { url: `/api/library/media/${encodeURIComponent(String(s.versionId ?? src))}/play` };
-  }, []);
+    if (!s || s.file) return null;
+    const ver = String(s.versionId ?? src);
+    const rev = retryRev[ver];
+    const url = `/api/library/media/${encodeURIComponent(ver)}/play${rev ? `?r=${rev}` : ""}`;
+    return pendingProxies.has(ver) ? { url, preparing: true } : { url };
+  }, [pendingProxies, retryRev]);
   const save = async (tl: NleTimeline) => {
     setSaving(true);
     setRefused(null);
@@ -156,9 +209,21 @@ export function NleDraftPage({ id, name }: { id: string; name: string }) {
             bar={e ? <RoundBar e={e} name={name} /> : <span className="truncate text-[13px] font-medium text-zinc-200">{title}</span>}
             side={e?.lines.length ? (s) => <TakePicker key={name} s={s} e={e} name={name} title={title} /> : undefined}
             foot={e && editable ? (f) => <ChatFoot f={f} e={e} name={name} unsaved={unsaved} filed={filed} busy={saving || !!making} /> : undefined}
-            onChange={(now, was) => setUnsaved(now === was ? "" : describeChanges(was, now))}
+            onChange={(now, was) => {
+              setUnsaved(now === was ? "" : describeChanges(was, now));
+              if (now === was) return;
+              const added = [...new Set(Object.entries(now.sources).flatMap(([k, s]) => {
+                if (s.file) return [];
+                const v = String(s.versionId ?? k);
+                return seenSources.current.has(v) ? [] : [v];
+              }))];
+              if (added.length) {
+                for (const v of added) seenSources.current.add(v);
+                ensureProxies(added);
+              }
+            }}
             renders={draft.renders ?? OLD_SERVER}
-            rendered={filed ? { url: `/api/review/assets/${filed.assetId}/v/${filed.n}/play`, first: !!draft.timeline.plan } : null}
+            rendered={filed ? { url: `/api/review/assets/${filed.assetId}/v/${filed.n}/play`, first: !!draft.timeline.plan || pendingProxies.size > 0 } : null}
             readOnly={!editable}
             saving={saving ? { line: "Saving" } : null}
             bin={editable ? <MediaBin onUse={(clip) => void dropOf(id, clip).then((d) => control.current?.put(d), (x) => toast.error(message(x)))} /> : undefined}
@@ -166,7 +231,12 @@ export function NleDraftPage({ id, name }: { id: string; name: string }) {
               const raw = dt.getData(BIN_MIME);
               return raw ? dropOf(id, (JSON.parse(raw) as BinClip).versionId) : null;
             }}
-            status={refused ? <span className="min-w-0 truncate text-red-400" title={refused}>{refused}</span> : making ? <span className="text-zinc-500">Rendering this version</span> : null} />
+            status={
+              refused ? <span className="min-w-0 truncate text-red-400" title={refused}>{refused}</span>
+              : making ? <span className="text-zinc-500">Rendering this version</span>
+              : pendingProxies.size ? <span className="text-zinc-400">{pendingProxies.size === 1 ? "Making proxy…" : `Making ${pendingProxies.size} proxies…`}</span>
+              : null
+            } />
         ) : (
           <p className="px-3 py-2 text-xs text-red-400">{loadError || edit.error}</p>
         )}

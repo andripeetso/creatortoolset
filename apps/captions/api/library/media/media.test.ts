@@ -234,6 +234,21 @@ describe("proxy", () => {
     // the 320x240 fixture's H.264 copy is no smaller than its HEVC source, so no proxy is kept (UNIFIED-PRD §4.1 rule 3)
     expect(await makeProxy(hevc, out)).toBe(false);
     expect(existsSync(out)).toBe(false);
+    // with keepIfLarger, an unplayable source keeps its playable MP4 copy even when larger
+    expect(await makeProxy(hevc, out, false, "standard", 0, true)).toBe(true);
+    expect(existsSync(out)).toBe(true);
+    expect(browserPlayable(await probe(out))).toBe(true);
+  });
+
+  it("with keepIfLarger, keeps a browser-playable MP4 for a low-bitrate MKV whose proxy is larger than the source", async () => {
+    const mkv = path.join(dir, "static.mkv");
+    ff(["-f", "lavfi", "-i", "color=c=green:s=320x240:r=30:d=1", "-c:v", "libx264", "-pix_fmt", "yuv420p", mkv]);
+    const p = await probe(mkv);
+    expect(browserPlayable(p)).toBe(false);
+    const out = path.join(dir, "static-proxy.mp4");
+    expect(await makeProxy(mkv, out, false, "standard", p.duration, true)).toBe(true);
+    expect(existsSync(out)).toBe(true);
+    expect(browserPlayable(await probe(out))).toBe(true);
   });
 });
 

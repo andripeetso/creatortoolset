@@ -29,6 +29,11 @@ const fake = vi.hoisted(() => ({
   topics: new Map<string, () => void>(),
   saved: [] as Array<[string, string, NleTimeline]>,
   draft: null as unknown as Draft,
+  proxyCalls: [] as Array<[string, string[] | undefined, { check?: boolean } | undefined]>,
+  pending: [] as string[],
+  onLibraryChange: null as (() => void) | null,
+  libraries: [] as Array<{ id: string; name: string }>,
+  assets: [] as Array<{ id: string; libraryId: string; kind: string; title: string; versionId: string; state: string }>,
 }));
 const SOUND = ["gain_db", "fade_in", "fade_out", "enabled", "mute"];
 const renders = { edj_version: 1, tracks: { V1: ["zoom", "tilt", "fade_in", "fade_out", "enabled"], V2: ["zoom", "tilt", "enabled", "hidden"], A1: SOUND, A2: SOUND, A3: SOUND } };
@@ -37,6 +42,15 @@ vi.mock("@/lib/editor", async (orig) => ({
   getEdit: async () => ({ id: "e1", name: "Rolls", jobs: [], plans: [], lines: [], drafts: [], previews: {}, marks: {} }) as unknown as Edit,
   getDraft: async () => fake.draft,
   saveTimeline: async (id: string, name: string, tl: NleTimeline) => (fake.saved.push([id, name, tl]), { id: "e1", name: "Rolls", jobs: [], plans: [], lines: [], drafts: [], previews: {}, marks: {} }),
+  ensureEditProxies: async (editId: string, versions?: string[], opts?: { check?: boolean }) => {
+    fake.proxyCalls.push([editId, versions, opts]);
+    const list = versions ? fake.pending.filter((v) => versions.includes(v)) : [...fake.pending];
+    return { queued: opts?.check ? [] : list, pending: list };
+  },
+  clipSource: async (_editId: string, clip: string) => ({
+    source: { versionId: clip, name: "Extra 4K", fps: 25, tc: 0, dur: 100, w: 1920, h: 1080 },
+    sound: true,
+  }),
   nlePending: async () => ({ requests: fake.queue.splice(0) }),
   nleReply: async (r: { id: string }) => void fake.replies.push(r),
   listLuts: async () => [],
@@ -47,7 +61,13 @@ vi.mock("@/lib/sync", async (orig) => ({
   onTopic: (topic: string, fn: () => void) => (fake.topics.set(topic, fn), () => fake.topics.delete(topic)),
 }));
 vi.mock("@/lib/auth", async (orig) => ({ ...(await orig<typeof import("@/lib/auth")>()), useMe: () => ({ username: "tiny" }), canChange: () => true }));
-vi.mock("@/lib/library", () => ({ listLibraries: async () => [], listAssets: async () => ({ items: [] }) }));
+vi.mock("@/lib/library", () => ({
+  listLibraries: async () => fake.libraries,
+  listAssets: async () => ({ items: fake.assets }),
+  useLibraryChanges: (cb: () => void) => {
+    fake.onLibraryChange = cb;
+  },
+}));
 vi.mock("@/components/AppBar", () => ({ AppBar: ({ trail, children }: { trail: string; children: unknown }) => <header>{trail}{children as never}</header> }));
 const { NleDraftPage } = await import("./NleDraftPage");
 
@@ -62,6 +82,11 @@ beforeEach(() => {
   fake.queue.length = 0;
   fake.replies.length = 0;
   fake.saved.length = 0;
+  fake.proxyCalls.length = 0;
+  fake.pending = [];
+  fake.onLibraryChange = null;
+  fake.libraries = [];
+  fake.assets = [];
   fake.draft = { timeline, notes: [], qa: { ok: true, notes: [], shared: [] }, filed: null, renders };
   window.history.pushState({}, "", "/editor/e1/v1");
   // the clips' files and thumbnails: none here
@@ -105,6 +130,87 @@ describe("the public timeline page on the editor", () => {
     await deliver({ id: "r3", commands: [{ id: "setLength", params: { seconds: 5 } }] });
     expect(rendered()).toBeNull();
     expect(button().disabled).toBe(true);
+    act(() => root.unmount());
+  });
+
+  it("ensures proxies on draft load, shows Making proxy and Rendered fallback, and reloads /play?r=1 when library changes", async () => {
+    fake.pending = ["ver_a"];
+    fake.draft = { ...fake.draft, filed: { assetId: "rev-2", n: 1 } };
+    const ctx = new Proxy({} as Record<string | symbol, unknown>, {
+      get: (t, k) => (k in t ? t[k] : () => {}),
+      set: (t, k, v) => ((t[k] = v), true),
+    });
+    const ctxSpy = vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(ctx as unknown as CanvasRenderingContext2D);
+    const sources: string[] = [];
+    const origSrc = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, "src")!;
+    const spy = vi.spyOn(HTMLMediaElement.prototype, "src", "set").mockImplementation(function (this: HTMLMediaElement, v: string) {
+      sources.push(v);
+      origSrc.set?.call(this, v);
+    });
+    const host = document.body.appendChild(document.createElement("div"));
+    const root = createRoot(host);
+    await act(async () => root.render(<MemoryRouter initialEntries={["/editor/e1/v1"]}><NleDraftPage id="e1" name="v1" /></MemoryRouter>));
+    await flush();
+    await flush();
+    expect(fake.proxyCalls[0]).toEqual(["e1", ["ver_a"], undefined]);
+    expect(host.textContent).toContain("Making proxy…");
+    // falls back to Rendered while a proxy is pending on an unplanned filed draft
+    expect(host.querySelector<HTMLVideoElement>('video[aria-label="Rendered"]')?.getAttribute("src")).toBe("/api/review/assets/rev-2/v/1/play");
+    // proxy completes -> library change triggers check-only re-check and bumps ?r=1
+    fake.pending = [];
+    act(() => fake.onLibraryChange?.());
+    await flush();
+    await flush();
+    await act(() => new Promise((done) => setTimeout(done, 50)));
+    expect(fake.proxyCalls[1]).toEqual(["e1", ["ver_a"], { check: true }]);
+    expect(host.textContent).not.toContain("Making proxy…");
+    expect(sources.some((s) => s.includes("/api/library/media/ver_a/play?r=1"))).toBe(true);
+    spy.mockRestore();
+    ctxSpy.mockRestore();
+    act(() => root.unmount());
+  });
+
+  it("dragging a clip out of the bin does not queue a proxy until it actually lands on the timeline", async () => {
+    fake.libraries = [{ id: "lib_1", name: "Studio" }];
+    fake.assets = [{ id: "a2", libraryId: "lib_1", kind: "video", title: "Extra 4K", versionId: "ver_b", state: "ready" }];
+    const host = document.body.appendChild(document.createElement("div"));
+    const root = createRoot(host);
+    await act(async () => root.render(<MemoryRouter initialEntries={["/editor/e1/v1"]}><NleDraftPage id="e1" name="v1" /></MemoryRouter>));
+    await flush();
+    expect(fake.proxyCalls).toEqual([["e1", ["ver_a"], undefined]]);
+
+    const libBtn = [...host.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent?.trim() === "Library")!;
+    expect(libBtn).toBeTruthy();
+    await act(async () => libBtn.click());
+    await flush();
+    await act(() => new Promise((done) => setTimeout(done, 250)));
+    await flush();
+
+    const clipBtn = host.querySelector<HTMLButtonElement>('button[title="Extra 4K"]')!;
+    expect(clipBtn).toBeTruthy();
+    // dragging starts readDrop preview without inserting -> must NOT queue a proxy
+    const bag = new Map<string, string>();
+    const dt = {
+      setData: (k: string, v: string) => { bag.set(k, v); },
+      getData: (k: string) => bag.get(k) ?? "",
+      types: ["application/x-ct-bin-clip"],
+      effectAllowed: "copy",
+    };
+    await act(async () => {
+      const ev = new Event("dragstart", { bubbles: true });
+      Object.defineProperty(ev, "dataTransfer", { value: dt });
+      clipBtn.dispatchEvent(ev);
+    });
+    await flush();
+    expect(fake.proxyCalls).toEqual([["e1", ["ver_a"], undefined]]);
+
+    // clicking inserts the clip onto the timeline -> queues proxy for the new source
+    await act(async () => clipBtn.click());
+    await flush();
+    expect(fake.proxyCalls).toEqual([
+      ["e1", ["ver_a"], undefined],
+      ["e1", ["ver_b"], undefined],
+    ]);
     act(() => root.unmount());
   });
 });

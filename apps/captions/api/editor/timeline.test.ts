@@ -220,4 +220,45 @@ describe("AI Editor timeline", () => {
     while (await tick());
     expect(readDraft(e.id, "v1")!.timeline.tracks.V1.items.filter((i) => i.zoom).map((i) => i.tilt)).toEqual([tilt("ver_b", DEFAULT_EYELINE), tilt("ver_a", DEFAULT_EYELINE)]);
   });
+
+  it("holds punch-in framing across rapid 1-2 s internal pause cuts instead of ping-ponging, and still punches after holding or on a new line", () => {
+    // 6 spoken chunks of 1.5 s each separated by 0.5 s pauses inside one line, followed by a second line
+    const longWords: TimedWord[] = [];
+    let t = 0.5;
+    for (let c = 0; c < 6; c++) {
+      for (let k = 0; k < 3; k++) {
+        longWords.push({ w: `w${c}_${k}`, s: t, e: t + 0.5 });
+        t += 0.5;
+      }
+      t += 0.5; // internal pause cut
+    }
+    const line2Start = t + 0.5;
+    longWords.push({ w: "next", s: line2Start, e: line2Start + 0.6 }, { w: "line", s: line2Start + 0.65, e: line2Start + 1.25 });
+    const longEnergy = new Float32Array(Math.ceil((line2Start + 2) * ENERGY_PER_SECOND));
+    for (const w of longWords) longEnergy.fill(0.5, Math.round(w.s * ENERGY_PER_SECOND), Math.round(w.e * ENERGY_PER_SECOND));
+    const longSents: Sentence[] = [
+      { n: 1, src: "ver_a", text: longWords.slice(0, 18).map((w) => w.w).join(" "), s: 0.5, e: line2Start - 1, w0: 0, w1: 17 },
+      { n: 2, src: "ver_a", text: "next line", s: line2Start, e: line2Start + 1.25, w0: 18, w1: 19 },
+    ];
+    const longLines: Line[] = [
+      { id: "L1", text: longSents[0]!.text, takes: [{ first: 1, last: 1, score: 1 }] },
+      { id: "L2", text: "next line", takes: [{ first: 2, last: 2, score: 1 }] },
+    ];
+    const plan: VersionPlan = { name: "v1", title: "Calm", lines: [{ line: "L1", take: { first: 1, last: 1, score: 1 } }, { line: "L2", take: { first: 2, last: 2, score: 1 } }] };
+    const sources: Record<string, TimelineSource> = { ver_a: sourceOf("ver_a", "Take A", { ...probe, duration: 20, fps: 25 }) };
+    const { timeline } = buildTimeline({
+      name: "Calm v1",
+      plan,
+      lines: longLines,
+      sentences: longSents,
+      sources,
+      words: { ver_a: longWords },
+      energy: { ver_a: longEnergy },
+      punch: 1.15,
+      eyeline: {},
+    });
+    const zooms = timeline.tracks.V1.items.map((it) => it.zoom ?? 1);
+    // 6 internal chunks (~1.6 s each): first 3 hold wide until >= 4 s elapsed (~4.9 s), then 3 hold punched in, then line 2 flips back to wide
+    expect(zooms).toEqual([1, 1, 1, 1.15, 1.15, 1.15, 1]);
+  });
 });

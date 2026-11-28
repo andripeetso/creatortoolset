@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AssetCard, AssetDetail } from "@contracts/library";
 import type { PlaceCheck } from "@contracts/places";
+import { useAuth } from "@/lib/auth";
 import { ClipPlayer } from "./ClipPlayer";
 
 // What the clip window plays when the original is on a computer: here, the original; away, the proxy (lib/here.ts).
@@ -21,6 +22,7 @@ let post: ReturnType<typeof vi.fn>;
 let access: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
+  useAuth.setState({ kind: "server" });
   host = document.createElement("div");
   document.body.append(host);
   r = createRoot(host);
@@ -35,6 +37,7 @@ afterEach(async () => {
   host.remove();
   delete (window as unknown as { webkit?: object }).webkit;
   delete document.documentElement.dataset.macPlaces;
+  useAuth.setState({ kind: "server" });
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
@@ -437,6 +440,58 @@ describe("the player", () => {
     const row = host.querySelector("[data-player] > div.absolute.left-2")!;
     expect([...row.children].map((c) => c.textContent)).toEqual(["Original", "Sound on"]);
     play.mockRestore();
+  });
+});
+
+describe("on This Mac (kind === 'mac')", () => {
+  it("failing local playback with upload 'none' never says Proxies aren't uploaded, queues a local proxy, shows Making a proxy, and retries once done", async () => {
+    useAuth.setState({ kind: "mac" });
+    delete document.documentElement.dataset.macPlaces;
+    const calls: Array<{ url: string; method?: string; body?: string }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        calls.push({ url, method: init?.method, body: init?.body ? String(init.body) : undefined });
+        if (url === "/api/library/lib/proxies") return Response.json({ queued: ["v1"] });
+        return Response.json({ libraries: [{ id: "lib", name: "Tiny Acrobatics", storage: "local", settings: { upload: "none" } }] });
+      }),
+    );
+    await openWith({ state: "ready", jobs: [] });
+    await fire("error");
+    await act(async () => {});
+    expect(host.textContent).not.toContain("Proxies aren't uploaded");
+    expect(host.textContent).not.toContain("Not checked yet");
+    expect(host.textContent).toContain("Making a proxy");
+    expect(calls).toEqual([{ url: "/api/library/lib/proxies", method: "POST", body: JSON.stringify({ versions: ["v1"] }) }]);
+
+    // once detail reports proxy done, playback auto-retries at ?r=1
+    await openWith({ state: "ready", jobs: [{ kind: "proxy", state: "done" }] });
+    expect(video().getAttribute("src")).toBe("/api/library/media/v1/play?r=1");
+  });
+
+  it("failing local playback whose proxy cannot be queued shows Can't play this format here with Download, never Proxies aren't uploaded", async () => {
+    useAuth.setState({ kind: "mac" });
+    delete document.documentElement.dataset.macPlaces;
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ queued: [] })));
+    await openWith({ state: "ready", jobs: [] });
+    await fire("error");
+    await act(async () => {});
+    expect(host.textContent).toContain("Can't play this format here");
+    expect(host.textContent).not.toContain("Proxies aren't uploaded");
+    expect(host.querySelector('a[href="/api/library/media/v1/source"]')?.textContent).toContain("Download");
+  });
+
+  it("detail refreshing while POST /proxies is in flight still transitions to Making a proxy", async () => {
+    useAuth.setState({ kind: "mac" });
+    delete document.documentElement.dataset.macPlaces;
+    let resolvePost!: (res: Response) => void;
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>((res) => { resolvePost = res; })));
+    await openWith({ state: "ready", jobs: [] });
+    await fire("error");
+    // simulate a fresh detail object arriving while the POST is still in flight
+    await openWith({ state: "ready", jobs: [] });
+    await act(async () => { resolvePost(Response.json({ queued: ["v1"] })); });
+    expect(host.textContent).toContain("Making a proxy");
   });
 });
 

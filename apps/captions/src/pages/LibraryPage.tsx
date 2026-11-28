@@ -1,7 +1,7 @@
 import { startTransition, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
-import { Activity, FolderCog, Instagram, MoreHorizontal, Music, RefreshCw, Search, Settings2, Trash2, Upload } from "lucide-react";
+import { Activity, Clapperboard, FolderCog, Instagram, MoreHorizontal, Music, RefreshCw, Search, Settings2, Trash2, Upload } from "lucide-react";
 import type { AssetCard, AssetKind, AssetPage, Collection, LibrarySort, LibrarySummary, SearchHit, WatchStatus } from "@contracts/library";
 import { hostsOriginals, hostsProxies, levelOf, LIBRARY_WORDS, makesProxies, uploadSent } from "@contracts/library";
 import { AppBar } from "@/components/AppBar";
@@ -48,6 +48,7 @@ import { useCachedLoad } from "@/lib/local-cache";
 import { thisMacBridge } from "@/lib/thisMac";
 import { addRefused, scanWatchNow, setAssetBlur } from "@/lib/library";
 import { canChange, useAuth, useMe } from "@/lib/auth";
+import { createEmpty } from "@/lib/editor";
 import { faceBlurOn } from "./library/face-blur";
 import { ImportChoices, importOptions, type ImportAsk, type ImportChoice, type Processing } from "./library/ImportChoices";
 import { useWorkspace } from "@/lib/workspace";
@@ -1008,6 +1009,21 @@ export default function LibraryPage() {
       () => toast("Link copied"),
       (e) => setError(message(e)),
     );
+  const editableEditor = canChange(me, "editor");
+  const readyMedia = (cards: AssetCard[]) => cards.filter((x) => (x.kind === "video" || x.kind === "audio") && x.state === "ready");
+  const [openingTimeline, setOpeningTimeline] = useState(false);
+  const openOnTimeline = async (cards: AssetCard[]) => {
+    const ready = readyMedia(cards);
+    if (!ready.length || openingTimeline) return;
+    setOpeningTimeline(true);
+    try {
+      const made = await createEmpty({ ...(ready.length === 1 ? { name: ready[0]!.title } : {}), sources: ready.map((x) => x.versionId) });
+      navigate(`/editor/${made.id}/${made.draft}`);
+    } catch (e) {
+      setError(message(e));
+      setOpeningTimeline(false);
+    }
+  };
   // a clip's right-click menu; a plug-in source's item has none
   const menuFor = (a: AssetCard) =>
     a.id.startsWith("ext_") ? undefined : (
@@ -1037,7 +1053,14 @@ export default function LibraryPage() {
           restore: () => void trashMany(carried(a), false),
         }}
         extra={
-          canReveal() && libId ? <RevealItem libraryId={libId} asset={a} onProblem={setError} /> : undefined
+          <>
+            {!trash && editableEditor && readyMedia(carried(a)).length > 0 && (
+              <ContextMenuItem disabled={openingTimeline} onSelect={() => void openOnTimeline(carried(a))}>
+                Open on timeline
+              </ContextMenuItem>
+            )}
+            {canReveal() && libId ? <RevealItem libraryId={libId} asset={a} onProblem={setError} /> : null}
+          </>
         }
       />
     );
@@ -1280,6 +1303,12 @@ export default function LibraryPage() {
                   </>
                 }
               >
+                {!trash && editableEditor && readyMedia(pickedCards).length > 0 && (
+                  <Button size="sm" variant="outline" className="h-8" disabled={openingTimeline} onClick={() => void openOnTimeline(pickedCards)}>
+                    <Clapperboard className="h-3.5 w-3.5" />
+                    Open on timeline
+                  </Button>
+                )}
                 {changing && !smart && !firstScreen && (
                   <Button size="sm" variant="ghost" className="h-8" onClick={() => setReorganizing(true)}>
                     <CtMark className="h-4 w-4" />

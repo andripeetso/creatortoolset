@@ -7,10 +7,16 @@ import { PROXY_QUALITIES, type ProxyQuality } from "../../../contracts/library";
 /** Browsers play these sounds as they are. */
 const PLAYABLE_AUDIO = ["aac", "mp3", "opus", "vorbis"];
 
+/** True when the browser cannot play this probed file directly without a proxy. */
+export function isUnplayable(p: ProbeSummary): boolean {
+  if (p.cover || !p.vcodec) return !PLAYABLE_AUDIO.includes(p.acodec);
+  return !browserPlayable(p);
+}
+
 /** A sound file (a song, with album art or none) plays as it is when its sound does (the play route then serves the file itself). */
 export function needsProxy(p: ProbeSummary): boolean {
-  if (p.cover || !p.vcodec) return !PLAYABLE_AUDIO.includes(p.acodec);
-  return !browserPlayable(p) || Math.min(p.width, p.height) > 1080;
+  if (p.cover || !p.vcodec) return isUnplayable(p);
+  return isUnplayable(p) || Math.min(p.width, p.height) > 1080;
 }
 
 /**
@@ -36,7 +42,7 @@ export function wantsProxy(p: ProbeSummary, opts: { cloud: boolean; on: boolean 
  * plays says it is converted (NleFile.log). A proxy that ever converts colour (Rec.709) must say `log: false` wherever its
  * url goes (urlOf, the drafts' proxies answer), or log footage is converted twice.
  */
-export async function makeProxy(src: string, out: string, soundOnly = false, quality: ProxyQuality = "standard", duration = 0): Promise<boolean> {
+export async function makeProxy(src: string, out: string, soundOnly = false, quality: ProxyQuality = "standard", duration = 0, keepIfLarger = false): Promise<boolean> {
   const bytes = (await stat(src)).size;
   const q = PROXY_QUALITIES.find((x) => x.value === quality) ?? PROXY_QUALITIES[1]!;
   const kbps = Math.max(100, Math.floor(Math.min(q.maxKbps, duration > 0 ? (0.8 * bytes * 8) / duration / 1000 : q.maxKbps)));
@@ -66,7 +72,7 @@ export async function makeProxy(src: string, out: string, soundOnly = false, qua
       return ffmpegTo(out, args("0:a:0?"));
     });
   }
-  if ((await stat(out)).size < bytes) return true;
+  if (keepIfLarger || (await stat(out)).size < bytes) return true;
   await rm(out, { force: true });
   return false;
 }

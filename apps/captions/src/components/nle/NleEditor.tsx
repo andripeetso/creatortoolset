@@ -285,6 +285,7 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
   const [srcMarks, setSrcMarks] = useState<Record<string, Marks>>({});
   // Rendered: the timeline's render (`rendered`) over the frame, while nothing is unsaved
   const [view, setView] = useState<"source" | "timeline" | "rendered">(() => (rendered?.first ? "rendered" : "timeline"));
+  const pickedView = useRef(false);
   const [loop, setLoop] = useState(() => {
     try {
       return localStorage.getItem(LOOP_KEY) === "1";
@@ -355,6 +356,8 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
     setLive(null);
     setTried(null);
     setSelected([]);
+    pickedView.current = false;
+    setView(rendered?.first ? "rendered" : "timeline");
     tln.setPlaying(false);
     tln.seek(0);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- a new version only
@@ -427,11 +430,15 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
   const T = inSource ? srcT : tln;
   const tfps = inSource ? sfps : fps;
   const show = (v: "source" | "timeline" | "rendered") => {
+    pickedView.current = true;
     if (v === view) return;
     if (v === "source") tln.play(false);
     else if (view === "source") srcT.play(false);
     setView(v);
   };
+  useEffect(() => {
+    if (rendered?.first && !pickedView.current && !renderStale && view === "timeline") setView("rendered");
+  }, [rendered?.first]); // eslint-disable-line react-hooks/exhaustive-deps -- only when rendered.first turns on before the user picks a view
   const toggleLoop = () => {
     const on = !loop;
     setLoop(on);

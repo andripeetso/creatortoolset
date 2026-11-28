@@ -183,9 +183,11 @@ vi.mock("./library/api", () => ({
 const { default: LibraryPage } = await import("./LibraryPage");
 const { resetImportQueue } = await import("@/lib/import-queue");
 const { undoLatest } = await import("@/lib/undo");
+const { useAuth } = await import("@/lib/auth");
 
 let root: Root | null = null;
 beforeEach(() => {
+  useAuth.setState({ kind: "mac" });
   server.items = [clip("one")];
   server.trash = [];
   server.folders = [];
@@ -456,27 +458,34 @@ describe("Media Library page", () => {
     expect(more(host)?.getAttribute("aria-label")).toContain("not found");
   });
 
-  it("Library settings holds the owner sections in the §3.1 order (Folders, Organization, Proxy workflow, Hosted media, Analysis, Models)", async () => {
-    const host = await mount();
-    const open = async () => {
+  it("Library settings holds the owner sections in the §3.1 order (omits Hosted media on This Mac, includes it on a server)", async () => {
+    const open = async (host: HTMLElement) => {
       await openMore(host);
       await act(async () => moreItem("Library settings")!.click());
       await act(async () => new Promise((r) => setTimeout(r, 0)));
     };
-    await open();
     const sheet = () => document.querySelector('[role="dialog"]')?.textContent ?? "";
-    const order = ["Folders", "Organization", "Proxy workflow", "Hosted media", "Analysis", "Models"].map((t) => sheet().indexOf(t));
-    expect(order.every((i) => i >= 0)).toBe(true);
-    expect(order).toEqual([...order].sort((a, b) => a - b));
+    const mac = await mount();
+    await open(mac);
+    const macOrder = ["Folders", "Organization", "Proxy workflow", "Analysis", "Models"].map((t) => sheet().indexOf(t));
+    expect(macOrder.every((i) => i >= 0)).toBe(true);
+    expect(macOrder).toEqual([...macOrder].sort((a, b) => a - b));
+    expect(sheet()).not.toContain("Hosted media");
     expect(sheet()).not.toContain("How should imported media behave?"); // the import rule decides (BA PRD R1)
     expect(sheet()).not.toContain("OpenAI key");
     act(() => root?.unmount());
     document.body.innerHTML = "";
+    useAuth.setState({ kind: "server" });
+    const srv = await mount();
+    await open(srv);
+    const order = ["Folders", "Organization", "Proxy workflow", "Hosted media", "Analysis", "Models"].map((t) => sheet().indexOf(t));
+    expect(order.every((i) => i >= 0)).toBe(true);
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+    act(() => root?.unmount());
+    document.body.innerHTML = "";
     server.watch = { allowed: false, folders: [], missing: 0 };
     const hosted = await mount();
-    await openMore(hosted);
-    await act(async () => moreItem("Library settings")!.click());
-    await act(async () => new Promise((r) => setTimeout(r, 0)));
+    await open(hosted);
     expect(sheet()).toContain("Organization");
     expect(sheet()).toContain("Search by meaning"); // What's made: one New files switch per kind
   });
@@ -1218,6 +1227,45 @@ describe("Media Library redo: the ⋯ menu and the selection bar", () => {
       expect(document.querySelector("video")?.getAttribute("src")).toBeNull();
     } finally {
       useAuth.setState({ kind: prev });
+    }
+  });
+
+  it("opens selected ready clips directly on a timeline via Open on timeline, and hides the button when view-only", async () => {
+    const { useAuth } = await import("@/lib/auth");
+    const prev = useAuth.getState().me;
+    const sent: { url: string; body: unknown }[] = [];
+    const origFetch = globalThis.fetch;
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      if (url === "/api/editor/empty" && init?.method === "POST") {
+        sent.push({ url, body: JSON.parse(init.body as string) });
+        return new Response(JSON.stringify({ id: "edit_multi", draft: "v1" }), { status: 201 });
+      }
+      return origFetch(url, init);
+    });
+    server.items = [{ ...clip("one"), versionId: "ver_one" }, { ...clip("two"), versionId: "ver_two" }];
+    const timelineBtn = () => [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "Open on timeline");
+    try {
+      // view-only account: button stays hidden even with clips selected
+      useAuth.setState({ me: { username: "viewer", role: "admin", cloud: false, off: [], viewOnly: true } });
+      let host = await mount();
+      const cards1 = [...host.querySelector("main")!.querySelectorAll<HTMLElement>("[data-keep-picked]")];
+      await click(cards1[0]!, { metaKey: true });
+      expect(timelineBtn()).toBeUndefined();
+
+      // editable account: selecting two clips reveals Open on timeline and sends both versionIds to /api/editor/empty
+      useAuth.setState({ me: { username: "maker", role: "admin", cloud: false, off: [] } });
+      host = await mount();
+      const cards2 = [...host.querySelector("main")!.querySelectorAll<HTMLElement>("[data-keep-picked]")];
+      await click(cards2[0]!, { metaKey: true });
+      await click(cards2[1]!, { metaKey: true });
+      const btn = timelineBtn();
+      expect(btn).toBeDefined();
+      await act(async () => btn!.click());
+      await settle();
+      expect(sent).toEqual([{ url: "/api/editor/empty", body: { sources: ["ver_one", "ver_two"] } }]);
+    } finally {
+      useAuth.setState({ me: prev });
+      vi.stubGlobal("fetch", origFetch);
     }
   });
 });

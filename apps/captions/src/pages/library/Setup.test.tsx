@@ -178,11 +178,11 @@ const stop = (label: string) => [...document.querySelectorAll<HTMLButtonElement>
 describe("Media Library setup: scratch, This Mac", () => {
   it("makes the three default folders as rows and saves the answers with setupAt, then says it is done", async () => {
     await mount("mac");
-    expect(dots()).toBe(4); // This Mac has no Hosted media step
+    expect(dots()).toBe(3); // This Mac has no Proxy workflow or Hosted media step
     expect(document.body.textContent).toContain("Let's set up the Media Library");
     await next(); // scratch, Use default folders on: to Folders
-    await next(); // to Proxy workflow
-    await next(); // to Analysis and organization
+    await next(); // to Analysis and organization (no proxy step on This Mac)
+    expect(shown()).not.toContain("Make proxies?");
     await press(button("Done"));
 
     expect(folderPaths()).toEqual(["~/Movies/Creator Toolset/Tiny Acrobatics/Source media", "~/Movies/Creator Toolset/Tiny Acrobatics/Project files", "~/Movies/Creator Toolset/Tiny Acrobatics/Final exports"]);
@@ -233,7 +233,6 @@ describe("Media Library setup: scratch, This Mac", () => {
     expect(shown()).toContain("/Volumes/Tiny/Lib/FOOTAGE");
     expect(shown()).toContain("/Volumes/Tiny/Lib/Project files · Will be created");
     expect(shown()).not.toContain("Found");
-    await next(); // proxy
     await next(); // analysis
     await press(button("Done"));
     expect(h.makes).toEqual([{ in: "/Volumes/Tiny/Lib", names: ["Project files"] }]);
@@ -260,7 +259,6 @@ describe("Media Library setup: scratch, This Mac", () => {
     await press(unroll() ?? undefined);
     expect(unroll()?.getAttribute("aria-expanded")).toBe("false");
     expect(summary()).toEqual(["Source media: /Volumes/NAS/Media", "Project files: Project files", "Final exports: /Volumes/NAS/Exports"]);
-    await next();
     await next();
     await press(button("Done"));
     expect(folderPaths()).toEqual(["/Volumes/NAS/Media", "~/Movies/Creator Toolset/Tiny Acrobatics/Project files", "/Volumes/NAS/Exports"]);
@@ -296,7 +294,6 @@ describe("Media Library setup: existing folders", () => {
     h.picks = ["/Volumes/NAS/Media"];
     await press(button("Add folder…"));
     expect(button("Continue")?.disabled).toBe(false);
-    await next(); // proxy
     await next(); // analysis
     await press(button("Done"));
     expect(folderPaths()).toEqual(["/Volumes/NAS/Media", "/Volumes/NAS/Project files", "/Volumes/NAS/Final exports"]);
@@ -312,7 +309,6 @@ describe("Media Library setup: existing folders", () => {
     await press(button("Add folder…"));
     expect(summary()).toEqual(["Project files: PROJECTS", "Final exports: EXPORTS"]);
     expect(shown()).not.toContain("Will be created");
-    await next();
     await next();
     await press(button("Done"));
     expect(folderPaths()).toEqual(["/Volumes/Tiny/MOO/FOOTAGE", "/Volumes/Tiny/MOO/PROJECTS", "/Volumes/Tiny/MOO/EXPORTS"]);
@@ -429,7 +425,7 @@ describe("Media Library setup: analysis and organization", () => {
   // replaced (Andri 13:00 sign-off: B7, Effort is six stop buttons, not a slider)
   it("Smart folders stay available with Analysis Off: they file by shoot with no AI", async () => {
     await mount("mac");
-    for (let i = 0; i < 3; i++) await next(); // to Analysis and organization
+    for (let i = 0; i < 2; i++) await next(); // to Analysis and organization
     await press(stop("Off"));
     expect(document.body.textContent).not.toContain("Analysis is Off");
     await press(button("Done"));
@@ -457,7 +453,6 @@ describe("Media Library setup: the scratch folder is made before its row", () =>
     await mount("mac");
     await next();
     await next();
-    await next();
     await press(button("Done"));
     expect(h.calls.map((c) => [c.body.role, c.body.make])).toEqual([
       ["footage", true],
@@ -469,7 +464,7 @@ describe("Media Library setup: the scratch folder is made before its row", () =>
   it("a folder that cannot be made shows the error and saves nothing, so setup is not marked done", async () => {
     h.failMake = true;
     await mount("mac");
-    for (let i = 0; i < 3; i++) await next();
+    for (let i = 0; i < 2; i++) await next();
     await press(button("Done"));
     expect(document.querySelector('[role="alert"]')?.textContent).toContain("could not be made");
     expect(h.updates).toEqual([]);
@@ -515,7 +510,7 @@ describe("Media Library setup: proxies, analysis and organization details", () =
   // replaced (Andri 13:00 sign-off: B7, Effort is six stop buttons, not a slider)
   it("Effort Off leaves Smart folders picked and available, at every stop", async () => {
     await mount("mac");
-    for (let i = 0; i < 3; i++) await next();
+    for (let i = 0; i < 2; i++) await next();
     const smart = () => [...document.querySelectorAll<HTMLButtonElement>('button[role="radio"]')].find((b) => b.textContent?.includes("Smart folders"))!;
     await press(stop("Off"));
     expect(smart().disabled).toBe(false);
@@ -528,7 +523,7 @@ describe("Media Library setup: proxies, analysis and organization details", () =
   // replaced (UNIFIED-PRD Rulings 11-19): Video breakdown is one shared row, its options a radio list (input), and the test reads the model in use from the AI and Voice pages.
   it("the Models rows show at High and above; Video breakdown's pick is saved as the library's model", async () => {
     await mount("mac");
-    for (let i = 0; i < 3; i++) await next();
+    for (let i = 0; i < 2; i++) await next();
     expect(document.body.textContent).toContain("Descriptions");
     expect(document.body.textContent).toContain("Transcripts");
     expect(document.body.textContent).toContain("Gemini 3.8 Flash");
@@ -543,7 +538,7 @@ describe("Media Library setup: proxies, analysis and organization details", () =
   // replaced (Andri 13:00 sign-off: B7, Effort is six stop buttons, not a slider)
   it("Effort is six stops, High picked to start; each stop saves the same flags the slider's step did", async () => {
     await mount("mac");
-    for (let i = 0; i < 3; i++) await next();
+    for (let i = 0; i < 2; i++) await next();
     expect([...document.querySelectorAll('[role="radiogroup"][aria-label="Effort"] [role="radio"]')].map((b) => b.textContent)).toEqual(ANALYSIS_LEVELS.map((l) => l.label));
     expect(stop("High")?.getAttribute("aria-checked")).toBe("true");
     for (const l of ANALYSIS_LEVELS) {
@@ -557,7 +552,7 @@ describe("Media Library setup: proxies, analysis and organization details", () =
 
   it("Models are hidden at Effort Off", async () => {
     await mount("mac");
-    for (let i = 0; i < 3; i++) await next();
+    for (let i = 0; i < 2; i++) await next();
     await press(stop("Off"));
     expect(document.body.textContent).not.toContain("Descriptions");
   });

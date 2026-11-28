@@ -303,4 +303,39 @@ describe("AI Editor analyze", () => {
       d.prepare("DELETE FROM edit_jobs").run();
     }
   });
+
+  it("keeps a non-empty non-English transcript when edit.languages is unset despite an English workspace default, but still re-transcribes for explicit edit.languages or empty words", async () => {
+    const d = libraryDb();
+    const done = (v: string) => d.prepare("INSERT OR REPLACE INTO jobs (library_id, version_id, kind, state, actor) VALUES ('lib_a', ?, 'transcribe', 'done', 'mem-a')").run(v);
+    const projectsDir = path.join(dir, "workshop", "projects");
+    const wsFile = path.join(projectsDir, "ws-en.json");
+    mkdirSync(projectsDir, { recursive: true });
+    writeFileSync(wsFile, JSON.stringify({ id: "ws-en", owner: "mem-a", name: "Tiny Acrobatics", createdAt: 1, updatedAt: 1, languages: ["en"] }));
+    try {
+      // already transcribed in Finnish with words, edit.languages unset -> keep it despite workspace ["en"]
+      saveTranscript(d, "ver_late", "deepgram", "fi", [], [word("hei", 0, 0.4), word("maailma", 0.5, 0.9)]);
+      done("ver_late");
+      const kept = await analyze(["ver_late"], Date.now());
+      expect(kept.job()).toMatchObject({ state: "done" });
+      expect(transcribeJob("ver_late")?.state).toBe("done");
+      expect(readStep(kept.id, "analysis")!.sentences.map((s) => s.text)).toEqual(["hei maailma"]);
+      d.prepare("DELETE FROM edit_jobs").run();
+
+      // empty words with edit.languages unset -> still re-transcribes using the workspace default language
+      saveTranscript(d, "ver_early", "deepgram", "fi", [], []);
+      done("ver_early");
+      const silent = await analyze(["ver_early"], Date.now());
+      expect(transcribeJob("ver_early")).toEqual({ state: "queued", actor: "mem-a" });
+      expect(silent.job()).toMatchObject({ state: "queued" });
+      d.prepare("DELETE FROM edit_jobs").run();
+
+      // explicit edit.languages: ["en"] on a Finnish clip -> still re-transcribes
+      const forced = await analyze(["ver_late"], Date.now(), { languages: ["en"] });
+      expect(transcribeJob("ver_late")).toEqual({ state: "queued", actor: "mem-a" });
+      expect(forced.job()).toMatchObject({ state: "queued" });
+    } finally {
+      rmSync(wsFile, { force: true });
+      d.prepare("DELETE FROM edit_jobs").run();
+    }
+  });
 });

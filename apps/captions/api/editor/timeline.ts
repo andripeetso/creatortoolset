@@ -109,6 +109,9 @@ export interface BuildInput {
   size?: { w: number; h: number } | null;
 }
 
+/** Minimum time (s) a framing holds before an internal pause cut inside the same line toggles punch-in. */
+export const PUNCH_HOLD_S = 4;
+
 /** Builds one version's timeline; the notes say what each line's cut removed or could not find. */
 export function buildTimeline(i: BuildInput): { timeline: Timeline; notes: string[] } {
   const byN = new Map(i.sentences.map((s) => [s.n, s]));
@@ -122,6 +125,8 @@ export function buildTimeline(i: BuildInput): { timeline: Timeline; notes: strin
   const notes: string[] = [];
   let rec = 0;
   let shot = 0;
+  let punchState = 0;
+  let heldSince = 0;
   for (const [k, { line, take }] of i.plan.lines.entries()) {
     const a = byN.get(take.first);
     const b = byN.get(take.last);
@@ -139,11 +144,18 @@ export function buildTimeline(i: BuildInput): { timeline: Timeline; notes: strin
     tl.sources[a.src] = src;
     tl.markers.push({ rec, name: line, color: "BLUE", note: text.get(line) ?? "" });
     const roll = i.rolls?.[a.src];
+    let firstInLine = true;
     for (const [s, e] of cut.segments) {
       const len = Math.round(((e - s) * fps) / src.fps);
       if (len <= 0) continue;
+      // toggle punch-in on a new script line, or on an internal pause cut once the current framing has held for PUNCH_HOLD_S
+      if (shot > 0 && (firstInLine || (rec - heldSince) / fps >= PUNCH_HOLD_S)) {
+        punchState ^= 1;
+        heldSince = rec;
+      }
+      firstInLine = false;
       const link = `c${shot + 1}`;
-      // every other line on the second camera (a new line, a new angle; inside a line punch-ins hide the cuts), its
+      // every other line on the second camera (a new line, a new angle; inside a line punch-ins hide longer cuts), its
       // separate mic under the picture: each where it holds this stretch
       const angle = k % 2 ? along(roll?.angles?.[0], s, len, src, fps, i.sources) : null;
       const mic = along(roll?.mic, s, len, src, fps, i.sources);
@@ -152,7 +164,7 @@ export function buildTimeline(i: BuildInput): { timeline: Timeline; notes: strin
       tl.sources[pic.src] = ps;
       if (mic) tl.sources[mic.src] = i.sources[mic.src]!;
       // a take with no picture (a voice recording) has nothing to punch in on
-      tl.tracks.V1.items.push({ ...pic, len, rec, link, ...(ps.w ? framingOf(shot, ps, W, H, i.punch, i.eyeline[pic.src] ?? DEFAULT_EYELINE) : {}) });
+      tl.tracks.V1.items.push({ ...pic, len, rec, link, ...(ps.w ? framingOf(punchState, ps, W, H, i.punch, i.eyeline[pic.src] ?? DEFAULT_EYELINE) : {}) });
       tl.tracks.A1.items.push({ ...(mic ?? { src: a.src, in: s }), len, rec, link });
       rec += len;
       shot++;

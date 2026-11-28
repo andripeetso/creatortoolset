@@ -4,6 +4,7 @@ import { ChevronLeft, ChevronRight, Download, Loader2, Volume2 } from "lucide-re
 import { hostsOriginals, hostsProxies, type AssetCard, type AssetDetail, type LibraryUpload } from "@contracts/library";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { useAuth } from "@/lib/auth";
 import { awayLine, pickSource, proxySource, useHere, type Source } from "@/lib/here";
 import { listLibraries } from "@/lib/library";
 import { askMediaFolder } from "@/lib/local-files";
@@ -152,9 +153,10 @@ export function ClipPlayer({
   // the library's Hosted media, read once it is needed: under Originals the server plays an original, so a file it cannot
   // play is "Can't play this format here" with Download, not a place to go to
   // undefined: still asking; null: the library could not be read (the player then says what it said before)
+  const isMac = useAuth((s) => s.kind) === "mac";
   const [upload, setUpload] = useState<{ upload: LibraryUpload; owner: boolean } | null>();
   useEffect(() => {
-    if (phase !== "failed" && serverPlays) return;
+    if (isMac || (phase !== "failed" && serverPlays)) return;
     let gone = false;
     listLibraries().then(
       (ls) => {
@@ -166,8 +168,38 @@ export function ClipPlayer({
     return () => {
       gone = true;
     };
-  }, [phase, serverPlays, a.libraryId]);
-  const serverOriginals = !!upload && hostsOriginals(upload.upload);
+  }, [isMac, phase, serverPlays, a.libraryId]);
+  // on This Mac, a browser-unplayable local file (e.g. MKV / 10-bit / HEVC) queues a local proxy on first playback failure
+  const requestedProxy = useRef<Set<string>>(new Set());
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
+  const [proxyQueued, setProxyQueued] = useState<string | null>(null);
+  const hasDetail = !!detail;
+  const hasProxyJob = !!detail?.jobs?.some((j) => j.kind === "proxy" && (j.state === "queued" || j.state === "running" || j.state === "done" || j.state === "failed"));
+  useEffect(() => {
+    if (!isMac || phase !== "failed" || a.kind !== "video" || !hasDetail || hasProxyJob) return;
+    if (requestedProxy.current.has(a.versionId)) return;
+    requestedProxy.current.add(a.versionId);
+    const ver = a.versionId;
+    fetch(`/api/library/${a.libraryId}/proxies`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ versions: [ver] }),
+    })
+      .then((r) => (r.ok ? (r.json() as Promise<{ queued?: string[] }>) : Promise.reject(new Error(String(r.status)))))
+      .then((b) => {
+        if (alive.current && b?.queued?.includes(ver)) setProxyQueued(ver);
+      })
+      .catch(() => {
+        requestedProxy.current.delete(ver);
+      });
+  }, [isMac, phase, a.kind, a.libraryId, a.versionId, hasDetail, hasProxyJob]);
+  const serverOriginals = isMac || (!!upload && hostsOriginals(upload.upload));
   // the library's answer first: while it is pending, a failed server play says nothing rather than the wrong line
   const failedOnServer = phase === "failed" && onServer && upload !== undefined && !serverOriginals;
   // proxies hosted, none of this clip: the server holds no copy of it to play (SCREENS-COPY §3)
@@ -176,9 +208,14 @@ export function ClipPlayer({
     !waiting && (failedOnServer || (!serverPlays && !src)) ? (awayLine(check) ?? noCopy ?? placeLine(a.placeWord ?? { word: "unchecked" })) : null;
   // the original here didn't open after its tries, and there is nothing else to play: said, with Retry
   const stuck = phase === "failed" && pin?.badge === "Original" && nowhere;
-  const note = stuck || said === "missing" || away ? null : said;
+  const note =
+    stuck || said === "missing" || away
+      ? null
+      : said === "unplayable" && proxyQueued === a.versionId && !detail?.jobs.some((j) => j.kind === "proxy" && j.state !== "stopped")
+        ? "preparing"
+        : said;
   // the owner, with no proxies and no originals hosted: told why it plays only where the files are
-  const noUpload = !!upload?.owner && !hostsProxies(upload.upload) && !hostsOriginals(upload.upload);
+  const noUpload = !isMac && !!upload?.owner && !hostsProxies(upload.upload) && !hostsOriginals(upload.upload);
   const awayNote = stuck ? <Stuck onTry={() => void again().then(() => setTries((n) => n + 1))} /> : away && <Away line={away} noUpload={noUpload} />;
 
   // the original is here in a folder the page may not play from yet, or on a share that needs its login: one button

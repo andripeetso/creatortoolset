@@ -131,6 +131,9 @@ export const makeCut = (id: string, name: string, body: { asset: string; n: numb
 export const saveTimeline = (id: string, name: string, timeline: NleTimeline) => send<Edit>(`${base(id)}/drafts/${encodeURIComponent(name)}/timeline`, "PUT", { timeline });
 /** A Media Library clip as the editor lays it on the edit's timeline: its source and whether it has sound. */
 export const clipSource = (id: string, clip: string) => send<{ source: TimelineSource; sound: boolean }>(`${base(id)}/clips/${encodeURIComponent(clip)}`);
+/** Ensures local proxies are queued for heavy or browser-unplayable clips in this edit; `check` only reports active proxy jobs. */
+export const ensureEditProxies = (editId: string, versions?: string[], opts?: { check?: boolean }) =>
+  send<{ queued: string[]; pending: string[] }>(`${base(editId)}/proxies`, "POST", { ...(versions ? { versions } : {}), ...(opts?.check ? { check: true } : {}) });
 export const getDraft = (id: string, name: string) => send<Draft>(`${base(id)}/drafts/${encodeURIComponent(name)}`);
 /** The version's timeline as a new version (no AI); its preview is made. */
 export const duplicateVersion = (id: string, name: string) => send<{ name: string }>(`${base(id)}/drafts/${name}/duplicate`, "POST");

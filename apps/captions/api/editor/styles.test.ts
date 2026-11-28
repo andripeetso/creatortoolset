@@ -433,12 +433,12 @@ describe.skipIf(rootReplaced)("Editing styles: pace and punch-in change the cut"
     expect(cut.segments[0]![0]).toBeLessThanOrEqual(Math.floor(0.65 * 25)); // and "we" is whole
   });
 
-  it("the punch-in: None leaves every shot as filmed, Strong zooms every other shot further than the plain cut does", async () => {
+  it("the punch-in: None leaves every shot as filmed, Strong zooms further than the plain cut does while holding across mid-sentence cuts", async () => {
     await clear("maker");
     const zooms = async (punch: number) => (await drafted({ style: (await made("maker", { name: `Punch ${punch}`, punch })).id })).items.map((i) => i.zoom ?? 1);
     expect(await zooms(1)).toEqual([1, 1, 1, 1, 1]);
-    expect(await zooms(1.15)).toEqual([1, 1.15, 1, 1.15, 1]);
-    expect(await zooms(1.3)).toEqual([1, 1.3, 1, 1.3, 1]);
+    expect(await zooms(1.15)).toEqual([1, 1, 1, 1.15, 1.15]);
+    expect(await zooms(1.3)).toEqual([1, 1, 1, 1.3, 1.3]);
   });
 });
 

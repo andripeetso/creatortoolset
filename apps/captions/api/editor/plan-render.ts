@@ -301,6 +301,7 @@ export async function renderPlanPreview(tl: Timeline, files: Record<string, stri
           "-map", "[v]", "-map", "1:a:0",
           "-af", af.join(","),
           "-frames:v", String(s.frames), "-t", secs(s.frames).toFixed(6),
+          "-fps_mode", "cfr", "-video_track_timescale", "90000",
           "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
           "-c:a", "pcm_s16le",
           seg,

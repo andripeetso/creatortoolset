@@ -195,3 +195,36 @@ describe("the File row", () => {
     expect(row("File")).toBeUndefined();
   });
 });
+
+describe("Open on timeline", () => {
+  const timelineBtn = () => [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "Open on timeline");
+
+  it("opens a ready clip directly on a manual timeline without running AI, and hides when view-only", async () => {
+    const sent: { url: string; body: unknown }[] = [];
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      if (url === "/api/editor/empty" && init?.method === "POST") {
+        sent.push({ url, body: JSON.parse(init.body as string) });
+        return new Response(JSON.stringify({ id: "edit_manual", draft: "v1" }), { status: 201 });
+      }
+      return { ok: false, json: async () => ({}) };
+    });
+
+    // view-only user cannot create a timeline
+    useAuth.setState({ kind: "server", me: { username: "viewer", role: "admin", cloud: false, off: [], viewOnly: true } });
+    await open();
+    expect(timelineBtn()).toBeUndefined();
+
+    // editable user sees the button and clicking it posts directly to /api/editor/empty
+    await act(async () => r.unmount());
+    r = createRoot(host);
+    useAuth.setState({ kind: "mac", me: { username: "maker", role: "admin", cloud: false, off: [] } });
+    await open();
+    const btn = timelineBtn();
+    expect(btn).toBeDefined();
+    await act(async () => btn!.click());
+    await act(async () => {});
+    expect(sent).toEqual([{ url: "/api/editor/empty", body: { name: "Beach run", sources: ["v2"] } }]);
+    expect(errors).toEqual([]);
+    useAuth.setState({ me: null });
+  });
+});
