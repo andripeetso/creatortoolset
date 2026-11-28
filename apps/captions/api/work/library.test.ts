@@ -658,7 +658,7 @@ describe("a photo goes only to a computer that reads its card picture with no se
       const pkg: LibraryPackage = {
         v: WORK_V,
         job: { id: 1, kind: "send", versionId: `v_${ext}`, libraryId: "lib_all", actor: "tiny" },
-        file: { title: `slide.${ext}`, bytes: statSync(src).size, path: src },
+        file: { id: `v_${ext}`, title: `slide.${ext}`, bytes: statSync(src).size, path: src },
         upload: "all",
         proxy: { cloud: true, on: true },
       };
