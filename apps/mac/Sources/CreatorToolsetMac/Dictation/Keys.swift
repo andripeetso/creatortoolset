@@ -3,6 +3,7 @@ import ApplicationServices
 import Carbon.HIToolbox
 import CoreGraphics
 import Foundation
+import IOKit
 
 /// Turns hotkey edges into dictation actions . Pure, so the rules
 /// are tested without an event tap.
@@ -492,6 +493,19 @@ private func hotkeyCallback(
     return Unmanaged.passUnretained(event)
 }
 
+/// Whether macOS Secure Event Input is on and which app holds it (nil when off or unknown).
+func secureInputHolder() -> (active: Bool, app: String?) {
+    guard IsSecureEventInputEnabled() else { return (false, nil) }
+    let root = IORegistryGetRootEntry(kIOMainPortDefault)
+    guard root != IO_OBJECT_NULL else { return (true, nil) }
+    defer { IOObjectRelease(root) }
+    guard let users = IORegistryEntryCreateCFProperty(root, "IOConsoleUsers" as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue() as? [[String: Any]],
+          let pid = users.compactMap({ ($0["kCGSSessionSecureInputPID"] as? NSNumber)?.int32Value }).first,
+          pid > 0
+    else { return (true, nil) }
+    return (true, NSRunningApplication(processIdentifier: pid)?.localizedName)
+}
+
 /// System-wide dictation keys, the person's own (DictationKeys.swift): a key with its modifiers, F13 or ⌥Space.
 /// An event tap rather than `RegisterEventHotKey`: macOS's
 /// own shortcuts (F14/F15 are display brightness) win over Carbon hotkeys,
@@ -521,6 +535,14 @@ final class FunctionKeys {
 
     /// Whether the tap is on (it needs Accessibility).
     var isOn: Bool { tap != nil }
+
+    /// Whether a Carbon fallback press should run: skip if the HID tap just fired the same key.
+    nonisolated static func shouldRunCarbonFallback(
+        lastTapFire: TimeInterval?, now: TimeInterval, window: TimeInterval = 0.15
+    ) -> Bool {
+        guard let lastTapFire else { return true }
+        return now - lastTapFire >= window
+    }
 
     /// Replaces every binding. Empty: the tap stays but swallows nothing.
     func bind(_ bindings: [(key: Shortcut, action: () -> Void)]) {
@@ -601,6 +623,8 @@ final class KeycodeSet: @unchecked Sendable {
     private let lock = NSLock()
     private var combos: Set<UInt64> = []
     private var down: Set<Int64> = []
+    /// Uptime of the last tap-handled key-down per combo, read by Carbon fallback before it fires.
+    private var lastPressed: [UInt64: TimeInterval] = [:]
 
     func set(_ new: Set<UInt64>) {
         lock.lock()
@@ -610,13 +634,22 @@ final class KeycodeSet: @unchecked Sendable {
 
     /// A key-down: whether it is bound (and is now down). A repeat never starts a press: it is swallowed only if its
     /// first key-down was, so tapping a modifier while a key repeats can't strand that key's key-up.
-    func press(_ keycode: Int64, modifiers: UInt32, autorepeat: Bool = false) -> Bool {
+    func press(_ keycode: Int64, modifiers: UInt32, autorepeat: Bool = false, at now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> Bool {
         lock.lock()
         defer { lock.unlock() }
         if autorepeat { return down.contains(keycode) }
-        guard combos.contains(keyCombo(UInt32(keycode), modifiers)) else { return false }
+        let combo = keyCombo(UInt32(keycode), modifiers)
+        guard combos.contains(combo) else { return false }
         down.insert(keycode)
+        lastPressed[combo] = now
         return true
+    }
+
+    /// When the HID tap last handled a first key-down for `combo`, if ever.
+    func lastPress(for combo: UInt64) -> TimeInterval? {
+        lock.lock()
+        defer { lock.unlock() }
+        return lastPressed[combo]
     }
 
     /// A key-up: whether its key-down was swallowed.

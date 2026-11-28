@@ -249,6 +249,22 @@ final class Dictation: ObservableObject {
     /// notifications. The one check for "another app has dictation's keys".
     @Published var earlierAppOpen = false
 
+    /// Menu bar notice while macOS Secure Event Input is held (silences CGEventTaps), nil when clear or dictation is off.
+    @Published private(set) var secureInputWarning: String?
+
+    /// Plain-English warning when macOS Secure Event Input is active, or nil when clear or keys aren't live.
+    nonisolated static func secureInputMessage(
+        live: Bool, active: Bool, app: String?, talkHasCarbonFallback: Bool
+    ) -> String? {
+        guard live, active else { return nil }
+        if talkHasCarbonFallback {
+            if let app { return "Secure Input held by \(app) — quit \(app) if dictation can't paste" }
+            return "macOS Secure Input is active — pasting may be blocked"
+        }
+        if let app { return "Dictation key blocked by \(app) (Secure Input) — quit \(app) if stuck" }
+        return "Dictation key blocked by macOS Secure Input"
+    }
+
     private var runningWatch: NSKeyValueObservation?
 
     private func watchEarlierApp() {
@@ -298,6 +314,7 @@ final class Dictation: ObservableObject {
     private let monitor = HotkeyMonitor()
     private var monitorOn = false
     private var carbonKeys: [EventHotKeyRef] = []
+    private var carbonActions: Set<DictationAction> = []
     private var carbonHandler: EventHandlerRef?
     private var holdWatch: Timer?
     private var holdDownAt: TimeInterval?
@@ -453,9 +470,10 @@ final class Dictation: ObservableObject {
         }
     }
 
-    /// The keys as they should be now. With Accessibility: the hold key on a listen-only tap, the other keys on the one
-    /// that swallows them. Without: the keys through Carbon (no permission needed, so the first press can start the
-    /// setup) and a watch for a first hold. Off, or a picker open: none.
+    /// The keys as they should be now. With Accessibility: the hold key on a listen-only tap, the other keys on the HID
+    /// tap (which swallows them ahead of display shortcuts) plus Carbon hotkeys as fallback — macOS silences CGEventTaps
+    /// while another app holds Secure Event Input, whereas RegisterEventHotKey still fires. Without Accessibility: Carbon
+    /// hotkeys and a watch for a first hold. Off, or a picker open: none.
     private func applyKeys() {
         guard !AppLog.underTests else { return }
         unregisterCarbon()
@@ -467,7 +485,9 @@ final class Dictation: ObservableObject {
         }
         FunctionKeys.shared.bind(live && trusted ? pressed : [])
         holdWatch?.invalidate(); holdWatch = nil
-        if live, !trusted { registerCarbon(); watchFirstHold() }
+        if live { registerCarbon(warnUnavailable: !trusted) }
+        if live, !trusted { watchFirstHold() }
+        refreshSecureInput()
         guard live, trusted, let hold = holdKey else {
             if monitorOn { monitor.stop(); monitorOn = false }
             return
@@ -475,7 +495,10 @@ final class Dictation: ObservableObject {
         monitor.setKey(hold)
         guard !monitorOn else { return }
         do {
-            monitor.onHealthChange = { health in DictationLog.info("hold key: \(health)") }
+            monitor.onHealthChange = { [weak self] health in
+                DictationLog.info("hold key: \(health)")
+                self?.refreshSecureInput()
+            }
             try monitor.start { [weak self] event in
                 MainActor.assumeIsolated {
                     switch event {
@@ -491,7 +514,37 @@ final class Dictation: ObservableObject {
         }
     }
 
-    private func registerCarbon() {
+    /// Updates `secureInputWarning` from the live Secure Event Input state and returns the holder.
+    @discardableResult
+    func refreshSecureInput() -> (active: Bool, app: String?) {
+        guard !AppLog.underTests else { return (false, nil) }
+        let holder = secureInputHolder()
+        let live = Self.keysLive(on: prefs.on, paused: keysPaused, earlierAppOpen: earlierAppOpen)
+        secureInputWarning = Self.secureInputMessage(
+            live: live,
+            active: holder.active,
+            app: holder.app,
+            talkHasCarbonFallback: carbonActions.contains(.talk)
+        )
+        return holder
+    }
+
+    private func runFromCarbon(_ action: DictationAction) {
+        guard case .key(let s)? = prefs.keys[action] else { return }
+        let combo = keyCombo(s.keyCode, s.carbonModifiers)
+        guard FunctionKeys.shouldRunCarbonFallback(
+            lastTapFire: FunctionKeys.shared.keycodes.lastPress(for: combo),
+            now: ProcessInfo.processInfo.systemUptime
+        ) else { return }
+        if FunctionKeys.shared.isOn, IsSecureEventInputEnabled() {
+            let (_, app) = refreshSecureInput()
+            let by = app.map { " (\($0))" } ?? ""
+            DictationLog.info("\(action.name) via Carbon fallback while secure input active\(by)")
+        }
+        run(action)
+    }
+
+    private func registerCarbon(warnUnavailable: Bool) {
         if carbonHandler == nil {
             var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
             InstallEventHandler(GetApplicationEventTarget(), { _, event, _ in
@@ -504,7 +557,7 @@ final class Dictation: ObservableObject {
                 DispatchQueue.main.async {
                     MainActor.assumeIsolated {
                         guard DictationAction.allCases.indices.contains(index) else { return }
-                        Dictation.shared.run(DictationAction.allCases[index])
+                        Dictation.shared.runFromCarbon(DictationAction.allCases[index])
                     }
                 }
                 return noErr
@@ -516,7 +569,8 @@ final class Dictation: ObservableObject {
             let id = EventHotKeyID(signature: Self.hotKeySignature, id: UInt32(index))
             if RegisterEventHotKey(s.keyCode, s.carbonModifiers, id, GetApplicationEventTarget(), 0, &ref) == noErr, let ref {
                 carbonKeys.append(ref)
-            } else {
+                carbonActions.insert(action)
+            } else if warnUnavailable {
                 DictationLog.info("\(action.name) key \(s.display) not available: another app has it")
             }
         }
@@ -527,6 +581,7 @@ final class Dictation: ObservableObject {
     private func unregisterCarbon() {
         carbonKeys.forEach { UnregisterEventHotKey($0) }
         carbonKeys = []
+        carbonActions = []
     }
 
     /// Without Accessibility: a first real hold of the hold key starts the setup (see `firstHoldCounts`).

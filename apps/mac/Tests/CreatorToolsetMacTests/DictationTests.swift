@@ -69,6 +69,49 @@ final class FunctionKeyTests: XCTestCase {
         XCTAssertFalse(firstHoldCounts(heldFor: 1.5, secondsSinceKeyDown: 0.2), "fn with an arrow")
         XCTAssertFalse(firstHoldCounts(heldFor: 60, secondsSinceKeyDown: 100), "a key left down")
     }
+
+    func testCarbonFallbackSkipsRecentTapFireAndRunsOtherwise() {
+        let set = KeycodeSet()
+        let f13 = keyCombo(105, 0)
+        set.set([f13])
+        XCTAssertNil(set.lastPress(for: f13))
+        XCTAssertTrue(FunctionKeys.shouldRunCarbonFallback(lastTapFire: nil, now: 10))
+
+        XCTAssertTrue(set.press(105, modifiers: 0, autorepeat: false, at: 10.0))
+        XCTAssertEqual(set.lastPress(for: f13), 10.0)
+        // Autorepeat does not push the timestamp forward.
+        XCTAssertTrue(set.press(105, modifiers: 0, autorepeat: true, at: 10.5))
+        XCTAssertEqual(set.lastPress(for: f13), 10.0)
+        // Unbound key does not record a press.
+        XCTAssertFalse(set.press(107, modifiers: 0, autorepeat: false, at: 10.0))
+        XCTAssertNil(set.lastPress(for: keyCombo(107, 0)))
+
+        XCTAssertFalse(FunctionKeys.shouldRunCarbonFallback(lastTapFire: 10.0, now: 10.01))
+        XCTAssertFalse(FunctionKeys.shouldRunCarbonFallback(lastTapFire: 10.0, now: 10.14))
+        XCTAssertTrue(FunctionKeys.shouldRunCarbonFallback(lastTapFire: 10.0, now: 10.15))
+    }
+
+    func testSecureInputMessageNamesHolderAndFallbackState() {
+        XCTAssertNil(Dictation.secureInputMessage(live: false, active: true, app: "Browser", talkHasCarbonFallback: false))
+        XCTAssertNil(Dictation.secureInputMessage(live: true, active: false, app: "Browser", talkHasCarbonFallback: false))
+
+        XCTAssertEqual(
+            Dictation.secureInputMessage(live: true, active: true, app: "Browser", talkHasCarbonFallback: false),
+            "Dictation key blocked by Browser (Secure Input) — quit Browser if stuck"
+        )
+        XCTAssertEqual(
+            Dictation.secureInputMessage(live: true, active: true, app: nil, talkHasCarbonFallback: false),
+            "Dictation key blocked by macOS Secure Input"
+        )
+        XCTAssertEqual(
+            Dictation.secureInputMessage(live: true, active: true, app: "Browser", talkHasCarbonFallback: true),
+            "Secure Input held by Browser — quit Browser if dictation can't paste"
+        )
+        XCTAssertEqual(
+            Dictation.secureInputMessage(live: true, active: true, app: nil, talkHasCarbonFallback: true),
+            "macOS Secure Input is active — pasting may be blocked"
+        )
+    }
 }
 
 final class DictationPrefsTests: XCTestCase {

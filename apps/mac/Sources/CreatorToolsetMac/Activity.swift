@@ -133,6 +133,7 @@ struct ActivityPanel: View {
             empty: shell.hasServer ? "Nothing running or waiting" : "Pick a server in the window to see your work",
             warnings: [lastError.flatMap(plainLimitLine) == nil ? lastError.map { "Last AI error: \($0)" } : nil,
                        shell.notice, shell.spaceLine,
+                       dictation.secureInputWarning,
                        shell.runners.worker(for: shell.runners.windowHost)?.needsUpdate == true ? "This server needs a newer Creator Toolset to run its steps on your Mac" : nil].compactMap { $0 },
             open: { row in if let href = row.href { shell.showWindow(href: href) } else { shell.openThisMac() } },
             run: { shell.runAgent($0) }
@@ -148,7 +149,10 @@ struct ActivityPanel: View {
                 .disabled(dictation.phase == .transcribing)
             PanelMoreRow { MoreMenu(shell: shell, checkForUpdates: checkForUpdates) }
         }
-        .onAppear { Task { await shell.refresh() } }
+        .onAppear {
+            dictation.refreshSecureInput()
+            Task { await shell.refresh() }
+        }
     }
 }
 
