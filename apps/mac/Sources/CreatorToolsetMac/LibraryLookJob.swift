@@ -25,8 +25,9 @@ import Foundation
 let libraryLookKind = "library-look"
 
 /// Why the shots of a file can't be described here, in words for the person.
-struct LibraryLookRefused: Error, Equatable {
+struct LibraryLookRefused: LocalizedError, Equatable {
     let why: String
+    var errorDescription: String? { why }
 }
 
 /// The job is no longer this Mac's (the server gave it back, or the relay stopped): nothing more to say.
@@ -173,7 +174,15 @@ struct LibraryLookJob {
                        "-pix_fmt", "yuv420p", "-c:a", "aac", "-ac", "1", "-b:a", "48k", "-movflags", "+faststart", out.path]
         p.standardInput = FileHandle.nullDevice
         p.standardOutput = FileHandle.nullDevice
-        p.standardError = FileHandle.nullDevice
+        // stderr goes to a file so a busy pipe never stalls ffmpeg while this loop beats
+        let errURL = out.appendingPathExtension("err")
+        FileManager.default.createFile(atPath: errURL.path, contents: nil)
+        let errFile = try FileHandle(forWritingTo: errURL)
+        defer {
+            try? errFile.close()
+            try? FileManager.default.removeItem(at: errURL)
+        }
+        p.standardError = errFile
         try p.run()
         while p.isRunning {
             do { try beat() } catch {
@@ -186,7 +195,9 @@ struct LibraryLookJob {
         }
         guard p.terminationStatus == 0 else {
             try? FileManager.default.removeItem(at: out)
-            throw LibraryLookRefused(why: "ffmpeg could not make the copy to watch.")
+            try? errFile.close()
+            let words = (try? Data(contentsOf: errURL)).map { String(decoding: $0.suffix(300), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines) } ?? ""
+            throw LibraryLookRefused(why: words.isEmpty ? "ffmpeg could not make the copy to watch." : "ffmpeg could not make the copy to watch: \(words)")
         }
     }
 

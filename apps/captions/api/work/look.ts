@@ -136,13 +136,20 @@ async function sendWatchCopy(c: Client, base: string, src: string, fps: number, 
   // the first sound track by name: left to FFmpeg, an iPhone video's spatial track (apac, no decoder) was picked and no copy was made
   const args = ["-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", src, "-map", "0:v:0", "-map", "0:a:0?", "-vf", `fps=${Math.max(fps, 1)},scale=-2:'min(480,ih)'`, "-c:v", "libx264", "-preset", "veryfast", "-crf", "30"];
   args.push("-pix_fmt", "yuv420p", "-c:a", "aac", "-ac", "1", "-b:a", "48k", "-movflags", "+faststart", out);
+  let err = "";
   const ok = await new Promise<boolean>((resolve) => {
-    const p = spawn(ffmpegCommand(), args, { stdio: "ignore", signal });
-    p.on("error", () => resolve(false));
+    const p = spawn(ffmpegCommand(), args, { stdio: ["ignore", "ignore", "pipe"], signal });
+    p.stderr?.on("data", (chunk: Buffer) => {
+      err = (err + chunk.toString("utf8")).slice(-300);
+    });
+    p.on("error", (e) => {
+      err = e.message;
+      resolve(false);
+    });
     p.on("close", (code) => resolve(code === 0));
   });
   if (signal.aborted) throw GONE;
-  if (!ok) return void console.warn(`[look] no copy to watch of ${src}`);
+  if (!ok) return void console.warn(`[look] no copy to watch of ${src}${err.trim() ? `: ${err.trim()}` : ""}`);
   const res = await c.raw(`${base}/file?name=watch.mp4`, {
     method: "POST",
     headers: { "content-type": "video/mp4", "content-length": String(statSync(out).size) },

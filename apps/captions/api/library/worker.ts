@@ -510,7 +510,7 @@ export async function backfillThumb(): Promise<boolean> {
     // named for whoever added the file: queued again with no name (a computer connecting, made.ts), no computer may take it
     db.prepare(
       `INSERT INTO jobs (library_id, version_id, kind, state, attempts, error, actor) VALUES (?, ?, 'thumb', 'failed', 1, ?, ?)
-       ON CONFLICT (version_id, kind) DO UPDATE SET state = 'failed', error = excluded.error`,
+       ON CONFLICT (version_id, kind) DO UPDATE SET state = 'failed', error = excluded.error, actor = IFNULL(jobs.actor, excluded.actor)`,
     ).run(v.library_id, v.id, e instanceof Error ? e.message : String(e), v.created_by);
   }
   return true;
@@ -818,7 +818,7 @@ async function lookOnMac(db: ReturnType<typeof libraryDb>, v: VersionRow, job: J
   if (copy) void watchAfter(db, v.id, async () => copy, job.actor, true).finally(() => rm(copy, { force: true }));
   // asked for and not sent: a Mac app from before timelines (tried again later, timeline.ts RETRY_MS)
   else {
-    if (wantsWatch(db, v.id, job.actor)) storeTimeline(db, v.id, { error: "The Mac this file is on sent no copy to watch: it could not make one, or Creator Toolset there needs an update" });
+    if (wantsWatch(db, v.id, job.actor)) storeTimeline(db, v.id, { error: "The computer this file is on sent no copy to watch: it could not make one, or Creator Toolset there needs an update" });
     askedWatch.delete(v.id);
   }
 }
