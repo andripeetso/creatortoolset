@@ -29,7 +29,7 @@ const { saveTranscript } = await import("../library/transcribe");
 const { enqueueJob } = await import("../library/jobs");
 const { readMeta } = await import("../review");
 const { NO_SPEECH } = await import("./analyze");
-const { APART_S, briefMaxS, byAction, isPlanned, lengthOf, MIN_SHOT_S, NO_SHOTS, openerOf, parsePlans, planPrompt, planStep, planTimeline, repairPlan, shotPool, snapCuts, sourceSpan, speechShare, UNDER_DB } = await import("./plan");
+const { allBroll, APART_S, briefMaxS, byAction, isPlanned, lengthOf, MIN_SHOT_S, NO_SHOTS, openerOf, parsePlans, planPrompt, planStep, planTimeline, repairPlan, shotPool, snapCuts, sourceSpan, speechShare, UNDER_DB } = await import("./plan");
 const { toOtio } = await import("./otio");
 const { toFcpxml } = await import("./fcpxml");
 const { qaOf } = await import("./qa");
@@ -448,10 +448,25 @@ describe("footage where nobody speaks reaches Review", () => {
     expect(isPlanned(edit({ sources: ["ver_long"] }), [{ ...said[0]!, src: "ver_long", e: 30 }])).toBe(true);
     // a B given to clips with sound and nothing read of them (no transcript, no description) is no B: they are heard first
     d.exec("UPDATE assets SET roll = 'b' WHERE id IN ('ast_take', 'ast_long')");
+    expect(allBroll(edit({ sources: ["ver_take", "ver_long"] }))).toBe(false);
     expect(isPlanned(edit({ sources: ["ver_take", "ver_long"] }), said)).toBe(false);
+    // an unprobed version or an AI description calling it A-roll does not confirm B-roll
+    d.exec("UPDATE asset_versions SET probe = NULL WHERE id = 'ver_take'");
+    d.prepare("INSERT INTO descriptions (version_id, source, text, provider, created_at, roll) VALUES ('ver_long', 'ai', 'Talking', 'mac', 0, 'a')").run();
+    expect(allBroll(edit({ sources: ["ver_take"] }))).toBe(false);
+    expect(allBroll(edit({ sources: ["ver_long"] }))).toBe(false);
+    // silent clips (probed with no audio) and transcribed B-roll do count as B-roll
+    const silent = JSON.stringify({ duration: 10, width: 320, height: 180, fps: 30, rotation: 0, format: "mov", vcodec: "h264", pixFmt: "yuv420p" });
+    d.prepare("UPDATE asset_versions SET probe = ? WHERE id = 'ver_take'").run(silent);
+    expect(allBroll(edit({ sources: ["ver_take"] }))).toBe(true);
+    d.prepare("UPDATE asset_versions SET probe = ? WHERE id = 'ver_take'").run(p(30));
+    saveTranscript(d, "ver_take", "deepgram", "en", [], []);
+    expect(allBroll(edit({ sources: ["ver_take"] }))).toBe(true);
+    d.exec("DELETE FROM transcripts WHERE version_id = 'ver_take'; DELETE FROM descriptions WHERE version_id = 'ver_long'");
     // everything B-roll as the library sorted it on what it read: planned, whatever words it has
     d.exec("UPDATE assets SET filed_roll = 'b' WHERE id = 'ast_take'");
     d.prepare("INSERT INTO descriptions (version_id, source, text, provider, created_at, roll) VALUES ('ver_long', 'ai', 'A view', 'mac', 0, 'b')").run();
+    expect(allBroll(edit({ sources: ["ver_take", "ver_long"] }))).toBe(true);
     expect(isPlanned(edit({ sources: ["ver_take", "ver_long"] }), said)).toBe(true);
     d.exec("UPDATE assets SET roll = NULL, filed_roll = NULL WHERE id IN ('ast_take', 'ast_long'); DELETE FROM descriptions WHERE version_id = 'ver_long'");
   });

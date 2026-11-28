@@ -90,15 +90,15 @@ export function isMusic(versionId: string): boolean {
 
 /**
  * Every source picked is B-roll as the library sorted it (nobody talks to the camera), songs aside: nothing to transcribe.
- * A B the library gave a clip with sound for want of anything to read (no transcript, no described roll, not filed) does
- * not count: a folder of talking takes with no transcription key was sorted all B and cut with no speaker at all.
+ * A B the library gave a clip with sound for want of anything to read (no transcript, no described B, not filed) does
+ * not count: a folder of talking takes with no transcription key was sorted all B and skipped transcription.
  */
 export function allBroll(edit: Pick<EditMeta, "sources" | "song">): boolean {
   const q = libraryDb().prepare(
     `SELECT 1 FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ? AND a.roll = 'b' AND (
-       a.filed_roll = 'b' OR IFNULL(json_extract(v.probe, '$.acodec'), '') = ''
+       a.filed_roll = 'b' OR (v.probe IS NOT NULL AND IFNULL(json_extract(v.probe, '$.acodec'), '') = '')
        OR EXISTS (SELECT 1 FROM transcripts t WHERE t.version_id = v.id)
-       OR EXISTS (SELECT 1 FROM descriptions d WHERE d.version_id = v.id AND d.source = 'ai' AND d.roll IS NOT NULL))`,
+       OR EXISTS (SELECT 1 FROM descriptions d WHERE d.version_id = v.id AND d.source = 'ai' AND d.roll = 'b'))`,
   );
   const picture = edit.sources.filter((id) => id !== edit.song && !isMusic(id));
   return picture.length > 0 && picture.every((id) => !!q.get(id));
