@@ -11,7 +11,7 @@ import { DEVICE_AUDIO, transcribeOnDevice } from "../lib/device-transcribe";
 import { MIC_LIMITS, needComputerOn, transcribeOnComputer, type OwnSound } from "../lib/computer-transcribe";
 import { isThisMachine } from "../lib/devices";
 import { videoLanguages } from "../lib/video-languages";
-import { languageCode, type SpeechUse } from "../../contracts/voice";
+import type { SpeechUse } from "../../contracts/voice";
 import { isAdminActor, keyFor } from "../my-keys";
 import { findUser } from "../users";
 import { accountOf } from "./access";
@@ -168,7 +168,7 @@ async function openai(file: string, key: string, languages?: string[], actor?: s
   void recordService({ service: "OPENAI_API_KEY", key, actor, label: "Media Library: transcripts", units: (data.duration ?? 0) / 60, unit: "audio minutes" });
   const segments = (data.segments ?? []).map((s) => ({ start: s.start, end: s.end, text: s.text.trim() })).filter((s) => s.text);
   const words = (data.words ?? []).map((w) => ({ w: w.word.trim(), s: w.start, e: w.end })).filter((w) => w.w);
-  return fixed({ segments, words, language: languageCode(data.language) }, actor);
+  return fixed({ segments, words, language: data.language ?? null }, actor);
 }
 
 /** On this computer: `status` names the run for whoever shows what it is doing (deviceStatus). */

@@ -95,7 +95,7 @@ describe("the AI Editor row reaches an edit's transcripts", () => {
     // the Default on the person's computers: their library transcripts stay there, the editor row does not move them
     writeVoicePrefs("abe", { stt: { default: { engine: "local", model: TURBO }, per: { editor: null } } });
     expect(editorRoute("abe", ["en"])).toBeNull();
-    expect(versionRoute("abe", "ver_r")).toEqual(transcribeRoute("abe"));
+    expect(versionRoute("abe", "ver_r")).toEqual(transcribeRoute("abe", "transcripts", ["en"]));
     expect(versionRoute("abe", "ver_r")).toMatchObject({ provider: "computer", model: TURBO });
   });
 
