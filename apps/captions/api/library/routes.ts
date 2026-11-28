@@ -1585,7 +1585,10 @@ export function mediaFile(versionId: string, kind: string): { key?: string; type
   if (v.mac_path && kind === "play") return { key: derived("proxy"), type: "video/mp4", what: "proxy" };
   if (kind === "play") {
     const p = JSON.parse(v.probe ?? "null") as ProbeSummary | null;
-    const proxy = p && proxiesInCloud(v.library_id) && !needsProxy(p) ? undefined : derived("proxy");
+    const rawProxy = p && proxiesInCloud(v.library_id) && !needsProxy(p) ? undefined : derived("proxy");
+    const u = uploadFor({ id: v.library_id, versionId });
+    const originalsOnly = serverKind() !== "mac" && hostsOriginals(u) && !hostsProxies(u);
+    const proxy = rawProxy && originalsOnly && rawProxy !== v.source_key && !v.source_key.startsWith("mac:") ? undefined : rawProxy;
     return { key: proxy ?? v.source_key, type: proxy ? "video/mp4" : original, what: proxy ? "proxy" : "original" };
   }
   if (kind === "source") return { key: v.source_key, type: original, what: "original" };

@@ -547,6 +547,15 @@ describe("A11: nothing streams an original under none (decision 5, R2)", () => {
     expect((await serveGate("vs_shared_p", "source", { key: "pk", what: "original" })).ok).toBe(false);
   });
 
+  it("an Originals-only library plays the hosted original even when a proxy derivative also exists", async () => {
+    d.prepare("INSERT INTO assets (id, library_id, kind, title, created_by, created_at) VALUES ('a_orig_p', 'lib_orig', 'video', 'Orig', 'tinyacrobatics', 0)").run();
+    d.prepare("INSERT INTO asset_versions (id, asset_id, n, source_key, mime, bytes, sha256, created_by, created_at, state) VALUES ('vs_orig_p', 'a_orig_p', 1, 'src_k', 'video/mp4', 9000, 'x', 'tinyacrobatics', 0, 'ready')").run();
+    d.prepare("INSERT INTO derivatives (version_id, kind, storage_key) VALUES ('vs_orig_p', 'proxy', 'proxy_k')").run();
+    const play = mediaFile("vs_orig_p", "play");
+    expect(play).toMatchObject({ key: "src_k", what: "original" });
+    expect((await serveGate("vs_orig_p", "play", play!)).ok).toBe(true);
+  });
+
   // the prevention test: a route that reads a clip's file from the server must ask mayServe, or be named here with its reason
   it("every file that streams or reads a server copy of a clip asks mayServe, or is named with its reason (PASS, OPEN)", () => {
     const streams = filesMatching("apps/captions/api", /mediaFile\(|serveBlob\(|localCopy\(|blobs\.locate\(/, /\.ts$/);

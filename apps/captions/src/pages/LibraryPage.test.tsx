@@ -53,6 +53,7 @@ const server = vi.hoisted(() => ({
   uploaded: [] as string[],
   /** the library is someone else's, given to look at */
   readOnly: false,
+  shared: false,
   faceBlur: false, // the Face Blur plug-in on, and this person may keep files as filmed
   gate: undefined as Promise<void> | undefined,
   /** a test holds every upload until it lets go */
@@ -68,7 +69,7 @@ const server = vi.hoisted(() => ({
 vi.mock("@/lib/library", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/library")>()),
   listLibraries: async () => [
-    { id: "lib_tiny", name: "Tiny", storage: "local", settings: { describe: true, embed: false, setupAt: "2026-11-01T00:00:00.000Z", ...server.settings }, ...(server.readOnly ? { readOnly: true } : {}), ...(server.faceBlur ? { mayKeepAsFilmed: true } : {}) },
+    { id: "lib_tiny", name: "Tiny", storage: "local", settings: { describe: true, embed: false, setupAt: "2026-11-01T00:00:00.000Z", ...server.settings }, ...(server.readOnly ? { readOnly: true } : {}), ...(server.shared ? { shared: true as const } : {}), ...(server.faceBlur ? { mayKeepAsFilmed: true } : {}) },
   ],
   // Default folders makes the six folders (api/library/organize.ts)
   uploadFile: async (_: string, f: File) => {
@@ -200,6 +201,7 @@ beforeEach(() => {
   server.trashed = [];
   server.uploaded = [];
   server.readOnly = false;
+  server.shared = false;
   server.faceBlur = false;
   server.gate = undefined;
   server.uploading = undefined;
@@ -1196,6 +1198,24 @@ describe("Media Library redo: the ⋯ menu and the selection bar", () => {
       await settle();
       await settle();
       expect(document.querySelector("video")?.getAttribute("src")).toContain("/api/library/media/ver_mac1/play");
+    } finally {
+      useAuth.setState({ kind: prev });
+    }
+  });
+
+  it("does not request /play on a non-Mac server when Upload is none, even if the library is shared", async () => {
+    const { useAuth } = await import("@/lib/auth");
+    const prev = useAuth.getState().kind;
+    server.settings = { upload: "none" };
+    server.shared = true;
+    server.items = [{ ...clip("sh1"), versionId: "ver_sh1" }];
+    try {
+      useAuth.setState({ kind: "server" });
+      const host = await mount();
+      await click(host.querySelector("main")!.querySelector<HTMLElement>("[data-keep-picked]")!);
+      await settle();
+      await settle();
+      expect(document.querySelector("video")?.getAttribute("src")).toBeNull();
     } finally {
       useAuth.setState({ kind: prev });
     }
